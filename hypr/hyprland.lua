@@ -41,7 +41,13 @@ hl.monitor({
 -- Set programs that you use
 local terminal    = "kitty"
 local fileManager = "nautilus"
+local browser     = "brave-browser"  -- Super+X (matches GNOME custom1)
 local menu        = "hyprlauncher"
+-- Anyrun (Super+SPACE). Wrapper sets GSK_RENDERER=ngl for NVIDIA GTK4 close hang.
+local anyrun      = "/home/kodex/.local/bin/anyrun-launch"
+-- Grok CLI (same binary as this agent session); dedicated class for window rules
+-- Fullscreen TUI (not --minimal); sticky screen_mode lives in ~/.grok/config.toml
+local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
 
 
 -------------------
@@ -56,6 +62,11 @@ local menu        = "hyprlauncher"
 hl.on("hyprland.start", function ()
   hl.exec_cmd("hyprpaper")
   hl.exec_cmd(terminal)
+  -- Anyrun provider/UI daemon (Super+SPACE then opens fast against this)
+  hl.exec_cmd("GSK_RENDERER=gl /home/kodex/.cargo/bin/anyrun daemon")
+  -- AGS bar (GTK4 layer-shell). GSK=gl matches anyrun NVIDIA workaround.
+  -- sass lives in ~/.local/bin (dart-sass via npm --prefix ~/.local).
+  hl.exec_cmd("env PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin GSK_RENDERER=gl /usr/local/bin/ags run /home/kodex/.config/ags")
 end)
 
 
@@ -109,8 +120,9 @@ hl.config({
         border_size = 2,
 
         col = {
-            active_border   = { colors = {"rgba(33ccffee)", "rgba(00ff99ee)"}, angle = 45 },
-            inactive_border = "rgba(595959aa)",
+            -- kdx-design-system: soft orange-500/400 (low alpha); ink-600 inactive
+            active_border   = { colors = {"rgba(ff8c4288)", "rgba(ffaa7077)"}, angle = 45 },
+            inactive_border = "rgba(3a352faa)",
         },
 
         -- Set to true to enable resizing windows by clicking and dragging on borders and gaps
@@ -134,7 +146,7 @@ hl.config({
             enabled      = true,
             range        = 4,
             render_power = 3,
-            color        = 0xee1a1a1a,
+            color        = 0xee0c0b09, -- ink-1000
         },
 
         blur = {
@@ -250,6 +262,12 @@ hl.config({
             natural_scroll = false,
         },
     },
+
+    -- AUTO (2) falls back to software cursors on this NVIDIA dual-GPU setup and
+    -- can leave a second cursor "stuck" on mon1. Force hardware cursors.
+    cursor = {
+        no_hardware_cursors = false,
+    },
 })
 
 hl.gesture({
@@ -258,11 +276,12 @@ hl.gesture({
     action = "workspace"
 })
 
--- Example per-device config
--- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Devices/ for more
+-- Ducky One2 SF RGB exposes a HID mouse interface (if01) that Hyprland treats as
+-- a second pointer. Disable it so only the real mouse (Logitech G300s) drives the cursor.
+-- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Devices/
 hl.device({
-    name        = "epic-mouse-v1",
-    sensitivity = -0.5,
+    name    = "ducky-ducky-one2-sf-rgb-1",
+    enabled = false,
 })
 
 
@@ -274,14 +293,35 @@ local mainMod = "SUPER" -- Sets "Windows" key as main modifier
 
 -- Example binds, see https://wiki.hypr.land/Configuring/Basics/Binds/ for more
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
+-- Grok CLI always on screen 2 (portrait HDMI-A-2)
+hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
+hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
 local closeWindowBind = hl.bind(mainMod .. " + C", hl.dsp.window.close())
+-- Force-kill active window (harder than Super+C close); plain Super+X is Brave
+hl.bind(mainMod .. " + CTRL + X", hl.dsp.window.kill())
 -- closeWindowBind:set_enabled(false)
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
+hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(anyrun))
+-- AGS bar mode cycle: always (transparent) → temp (gray, auto-hide 5s) → hidden
+local agsBin = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
+hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(agsBin .. " request bar-cycle"))
+-- Super alone peeks the bar when auto-hidden; non_consuming → does not steal Super+* combos
+hl.bind("Super_L", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
+hl.bind("Super_R", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))    -- dwindle only
+
+-- Screenshots (grim + slurp ≈ GNOME Print Screen)
+-- Print: region → ~/Pictures/Screenshots
+-- Shift+Print: full desktop → file
+-- Super+Print: region → clipboard
+local shot = "/home/kodex/.local/bin/hypr-screenshot"
+hl.bind("Print",             hl.dsp.exec_cmd(shot .. " region"))
+hl.bind("SHIFT + Print",     hl.dsp.exec_cmd(shot .. " full"))
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(shot .. " region-clip"))
 
 -- Move focus with mainMod + arrow keys
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
@@ -385,4 +425,11 @@ hl.window_rule({
 
     move  = "20 monitor_h-120",
     float = true,
+})
+
+-- Super+G Grok CLI → always screen 2 (ASUS portrait)
+hl.window_rule({
+    name    = "grok-cli-screen-2",
+    match   = { class = "grok-cli" },
+    monitor = "HDMI-A-2",
 })

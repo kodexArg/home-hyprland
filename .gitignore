@@ -2,3 +2,7 @@
 *.log
 *~
 .DS_Store
+
+# AGS generated / deps (regenerate on host)
+ags/node_modules/
+ags/@girs/

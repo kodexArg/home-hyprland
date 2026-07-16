@@ -1,0 +1,120 @@
+// Minimal bar — volume is the primary control
+// Chrome = Hyprland window frame, solid stand-ins for what those
+// rgba() borders actually look like over ink-1000 (kdx-design-system).
+//
+// hyprland.lua:
+//   border_size = 2, gaps_out = 5, rounding = 10
+//   active_border   = orange-500@88 / orange-400@77  → dark warm rim
+//   inactive_border = ink-600@aa                     → dark gray rim
+// Fill = same mix, one step more ink (less accent weight).
+// Super+B: always = inactive window | temp = active window
+//
+// IMPORTANT: fully transparent window backgrounds + GSK gl often yield an
+// empty input region on layer-shell (clicks pass through). Keep a tiny alpha
+// on the window so the surface stays clickable.
+
+@use "sass:color";
+
+$ink-1000:   #0C0B09;
+$ink-600:    #3a352f;
+$cream-100:  #F3EEE4;
+$warm-200:   #cdbfa8;
+$orange-500: #ff8c42;
+
+// Premultiplied over ink-1000 — same weights as hypr rgba alphas
+$border-inactive: color.mix($ink-600, $ink-1000, 66.7%);   // 3a352faa
+$fill-inactive:   color.mix($ink-600, $ink-1000, 45%);     // border −100
+$border-active:   color.mix($orange-500, $ink-1000, 53.3%); // ff8c4288
+$fill-active:     color.mix($orange-500, $ink-1000, 35%);  // border −100
+
+window.BarEdge {
+  // 1% ink — invisible but captures pointer
+  background: rgba(12, 11, 9, 0.01);
+}
+
+window.Bar {
+  // Same: never fully transparent (input region)
+  background: rgba(12, 11, 9, 0.02);
+  color: $cream-100;
+  font-weight: 600;
+
+  > centerbox {
+    border-radius: 10px;
+    border: 2px solid $border-inactive;
+    margin: 5px;
+    padding: 2px 8px;
+    background: $fill-inactive;
+  }
+
+  // always — inactive window chrome
+  &.mode-always > centerbox {
+    border-color: $border-inactive;
+    background: $fill-inactive;
+  }
+
+  // temp — active window chrome (muted orange rim + darker fill)
+  &.mode-temp > centerbox {
+    border-color: $border-active;
+    background: $fill-active;
+  }
+
+  &.mode-hidden > centerbox {
+    background: rgba(12, 11, 9, 0.02);
+    border-color: transparent;
+  }
+
+  button {
+    border-radius: 8px;
+    margin: 2px;
+    padding: 4px 8px;
+    color: $cream-100;
+    border: 2px solid transparent;
+    background: transparent;
+
+    &:hover {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    &:active {
+      border-color: $orange-500;
+      background: $fill-active;
+    }
+  }
+
+  .Volume {
+    margin: 2px 4px;
+    min-width: 240px;
+
+    &-mute,
+    &-step {
+      min-height: 28px;
+    }
+
+    &-step {
+      min-width: 28px;
+      padding: 4px 6px;
+      font-size: 1.1em;
+    }
+
+    // Click/drag track — orange fill child grows with volume
+    &-track {
+      min-width: 120px;
+      min-height: 18px;
+      margin: 0 4px;
+      border-radius: 6px;
+      border: 2px solid $ink-600;
+      background-color: $ink-600;
+    }
+
+    &-fill {
+      min-height: 18px;
+      background: $orange-500;
+      border-radius: 4px;
+    }
+  }
+
+  .Clock {
+    margin: 2px 4px;
+  }
+}
