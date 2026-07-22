@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# Hyprland screenshots (grim + slurp) — GNOME Print Screen stand-in.
+#
+# Usage:
+#   hypr-screenshot window|region|full
+#   hypr-screenshot monitor <name|alias>
+#   hypr-screenshot panel <left|right|aoc|asus|bar|1|2|…>
+#   hypr-screenshot inventory
+#   HYPR_SHOT_AGENT=1 hypr-screenshot …   # foreground; print absolute path on stdout
+#   hypr-screenshot --agent …             # same as HYPR_SHOT_AGENT=1
+#
+# Keybinds (hyprland.lua):
+#   Print       → window
+#   Ctrl+Print  → region
+#   Alt+Print   → full
+#
+# Agent tip: always use HYPR_SHOT_AGENT=1 (or --agent) so setsid is skipped
+# and the PNG path is printed for read_file.
+#
+# Feedback: hyprctl notify + optional notify-send. Log: $XDG_RUNTIME_DIR/hypr-screenshot.log
+set -euo pipefail
+
+export PATH="/home/kodex/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
+LOG="${XDG_RUNTIME_DIR:-/tmp}/hypr-screenshot.log"
+log() { printf '%s %s\n' "$(date -Iseconds)" "$*" >>"$LOG" 2>/dev/null || true; }
+
+# --agent / HYPR_SHOT_AGENT=1 → run in this process, print path on success
+if [[ "${1:-}" == "--agent" ]]; then
+  export HYPR_SHOT_AGENT=1
+  shift
+fi
+if [[ "${HYPR_SHOT_AGENT:-}" == "1" ]]; then
+  export HYPR_SHOT_DETACHED=1
+fi
+
+# Detach from keybind process tree (modifier release must not kill us).
+if [[ -z "${HYPR_SHOT_DETACHED:-}" ]]; then
+  export HYPR_SHOT_DETACHED=1
+  if command -v setsid >/dev/null 2>&1; then
+    setsid -f env HYPR_SHOT_DETACHED=1 "$0" "$@" </dev/null >>"$LOG" 2>&1
+  else
+    nohup env HYPR_SHOT_DETACHED=1 "$0" "$@" </dev/null >>"$LOG" 2>&1 &
+  fi
+  exit 0
+fi
+
+DIR="${XDG_PICTURES_DIR:-$HOME/Pictures}/Screenshots"
+mkdir -p "$DIR"
+# subsecond + pid so agent multi-panel bursts never collide
+file="$DIR/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM.png"
+mode="${1:-window}"
+arg2="${2:-}"
+
+log "start mode=$mode arg2=$arg2 file=$file agent=${HYPR_SHOT_AGENT:-0} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+
+label_for_mode() {
+  case "$1" in
+    window)  echo "APP WINDOW CAPTURE" ;;
+    region)  echo "AREA CAPTURE" ;;
+    full)    echo "FULL SCREEN CAPTURE" ;;
+    monitor) echo "MONITOR CAPTURE" ;;
+    panel)   echo "PANEL CAPTURE" ;;
+    *)       echo "SCREENSHOT" ;;
+  esac
+}
+
+# hyprctl notify icons: 5=Ok 3=Error 0=Warning
+notify() {
+  local msg="$1"
+  local icon="${2:-5}"
+  hyprctl notify "$icon" 8750 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send -a screenshot -i camera-photo "Screenshot" "$msg" || true
+  fi
+}
+
+to_clipboard() {
+  if ! wl-copy --type image/png < "$1" 2>>"$LOG"; then
+    log "wl-copy failed for $1"
+    return 1
+  fi
+  return 0
+}
+
+finish_ok() {
+  local kind="$1"
+  local clip_ok=1
+  local label
+  label="$(label_for_mode "$kind")"
+  to_clipboard "$file" || clip_ok=0
+  log "saved kind=$kind $file ($(wc -c <"$file") bytes) clip=$clip_ok"
+  if [[ "$clip_ok" -eq 1 ]]; then
+    notify "${label}: $(basename "$file") (+ clipboard)"
+  else
+    notify "${label}: $(basename "$file") (clipboard failed)" 0
+  fi
+  # Agent / CLI: always print absolute path last on stdout
+  if [[ "${HYPR_SHOT_AGENT:-}" == "1" ]]; then
+    printf '%s\n' "$file"
+  fi
+}
+
+# Resolve human aliases → compositor output name (this host dual-panel map).
+# Layout: HDMI-A-1 AOC landscape left · HDMI-A-2 ASUS portrait right (transform 3).
+resolve_output() {
+  local key
+  key="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$key" in
+    ""|active|focused)
+      hyprctl monitors -j 2>>"$LOG" | python3 -c '
+import json,sys
+ms=json.load(sys.stdin)
+for m in ms:
+    if m.get("focused"):
+        print(m["name"]); sys.exit(0)
+if ms: print(ms[0]["name"]); sys.exit(0)
+sys.exit(1)
+' 2>>"$LOG"
+      ;;
+    left|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-left|panel_left)
+      echo "HDMI-A-1"
+      ;;
+    right|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-right|panel_right)
+      echo "HDMI-A-2"
+      ;;
+    hdmi-a-1|HDMI-A-1)
+      echo "HDMI-A-1"
+      ;;
+    hdmi-a-2|HDMI-A-2)
+      echo "HDMI-A-2"
+      ;;
+    *)
+      # Pass through if it looks like a real connector name
+      if hyprctl monitors -j 2>>"$LOG" | python3 -c '
+import json,sys
+want=sys.argv[1]
+ms=json.load(sys.stdin)
+names=[m["name"] for m in ms]
+sys.exit(0 if want in names else 1)
+' "$1" 2>>"$LOG"; then
+        echo "$1"
+      else
+        return 1
+      fi
+      ;;
+  esac
+}
+
+active_window_geom() {
+  hyprctl activewindow -j 2>>"$LOG" | python3 -c '
+import json, sys
+try:
+    w = json.load(sys.stdin)
+except Exception as e:
+    sys.stderr.write(f"activewindow parse: {e}\n")
+    sys.exit(1)
+if not w:
+    sys.exit(1)
+at = w.get("at") or [0, 0]
+size = w.get("size") or [0, 0]
+x, y = int(at[0]), int(at[1])
+ww, hh = int(size[0]), int(size[1])
+if ww <= 0 or hh <= 0:
+    sys.exit(1)
+title = (w.get("title") or "")[:60]
+sys.stderr.write(f"window title={title!r} geom={x},{y} {ww}x{hh}\n")
+print(f"{x},{y} {ww}x{hh}")
+' 2>>"$LOG"
+}
+
+print_inventory() {
+  python3 - <<'PY' 2>>"$LOG"
+import json, subprocess
+
+ms = json.loads(subprocess.check_output(["hyprctl", "monitors", "-j"], text=True))
+clients = json.loads(subprocess.check_output(["hyprctl", "clients", "-j"], text=True))
+
+print("=== panels (this host) ===")
+for m in ms:
+    name = m["name"]
+    mid = m.get("id")
+    if name == "HDMI-A-1":
+        role = "left / AOC landscape"
+    elif name == "HDMI-A-2":
+        role = "right / ASUS portrait + AGS bar"
+    else:
+        role = "other"
+    foc = " FOCUSED" if m.get("focused") else ""
+    w, h = m["width"], m["height"]
+    x, y = m["x"], m["y"]
+    tr = m.get("transform")
+    ws = (m.get("activeWorkspace") or {}).get("name")
+    print(f"\n[{name}] id={mid} {w}x{h} @ {x},{y} transform={tr}{foc}")
+    print(f"  role: {role}")
+    print(f"  workspace: {ws}")
+    cl = [c for c in clients if c.get("monitor") == mid or str(c.get("monitor")) == str(mid)]
+    if not cl:
+        print("  clients: (none)")
+    else:
+        print("  clients:")
+        for c in cl:
+            cls = c.get("class") or "?"
+            title = (c.get("title") or "")[:60]
+            cws = (c.get("workspace") or {}).get("name")
+            print(f"    - class={cls!r} title={title!r} ws={cws}")
+print("\nAliases: left|aoc → HDMI-A-1 · right|asus|bar → HDMI-A-2 · active → focused")
+print("Capture: hypr-screenshot --agent panel left|right|bar|window|full")
+PY
+}
+
+capture_output() {
+  local out="$1"
+  local kind="${2:-monitor}"
+  log "grim -o $out → $file"
+  sleep 0.05
+  if ! grim -o "$out" "$file" 2>>"$LOG"; then
+    log "grim monitor failed out=$out"
+    notify "$(label_for_mode "$kind"): failed ($out)" 3
+    exit 1
+  fi
+  finish_ok "$kind"
+}
+
+case "$mode" in
+  inventory|list|panels|status)
+    print_inventory
+    ;;
+  window)
+    if ! geom="$(active_window_geom)"; then
+      log "no active window geom"
+      notify "APP WINDOW CAPTURE: no focused window" 3
+      exit 1
+    fi
+    log "window geom=$geom"
+    sleep 0.05
+    if ! grim -g "$geom" "$file" 2>>"$LOG"; then
+      log "grim window failed geom=$geom"
+      notify "APP WINDOW CAPTURE: failed (grim)" 3
+      exit 1
+    fi
+    finish_ok window
+    ;;
+  region)
+    geom="$(slurp 2>>"$LOG")" || {
+      log "slurp cancelled/failed"
+      notify "AREA CAPTURE: cancelled" 0
+      exit 0
+    }
+    log "slurp geom=$geom"
+    if ! grim -g "$geom" "$file" 2>>"$LOG"; then
+      log "grim region failed"
+      notify "AREA CAPTURE: failed (grim)" 3
+      exit 1
+    fi
+    finish_ok region
+    ;;
+  full|all|desktop)
+    if ! grim "$file" 2>>"$LOG"; then
+      log "grim full failed"
+      notify "FULL SCREEN CAPTURE: failed (grim)" 3
+      exit 1
+    fi
+    finish_ok full
+    ;;
+  monitor|output|panel)
+    target="${arg2:-active}"
+    if ! out="$(resolve_output "$target")"; then
+      log "unknown panel/output: $target"
+      notify "PANEL CAPTURE: unknown target '$target'" 3
+      echo "unknown panel/output: $target (try: inventory)" >&2
+      exit 2
+    fi
+    log "resolved target=$target → $out"
+    capture_output "$out" panel
+    ;;
+  # bare aliases → panel capture (agent-friendly short form)
+  left|right|aoc|asus|bar|landscape|portrait|main|HDMI-A-1|HDMI-A-2|hdmi-a-1|hdmi-a-2)
+    if ! out="$(resolve_output "$mode")"; then
+      notify "PANEL CAPTURE: unknown '$mode'" 3
+      exit 2
+    fi
+    capture_output "$out" panel
+    ;;
+  region-clip)
+    exec env HYPR_SHOT_DETACHED=1 HYPR_SHOT_AGENT="${HYPR_SHOT_AGENT:-}" "$0" region
+    ;;
+  -h|--help|help)
+    cat <<'EOF'
+hypr-screenshot — grim/slurp helper for this host (Hyprland)
+
+Modes:
+  window              focused window (Print)
+  region              slurp area (Ctrl+Print)
+  full                entire layout (Alt+Print)
+  panel <alias>       one output (left|right|aoc|asus|bar|HDMI-A-1|…)
+  monitor <name>      same as panel
+  inventory           list panels + clients (no capture)
+  left|right|bar|…    short form = panel <alias>
+
+Agent (models):
+  hypr-screenshot --agent panel left
+  HYPR_SHOT_AGENT=1 hypr-screenshot panel right
+  → runs foreground, prints absolute PNG path on stdout
+  → then: read_file that path (vision)
+
+Files: ~/Pictures/Screenshots/YYYYMMDD-HHMMSS-<pid>-<rand>.png + clipboard image/png
+Log:   $XDG_RUNTIME_DIR/hypr-screenshot.log
+EOF
+    ;;
+  *)
+    log "bad mode: $mode"
+    echo "usage: $0 window|region|full|panel <alias>|inventory  (or --agent …)" >&2
+    exit 2
+    ;;
+esac

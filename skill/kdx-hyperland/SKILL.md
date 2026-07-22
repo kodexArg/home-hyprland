@@ -55,7 +55,7 @@ Do **not** paste hyprlang from old blogs. Translate to `hl.*` using `references/
 
 ## Quick facts (live, re-verify on edit)
 
-- **Monitors:** HDMI-A-1 AOC landscape left · HDMI-A-2 ASUS portrait (`transform 3`) right — layout `--|`
+- **Monitors:** HDMI-A-1 AOC landscape left (`scale 1`, `0x100`) · HDMI-A-2 ASUS portrait (`transform 3`, **`scale 1.5`** → logical 720×1280) right — layout `--|`
 - **Layout:** dwindle · **mod:** SUPER · **terminal:** kitty · **browser Super+X:** brave-browser
 - **AGS:** bar **only on HDMI-A-2** · Super+B cycles always→temp→hidden · Super_L/R peek (non_consuming)
 - **Volume icon (triple):** speakers · muted (speaker-slash) · headphones — no headphones-mute. Logic in `widget/Bar.tsx` via AstalWp `defaultSpeaker.route` (not shell scripts).

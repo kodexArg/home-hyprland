@@ -2,26 +2,31 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import AstalWp from "gi://AstalWp"
 import GLib from "gi://GLib"
-import { createBinding, createComputed } from "ags"
+import Gio from "gi://Gio"
+import { createBinding, createComputed, createState } from "ags"
 import { createPoll } from "ags/time"
 import { barModeClass, barVisible, setOverBar } from "./bar-mode"
+import LocalLlm from "./LocalLlm"
 
 const TRACK_W = 140
 
 /**
- * Fixed triple (status icons — same Adwaita family as the old volume ladder so
- * they always paint in this bar). No headphones-mute: mute always uses slash.
+ * Fixed triple. Mute always slash/X (no headphones-mute).
  *
- *   speakers   → audio-volume-high-symbolic   (parlante)
- *   muted      → audio-volume-muted-symbolic  (parlante tachado)
- *   headphones → audio-headphones-symbolic   (auris)
+ * Icons: Adwaita symbolic, vendored cream under icons/ (`image file=`):
+ *   speakers   → devices/audio-speakers-symbolic   (parlante only, no waves)
+ *   muted      → status/audio-volume-muted-symbolic (parlante + X)
+ *   headphones → devices/audio-headphones-symbolic  (auris)
  *
- * This host: HDMI (TU106) = speakers · Ryzen analog port headphones = auris.
- * WirePlumber default sink must match the real path (GNOME does this on jack).
+ * Not audio-volume-high (that one has speaker + sound arcs).
+ *
+ * This host: HDMI (TU106) = speakers · Ryzen analog headphones port = auris.
+ * Classify from a live defaultSpeaker read (nested route bindings stick).
  */
-const ICON_SPEAKERS = "audio-volume-high-symbolic"
-const ICON_MUTED = "audio-volume-muted-symbolic"
-const ICON_HEADPHONES = "audio-headphones-symbolic"
+const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
+const ICON_SPEAKERS = `${ICON_DIR}/speakers.svg`
+const ICON_MUTED = `${ICON_DIR}/muted.svg`
+const ICON_HEADPHONES = `${ICON_DIR}/headphones.svg`
 
 function routeLooksLikeHeadphones(
   name: string | null | undefined,
@@ -35,9 +40,21 @@ function routeLooksLikeHeadphones(
   )
 }
 
+/** HDMI / monitor path — never headphones even if a binding is stale. */
+function endpointLooksLikeHdmiSpeakers(ep: AstalWp.Endpoint): boolean {
+  const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
+  return (
+    d.includes("hdmi") ||
+    d.includes("displayport") ||
+    d.includes("tu106") ||
+    d.includes("nvidia")
+  )
+}
+
 type OutputMode = "speakers" | "mute" | "headphones"
 
 function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
+  if (endpointLooksLikeHdmiSpeakers(ep)) return false
   const r = ep.route
   return routeLooksLikeHeadphones(r?.name, r?.description)
 }
@@ -50,10 +67,7 @@ function listSpeakers(wp: AstalWp.Wp): AstalWp.Endpoint[] {
 function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   const all = listSpeakers(wp)
   return (
-    all.find((s) => {
-      const d = (s.description ?? "").toLowerCase()
-      return d.includes("hdmi") || d.includes("displayport")
-    }) ??
+    all.find((s) => endpointLooksLikeHdmiSpeakers(s)) ??
     all.find((s) => !endpointIsHeadphones(s)) ??
     null
   )
@@ -64,26 +78,43 @@ function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   return listSpeakers(wp).find((s) => endpointIsHeadphones(s)) ?? null
 }
 
-function currentOutputMode(wp: AstalWp.Wp): OutputMode {
-  const s = wp.defaultSpeaker
-  if (s.mute) return "mute"
-  if (endpointIsHeadphones(s)) return "headphones"
+/** Classify from a live Endpoint — never from cached route accessors alone. */
+function modeOfEndpoint(ep: AstalWp.Endpoint): OutputMode {
+  if (ep.mute) return "mute"
+  if (endpointIsHeadphones(ep)) return "headphones"
   return "speakers"
+}
+
+function currentOutputMode(wp: AstalWp.Wp): OutputMode {
+  return modeOfEndpoint(wp.defaultSpeaker)
+}
+
+function iconFileForMode(mode: OutputMode): string {
+  if (mode === "mute") return ICON_MUTED
+  if (mode === "headphones") return ICON_HEADPHONES
+  return ICON_SPEAKERS
+}
+
+function muteAllSinks(wp: AstalWp.Wp) {
+  for (const s of listSpeakers(wp)) s.set_mute(true)
 }
 
 /**
  * Icon click cycle (fixed order):
  *   parlante → mute → auris → parlante
- * Mute is always the slash icon; no headphones-mute state.
  */
 function cycleOutputMode(wp: AstalWp.Wp) {
   const mode = currentOutputMode(wp)
+  const hp = findHeadphoneSink(wp)
+  const sp = findSpeakerSink(wp)
+
   if (mode === "speakers") {
-    wp.defaultSpeaker.set_mute(true)
+    muteAllSinks(wp)
     return
   }
   if (mode === "mute") {
-    const hp = findHeadphoneSink(wp)
+    // → headphones: default jack, only that sink live
+    if (sp) sp.set_mute(true)
     if (hp) {
       hp.set_is_default(true)
       hp.set_mute(false)
@@ -92,8 +123,8 @@ function cycleOutputMode(wp: AstalWp.Wp) {
     }
     return
   }
-  // headphones → speakers
-  const sp = findSpeakerSink(wp)
+  // headphones → speakers (HDMI)
+  if (hp) hp.set_mute(true)
   if (sp) {
     sp.set_is_default(true)
     sp.set_mute(false)
@@ -132,7 +163,7 @@ function VolumeTrack() {
     <box
       class="Volume-track"
       widthRequest={TRACK_W}
-      heightRequest={22}
+      heightRequest={16}
       valign={Gtk.Align.CENTER}
       tooltipText="Drag / click / scroll"
       $={(self) => {
@@ -184,34 +215,35 @@ function Volume() {
   // Always resolve default sink (HDMI speakers vs Ryzen analog headphones).
   const speaker = () => wp.defaultSpeaker
 
-  // Nested bindings re-track when defaultSpeaker / route changes (gnim multi-prop).
-  // Also bind sink id/description so a default-node switch (HDMI ↔ analog) repaints.
+  // Recompute when default sink identity / mute / description change.
+  // Classification uses a *live* defaultSpeaker read (see modeOfEndpoint) —
+  // nested route bindings were sticky and painted auris for HDMI too.
   const mute = createBinding(wp, "defaultSpeaker", "mute")
   const sinkId = createBinding(wp, "defaultSpeaker", "id")
-  const routeName = createBinding(wp, "defaultSpeaker", "route", "name")
-  const routeDesc = createBinding(
-    wp,
-    "defaultSpeaker",
-    "route",
-    "description",
-  )
   const sinkDesc = createBinding(wp, "defaultSpeaker", "description")
+  // Light poll catches route jack changes without relying on nested accessors.
+  const routePulse = createPoll(0, 250, () => {
+    const s = AstalWp.get_default()?.defaultSpeaker
+    const r = s?.route
+    // cheap fingerprint
+    return `${s?.id ?? 0}|${s?.mute ? 1 : 0}|${r?.name ?? ""}`.length
+  })
 
-  const outputIcon = createComputed(() => {
-    // touch sinkId so default-node changes recompute even if mute/route objects stick
+  const outputIconFile = createComputed(() => {
+    void mute()
     void sinkId()
     void sinkDesc()
-    if (mute()) return ICON_MUTED
-    if (routeLooksLikeHeadphones(routeName(), routeDesc()))
-      return ICON_HEADPHONES
-    return ICON_SPEAKERS
+    void routePulse()
+    return iconFileForMode(modeOfEndpoint(wp.defaultSpeaker))
   })
 
   const iconTip = createComputed(() => {
+    void mute()
     void sinkId()
-    if (mute()) return "Muted → headphones"
-    if (routeLooksLikeHeadphones(routeName(), routeDesc()))
-      return "Headphones → speakers"
+    void routePulse()
+    const mode = modeOfEndpoint(wp.defaultSpeaker)
+    if (mode === "mute") return "Muted → headphones"
+    if (mode === "headphones") return "Headphones → speakers"
     return "Speakers → mute"
   })
 
@@ -223,7 +255,7 @@ function Volume() {
   return (
     <box
       class="Volume"
-      spacing={4}
+      spacing={1}
       tooltipText={sinkDesc((d) => d || "Volume")}
       $={(self) => {
         // Scroll anywhere on the volume group
@@ -244,7 +276,9 @@ function Volume() {
         tooltipText={iconTip}
         onClicked={() => cycleOutputMode(wp)}
       >
-        <image iconName={outputIcon} pixelSize={18} />
+        {/* file= bypasses icon themes — flat cream monochrome SVGs */}
+        {/* 80% of original 20px (not an 80% reduction) */}
+        <image file={outputIconFile} pixelSize={16} />
       </button>
 
       <button
@@ -268,18 +302,233 @@ function Volume() {
   )
 }
 
-function Clock({ format = "%H:%M" }) {
-  const time = createPoll("", 1000, () => {
-    return GLib.DateTime.new_now_local().format(format)!
-  })
+// Capture cluster icons (cream monochrome, same pipeline as volume)
+const ICON_SCREEN = `${ICON_DIR}/screen.svg` // video-display — screenshot
+const ICON_RECORD = `${ICON_DIR}/record.svg` // camera-video — screen record
+
+/**
+ * Gap under the exclusive bar strip. Exclusive zone already reserves ~52px;
+ * only a small extra margin is needed so the panel sits just below chrome.
+ * (marginTop=52 was stacking → panel at y≈104.)
+ */
+const CAPTURE_GAP = 4
+
+/** Shared so bar button + IPC (`ags request capture-toggle`) stay in sync. */
+const [captureOpen, setCaptureOpen] = createState(false)
+
+export function toggleCapture(): string {
+  setCaptureOpen(!captureOpen.peek())
+  return captureOpen.peek() ? "capture-open" : "capture-closed"
+}
+
+export function getCaptureOpen(): boolean {
+  return captureOpen.peek()
+}
+
+/** Fixed 26×26 chip; image expands+centers so the glyph sits in the square. */
+function CaptureIcon({ file }: { file: string }) {
+  return (
+    <box
+      class="Capture-icon"
+      widthRequest={26}
+      heightRequest={26}
+      hexpand={false}
+      vexpand={false}
+      halign={Gtk.Align.CENTER}
+      valign={Gtk.Align.CENTER}
+    >
+      <image
+        file={file}
+        pixelSize={14}
+        hexpand
+        vexpand
+        halign={Gtk.Align.CENTER}
+        valign={Gtk.Align.CENTER}
+      />
+    </box>
+  )
+}
+
+/**
+ * Floating capture panel — separate layer-shell window (Gtk.Popover is flaky
+ * on gtk4-layer-shell / NVIDIA+GSK). Anchored top-right, just below the bar.
+ */
+function CapturePanel(gdkmonitor: Gdk.Monitor) {
+  const { TOP, RIGHT } = Astal.WindowAnchor
+  // Hide with the bar (temp/hidden); do not leave a stray overlay.
+  const panelVisible = createComputed(() => captureOpen() && barVisible())
 
   return (
-    <menubutton class="Clock">
-      <label label={time} />
-      <popover>
-        <Gtk.Calendar />
-      </popover>
-    </menubutton>
+    <window
+      visible={panelVisible}
+      name="capture"
+      namespace="ags-capture"
+      class="CapturePanel"
+      gdkmonitor={gdkmonitor}
+      exclusivity={Astal.Exclusivity.NORMAL}
+      anchor={TOP | RIGHT}
+      layer={Astal.Layer.OVERLAY}
+      marginTop={CAPTURE_GAP}
+      marginRight={8}
+      keymode={Astal.Keymode.ON_DEMAND}
+      application={app}
+    >
+      <box
+        class="Capture-actions"
+        orientation={Gtk.Orientation.VERTICAL}
+        spacing={2}
+        valign={Gtk.Align.CENTER}
+        $={(self) =>
+          attachMotion(
+            self,
+            () => setOverBar(true),
+            () => setOverBar(false),
+          )
+        }
+      >
+        <button
+          class="Capture-action"
+          tooltipText="Capture screen (mock)"
+          onClicked={() => {
+            // mock — wire to hypr-screenshot later
+            setCaptureOpen(false)
+          }}
+        >
+          <box spacing={10} valign={Gtk.Align.CENTER}>
+            <CaptureIcon file={ICON_SCREEN} />
+            <label class="Capture-label" label="Capture screen" xalign={0} />
+          </box>
+        </button>
+        <button
+          class="Capture-action"
+          tooltipText="Record screen (mock)"
+          onClicked={() => {
+            // mock — wire to recorder later
+            setCaptureOpen(false)
+          }}
+        >
+          <box spacing={10} valign={Gtk.Align.CENTER}>
+            <CaptureIcon file={ICON_RECORD} />
+            <label class="Capture-label" label="Record screen" xalign={0} />
+          </box>
+        </button>
+      </box>
+    </window>
+  )
+}
+
+/**
+ * Arrow left of clock. Closed: ▸. Click → ▾ and floating panel just below.
+ */
+function CaptureToggle({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+  const toggleClass = captureOpen((o) =>
+    o ? "Capture Capture-toggle open" : "Capture Capture-toggle",
+  )
+
+  // Sibling top-level window (not nested under the bar surface).
+  CapturePanel(gdkmonitor)
+
+  return (
+    <button
+      class={toggleClass}
+      tooltipText={captureOpen((o) =>
+        o ? "Hide capture tools" : "Capture tools",
+      )}
+      onClicked={() => setCaptureOpen(!captureOpen.peek())}
+    >
+      <label label={captureOpen((o) => (o ? "▾" : "▸"))} />
+    </button>
+  )
+}
+
+// Caffeine: cup with steam (on) / cup only (off) — block idle + suspend
+const ICON_CAFFEINE_ON = `${ICON_DIR}/caffeine-on.svg`
+const ICON_CAFFEINE_OFF = `${ICON_DIR}/caffeine-off.svg`
+
+/**
+ * Held `systemd-inhibit` process. Gtk.Application.inhibit is a no-op for
+ * logind on this Hyprland session (no gnome-session), so we block via:
+ *   systemd-inhibit --what=idle:sleep --mode=block sleep infinity
+ */
+let caffeineProc: Gio.Subprocess | null = null
+const [caffeineOn, setCaffeineOn] = createState(false)
+
+function applyCaffeine(on: boolean): boolean {
+  if (on) {
+    if (!caffeineProc) {
+      caffeineProc = Gio.Subprocess.new(
+        [
+          "systemd-inhibit",
+          "--what=idle:sleep",
+          "--who=ags-caffeine",
+          "--why=Caffeine — keep awake",
+          "--mode=block",
+          "sleep",
+          "infinity",
+        ],
+        Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
+      )
+    }
+    setCaffeineOn(true)
+    return true
+  }
+  if (caffeineProc) {
+    try {
+      caffeineProc.force_exit()
+    } catch {
+      /* already dead */
+    }
+    caffeineProc = null
+  }
+  setCaffeineOn(false)
+  return false
+}
+
+/** Toggle idle/sleep inhibit. Used by bar button + `ags request caffeine`. */
+export function toggleCaffeine(): string {
+  const next = !caffeineOn.peek()
+  applyCaffeine(next)
+  return next ? "caffeine-on" : "caffeine-off"
+}
+
+export function getCaffeineOn(): boolean {
+  return caffeineOn.peek()
+}
+
+/**
+ * One visual chip: HH:MM ☕
+ * Shared chrome; left = calendar menubutton, right = caffeine toggle.
+ * No vertical rule — spacing alone separates the hit targets.
+ */
+function ClockCaffeine({ timeFormat = "%H:%M" }) {
+  const time = createPoll("", 1000, () =>
+    GLib.DateTime.new_now_local().format(timeFormat)!,
+  )
+  const iconFile = caffeineOn((on) => (on ? ICON_CAFFEINE_ON : ICON_CAFFEINE_OFF))
+  const cupTip = caffeineOn((on) =>
+    on ? "Caffeine on — click to allow sleep" : "Caffeine off — click to stay awake",
+  )
+  const shellClass = caffeineOn((on) =>
+    on ? "ClockCluster caffeine-on" : "ClockCluster",
+  )
+
+  return (
+    <box class={shellClass} spacing={0} valign={Gtk.Align.CENTER}>
+      <menubutton class="ClockCluster-time" tooltipText="Calendar">
+        <label class="Clock-time" label={time} />
+        <popover>
+          <Gtk.Calendar />
+        </popover>
+      </menubutton>
+
+      <button
+        class="ClockCluster-cup"
+        tooltipText={cupTip}
+        onClicked={() => toggleCaffeine()}
+      >
+        <image file={iconFile} pixelSize={14} />
+      </button>
+    </box>
   )
 }
 
@@ -323,8 +572,12 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           <Volume />
         </box>
         <box $type="center" />
-        <box $type="end" spacing={8} class="Bar-end">
-          <Clock />
+        <box $type="end" spacing={0} class="Bar-end">
+          {/* Capture caret + panel — paused 2026-07-17 (cut here; re-enable later)
+          <CaptureToggle gdkmonitor={gdkmonitor} />
+          */}
+          <LocalLlm gdkmonitor={gdkmonitor} />
+          <ClockCaffeine />
         </box>
       </centerbox>
     </window>

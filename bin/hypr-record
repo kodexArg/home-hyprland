@@ -1,0 +1,574 @@
+#!/usr/bin/env bash
+# Hyprland screen recording (wf-recorder + slurp) — companion to hypr-screenshot.
+#
+# Usage:
+#   hypr-record window|region|full
+#   hypr-record panel <left|right|aoc|asus|bar|…>
+#   hypr-record left|right|bar|…          # short form = panel
+#   hypr-record stop                      # SIGINT → finalize file
+#   hypr-record toggle [mode…]            # stop if running, else start (default: region)
+#   hypr-record status
+#   hypr-record inventory
+#
+# Options (anywhere before mode):
+#   --no-audio          no sound
+#   --mic               default Pulse/PipeWire source (mic)
+#   --system-audio      default sink.monitor (desktop audio)  [default]
+#   --framerate N       hard CFR (wf-recorder -r)
+#   --agent             no setsid; useful for CLI/scripts
+#
+# Env:
+#   HYPR_REC_AUDIO=0|mic|system   (default system)
+#   HYPR_REC_FPS=N
+#   HYPR_REC_CODEC=…              e.g. libx264 / h264_nvenc
+#   HYPR_REC_AGENT=1              same as --agent
+#
+# Keybinds (hyprland.lua):
+#   Super+Shift+R     → toggle region
+#   Super+Shift+Alt+R → toggle window
+#
+# Files: ~/Videos/Screencasts/YYYYMMDD-HHMMSS-<pid>-<rand>.mp4
+# State: $XDG_RUNTIME_DIR/hypr-record.{pid,state}
+# Log:   $XDG_RUNTIME_DIR/hypr-record.log
+set -euo pipefail
+
+export PATH="/home/kodex/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
+LOG="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.log"
+PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.pid"
+STATEFILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.state"
+DIR="${XDG_VIDEOS_DIR:-$HOME/Videos}/Screencasts"
+
+log() { printf '%s %s\n' "$(date -Iseconds)" "$*" >>"$LOG" 2>/dev/null || true; }
+
+AUDIO_MODE="${HYPR_REC_AUDIO:-system}"
+FRAMERATE="${HYPR_REC_FPS:-}"
+CODEC="${HYPR_REC_CODEC:-}"
+AGENT="${HYPR_REC_AGENT:-0}"
+
+# ── option parse ────────────────────────────────────────────────────────────
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent)          AGENT=1; shift ;;
+    --no-audio)       AUDIO_MODE=0; shift ;;
+    --mic)            AUDIO_MODE=mic; shift ;;
+    --system-audio|--desktop-audio) AUDIO_MODE=system; shift ;;
+    --framerate)      FRAMERATE="${2:-}"; shift 2 ;;
+    --framerate=*)    FRAMERATE="${1#*=}"; shift ;;
+    --codec)          CODEC="${2:-}"; shift 2 ;;
+    --codec=*)        CODEC="${1#*=}"; shift ;;
+    -h|--help|help)
+      ARGS=(help); shift
+      while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done
+      break
+      ;;
+    --) shift; while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done; break ;;
+    *)  ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+if [[ "$AGENT" == "1" ]]; then
+  export HYPR_REC_AGENT=1
+  export HYPR_REC_DETACHED=1
+fi
+
+mode="${1:-}"
+arg2="${2:-}"
+
+# ── helpers ────────────────────────────────────────────────────────────────
+notify() {
+  local msg="$1"
+  local icon="${2:-5}"  # 5=Ok 3=Error 0=Warning
+  hyprctl notify "$icon" 8750 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send -a hypr-record -i media-record "Screen record" "$msg" 2>/dev/null || true
+  fi
+}
+
+is_recording() {
+  [[ -f "$PIDFILE" ]] || return 1
+  local pid
+  pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+read_state() {
+  # mode|file|started_iso
+  if [[ -f "$STATEFILE" ]]; then
+    cat "$STATEFILE"
+  fi
+}
+
+write_state() {
+  # $1 mode $2 file
+  printf '%s|%s|%s\n' "$1" "$2" "$(date -Iseconds)" >"$STATEFILE"
+}
+
+clear_state() {
+  rm -f "$PIDFILE" "$STATEFILE"
+}
+
+label_for_mode() {
+  case "$1" in
+    window)  echo "APP WINDOW RECORD" ;;
+    region)  echo "AREA RECORD" ;;
+    full)    echo "FULL SCREEN RECORD" ;;
+    monitor|panel) echo "PANEL RECORD" ;;
+    *)       echo "SCREEN RECORD" ;;
+  esac
+}
+
+# Same dual-panel map as hypr-screenshot.
+resolve_output() {
+  local key
+  key="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$key" in
+    ""|active|focused)
+      hyprctl monitors -j 2>>"$LOG" | python3 -c '
+import json,sys
+ms=json.load(sys.stdin)
+for m in ms:
+    if m.get("focused"):
+        print(m["name"]); sys.exit(0)
+if ms: print(ms[0]["name"]); sys.exit(0)
+sys.exit(1)
+' 2>>"$LOG"
+      ;;
+    left|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-left|panel_left)
+      echo "HDMI-A-1"
+      ;;
+    right|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-right|panel_right)
+      echo "HDMI-A-2"
+      ;;
+    hdmi-a-1|HDMI-A-1) echo "HDMI-A-1" ;;
+    hdmi-a-2|HDMI-A-2) echo "HDMI-A-2" ;;
+    *)
+      if hyprctl monitors -j 2>>"$LOG" | python3 -c '
+import json,sys
+want=sys.argv[1]
+ms=json.load(sys.stdin)
+sys.exit(0 if want in [m["name"] for m in ms] else 1)
+' "$1" 2>>"$LOG"; then
+        echo "$1"
+      else
+        return 1
+      fi
+      ;;
+  esac
+}
+
+active_window_geom() {
+  hyprctl activewindow -j 2>>"$LOG" | python3 -c '
+import json, sys
+try:
+    w = json.load(sys.stdin)
+except Exception as e:
+    sys.stderr.write(f"activewindow parse: {e}\n")
+    sys.exit(1)
+if not w:
+    sys.exit(1)
+at = w.get("at") or [0, 0]
+size = w.get("size") or [0, 0]
+x, y = int(at[0]), int(at[1])
+ww, hh = int(size[0]), int(size[1])
+if ww <= 0 or hh <= 0:
+    sys.exit(1)
+title = (w.get("title") or "")[:60]
+sys.stderr.write(f"window title={title!r} geom={x},{y} {ww}x{hh}\n")
+print(f"{x},{y} {ww}x{hh}")
+' 2>>"$LOG"
+}
+
+full_layout_geom() {
+  hyprctl monitors -j 2>>"$LOG" | python3 -c '
+import json,sys
+ms=json.load(sys.stdin)
+if not ms: sys.exit(1)
+xs=[]; ys=[]; xe=[]; ye=[]
+for m in ms:
+    x,y=int(m["x"]),int(m["y"])
+    w,h=int(m["width"]),int(m["height"])
+    xs.append(x); ys.append(y); xe.append(x+w); ye.append(y+h)
+x0,y0=min(xs),min(ys)
+print(f"{x0},{y0} {max(xe)-x0}x{max(ye)-y0}")
+' 2>>"$LOG"
+}
+
+print_inventory() {
+  python3 - <<'PY' 2>>"$LOG"
+import json, subprocess, os
+
+ms = json.loads(subprocess.check_output(["hyprctl", "monitors", "-j"], text=True))
+clients = json.loads(subprocess.check_output(["hyprctl", "clients", "-j"], text=True))
+pidf = os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/hypr-record.pid"
+stf = os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/hypr-record.state"
+rec = False
+if os.path.isfile(pidf):
+    try:
+        pid = int(open(pidf).read().strip())
+        os.kill(pid, 0)
+        rec = True
+    except Exception:
+        rec = False
+print("=== recording ===")
+if rec:
+    st = open(stf).read().strip() if os.path.isfile(stf) else "?"
+    print(f"  ACTIVE pid={open(pidf).read().strip()} state={st}")
+else:
+    print("  idle")
+print("\n=== panels (this host) ===")
+for m in ms:
+    name = m["name"]
+    mid = m.get("id")
+    if name == "HDMI-A-1":
+        role = "left / AOC landscape"
+    elif name == "HDMI-A-2":
+        role = "right / ASUS portrait + AGS bar"
+    else:
+        role = "other"
+    foc = " FOCUSED" if m.get("focused") else ""
+    print(f"\n[{name}] id={mid} {m['width']}x{m['height']} @ {m['x']},{m['y']} transform={m.get('transform')}{foc}")
+    print(f"  role: {role}")
+    cl = [c for c in clients if c.get("monitor") == mid or str(c.get("monitor")) == str(mid)]
+    if not cl:
+        print("  clients: (none)")
+    else:
+        print("  clients:")
+        for c in cl:
+            cls = c.get("class") or "?"
+            title = (c.get("title") or "")[:60]
+            print(f"    - class={cls!r} title={title!r}")
+print("\nAliases: left|aoc → HDMI-A-1 · right|asus|bar → HDMI-A-2")
+print("Record:  hypr-record region|window|panel left|toggle region|stop")
+PY
+}
+
+audio_args() {
+  case "$AUDIO_MODE" in
+    0|no|false|off|none)
+      return 0
+      ;;
+    mic|source|default)
+      printf '%s\n' "-a"
+      ;;
+    system|desktop|monitor|sink)
+      local sink mon
+      sink="$(pactl get-default-sink 2>/dev/null || true)"
+      if [[ -n "$sink" ]]; then
+        mon="${sink}.monitor"
+        # Prefer exact source name if present
+        if pactl list short sources 2>/dev/null | awk '{print $2}' | grep -qx "$mon"; then
+          printf '%s\n' "-a${mon}"
+          return 0
+        fi
+      fi
+      # Fallback: first *.monitor source
+      mon="$(pactl list short sources 2>/dev/null | awk '{print $2}' | grep '\.monitor$' | head -1 || true)"
+      if [[ -n "$mon" ]]; then
+        printf '%s\n' "-a${mon}"
+      else
+        log "no sink.monitor; falling back to default -a"
+        printf '%s\n' "-a"
+      fi
+      ;;
+    *)
+      # Treat as explicit source name
+      printf '%s\n' "-a${AUDIO_MODE}"
+      ;;
+  esac
+}
+
+build_cmd() {
+  # sets WF_CMD array: wf-recorder … -f file
+  local file="$1"
+  WF_CMD=(wf-recorder -f "$file" -y)
+  local a
+  while IFS= read -r a; do
+    [[ -n "$a" ]] && WF_CMD+=("$a")
+  done < <(audio_args)
+  if [[ -n "$FRAMERATE" ]]; then
+    WF_CMD+=(-r "$FRAMERATE")
+  fi
+  if [[ -n "$CODEC" ]]; then
+    WF_CMD+=(-c "$CODEC")
+  fi
+}
+
+stop_recording() {
+  if ! is_recording; then
+    log "stop: not recording"
+    notify "SCREEN RECORD: not active" 0
+    echo "not recording" >&2
+    return 1
+  fi
+  local pid file mode_s started
+  pid="$(cat "$PIDFILE")"
+  IFS='|' read -r mode_s file started <<<"$(read_state)"
+  log "stop: INT pid=$pid file=${file:-?} mode=${mode_s:-?}"
+  notify "STOPPING RECORD…" 0
+  # SIGINT = clean finalize (same as Ctrl+C in wf-recorder)
+  kill -INT "$pid" 2>>"$LOG" || true
+  # Wait for encoder to flush (up to ~15s)
+  local i=0
+  while kill -0 "$pid" 2>/dev/null && [[ $i -lt 150 ]]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    log "stop: pid $pid still alive → TERM"
+    kill -TERM "$pid" 2>>"$LOG" || true
+    sleep 0.3
+    kill -KILL "$pid" 2>>"$LOG" || true
+  fi
+  clear_state
+  if [[ -n "${file:-}" && -f "$file" ]]; then
+    local sz
+    sz="$(wc -c <"$file" | tr -d ' ')"
+    log "stop: saved $file ($sz bytes)"
+    notify "$(label_for_mode "${mode_s:-region}"): $(basename "$file") (${sz} B)"
+    if [[ "$AGENT" == "1" ]]; then
+      printf '%s\n' "$file"
+    fi
+    return 0
+  fi
+  log "stop: file missing ${file:-}"
+  notify "SCREEN RECORD: stopped (file missing?)" 3
+  return 1
+}
+
+status_recording() {
+  if is_recording; then
+    local pid st
+    pid="$(cat "$PIDFILE")"
+    st="$(read_state)"
+    echo "recording pid=$pid state=$st"
+    return 0
+  fi
+  echo "idle"
+  return 1
+}
+
+# Detach from keybind tree for long-running start (not stop/status/help).
+maybe_detach_start() {
+  if [[ -z "${HYPR_REC_DETACHED:-}" ]]; then
+    export HYPR_REC_DETACHED=1
+    export HYPR_REC_AUDIO="$AUDIO_MODE"
+    export HYPR_REC_FPS="${FRAMERATE:-}"
+    export HYPR_REC_CODEC="${CODEC:-}"
+    export HYPR_REC_AGENT="$AGENT"
+    if command -v setsid >/dev/null 2>&1; then
+      setsid -f env HYPR_REC_DETACHED=1 \
+        HYPR_REC_AUDIO="$AUDIO_MODE" \
+        HYPR_REC_FPS="${FRAMERATE:-}" \
+        HYPR_REC_CODEC="${CODEC:-}" \
+        HYPR_REC_AGENT="$AGENT" \
+        "$0" "$@" </dev/null >>"$LOG" 2>&1
+    else
+      nohup env HYPR_REC_DETACHED=1 \
+        HYPR_REC_AUDIO="$AUDIO_MODE" \
+        HYPR_REC_FPS="${FRAMERATE:-}" \
+        HYPR_REC_CODEC="${CODEC:-}" \
+        HYPR_REC_AGENT="$AGENT" \
+        "$0" "$@" </dev/null >>"$LOG" 2>&1 &
+    fi
+    exit 0
+  fi
+}
+
+start_recording() {
+  # $1 kind  remaining: either -g geom | -o output | (nothing for full geom)
+  local kind="$1"
+  shift
+
+  if ! command -v wf-recorder >/dev/null 2>&1; then
+    notify "SCREEN RECORD: wf-recorder not installed" 3
+    echo "wf-recorder missing (apt install wf-recorder)" >&2
+    exit 1
+  fi
+
+  if is_recording; then
+    log "start refused: already recording"
+    notify "SCREEN RECORD: already active (hypr-record stop)" 0
+    echo "already recording — hypr-record stop | toggle" >&2
+    exit 1
+  fi
+
+  mkdir -p "$DIR"
+  local file
+  file="$DIR/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM.mp4"
+
+  build_cmd "$file"
+  # append geometry/output args from caller
+  WF_CMD+=("$@")
+
+  log "start kind=$kind file=$file cmd=${WF_CMD[*]} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+
+  # Launch recorder in background inside this (possibly setsid) process
+  "${WF_CMD[@]}" >>"$LOG" 2>&1 &
+  local wpid=$!
+  # Brief settle — fail fast if encoder dies
+  sleep 0.35
+  if ! kill -0 "$wpid" 2>/dev/null; then
+    log "wf-recorder exited immediately"
+    notify "$(label_for_mode "$kind"): failed (see log)" 3
+    wait "$wpid" 2>/dev/null || true
+    exit 1
+  fi
+
+  echo "$wpid" >"$PIDFILE"
+  write_state "$kind" "$file"
+  notify "$(label_for_mode "$kind"): recording… (toggle/stop to end)"
+  log "recording pid=$wpid file=$file"
+
+  # Reap + notify on natural exit (rare: killed externally without our stop)
+  wait "$wpid" 2>/dev/null || true
+  local rc=$?
+  # If stop_recording already cleared state, skip double notify
+  if [[ -f "$PIDFILE" ]] && [[ "$(cat "$PIDFILE" 2>/dev/null)" == "$wpid" ]]; then
+    clear_state
+    if [[ -f "$file" ]]; then
+      local sz
+      sz="$(wc -c <"$file" | tr -d ' ')"
+      log "recorder exit rc=$rc file=$file sz=$sz"
+      notify "$(label_for_mode "$kind"): $(basename "$file") (${sz} B)"
+    else
+      log "recorder exit rc=$rc no file"
+      notify "$(label_for_mode "$kind"): ended (no file)" 3
+    fi
+  else
+    log "recorder reaped after stop rc=$rc"
+  fi
+}
+
+do_start_mode() {
+  local m="$1"
+  local a2="${2:-}"
+
+  case "$m" in
+    window)
+      maybe_detach_start window
+      local geom
+      if ! geom="$(active_window_geom)"; then
+        notify "APP WINDOW RECORD: no focused window" 3
+        exit 1
+      fi
+      log "window geom=$geom"
+      start_recording window -g "$geom"
+      ;;
+    region)
+      maybe_detach_start region
+      # slurp must run in the interactive session (pointer)
+      local geom
+      geom="$(slurp 2>>"$LOG")" || {
+        log "slurp cancelled"
+        notify "AREA RECORD: cancelled" 0
+        exit 0
+      }
+      log "region geom=$geom"
+      start_recording region -g "$geom"
+      ;;
+    full|all|desktop)
+      maybe_detach_start full
+      local geom
+      if ! geom="$(full_layout_geom)"; then
+        notify "FULL SCREEN RECORD: no monitors" 3
+        exit 1
+      fi
+      log "full geom=$geom"
+      start_recording full -g "$geom"
+      ;;
+    monitor|output|panel)
+      local target out
+      target="${a2:-active}"
+      if ! out="$(resolve_output "$target")"; then
+        notify "PANEL RECORD: unknown target '$target'" 3
+        echo "unknown panel/output: $target (try: inventory)" >&2
+        exit 2
+      fi
+      maybe_detach_start panel "$target"
+      log "panel target=$target → $out"
+      start_recording panel -o "$out"
+      ;;
+    left|right|aoc|asus|bar|landscape|portrait|main|HDMI-A-1|HDMI-A-2|hdmi-a-1|hdmi-a-2)
+      if ! out="$(resolve_output "$m")"; then
+        notify "PANEL RECORD: unknown '$m'" 3
+        exit 2
+      fi
+      maybe_detach_start "$m"
+      start_recording panel -o "$out"
+      ;;
+    *)
+      echo "usage: hypr-record window|region|full|panel <alias>|toggle|stop|status" >&2
+      exit 2
+      ;;
+  esac
+}
+
+# ── dispatch ───────────────────────────────────────────────────────────────
+case "${mode:-}" in
+  "" )
+    echo "usage: hypr-record window|region|full|panel <alias>|toggle [mode]|stop|status|inventory" >&2
+    exit 2
+    ;;
+  -h|--help|help)
+    cat <<'EOF'
+hypr-record — wf-recorder helper for this host (Hyprland)
+
+Modes:
+  region              slurp area (default for toggle)
+  window              focused window geometry
+  full                both panels (layout bbox)
+  panel <alias>       one output (left|right|aoc|asus|bar|HDMI-A-1|…)
+  left|right|bar|…    short form = panel <alias>
+  toggle [mode…]      if recording → stop; else start mode (default region)
+  stop                finalize current recording
+  status              idle | recording pid=… state=…
+  inventory           panels + clients + record state
+
+Audio (default: system / sink.monitor):
+  --system-audio      desktop audio
+  --mic               default capture source
+  --no-audio          silent
+
+Other:
+  --framerate N       constant FPS
+  --codec NAME        ffmpeg encoder (libx264, h264_nvenc, …)
+  --agent             no setsid (CLI)
+
+Files: ~/Videos/Screencasts/
+Log:   $XDG_RUNTIME_DIR/hypr-record.log
+EOF
+    ;;
+  stop|end|finish)
+    stop_recording
+    ;;
+  status|stat)
+    status_recording || true
+    ;;
+  inventory|list|panels)
+    print_inventory
+    ;;
+  toggle)
+    if is_recording; then
+      stop_recording
+    else
+      # default region; pass through remaining args as mode
+      shift || true
+      if [[ $# -eq 0 ]]; then
+        do_start_mode region
+      else
+        do_start_mode "$@"
+      fi
+    fi
+    ;;
+  window|region|full|all|desktop|monitor|output|panel|left|right|aoc|asus|bar|landscape|portrait|main|HDMI-A-1|HDMI-A-2|hdmi-a-1|hdmi-a-2)
+    do_start_mode "$@"
+    ;;
+  *)
+    log "bad mode: $mode"
+    echo "usage: hypr-record window|region|full|panel <alias>|toggle|stop|status|inventory" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+# Super+A — revealAllWindows(): gather all clients on active ws, drop fullscreen, close scratchpad.
+# Agents: when kodex says "muestra todo" / "reveal all windows", run this (not ad-hoc hyprctl).
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+
+
+def hyprctl_json(cmd: str):
+    r = subprocess.run(["hyprctl", cmd, "-j"], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        sys.exit(f"hyprctl {cmd} failed: {r.stderr.strip()}")
+    return json.loads(r.stdout)
+
+
+def dispatch(lua_expr: str) -> None:
+    r = subprocess.run(["hyprctl", "dispatch", lua_expr], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        msg = (r.stdout + r.stderr).strip()
+        print(f"warn: {lua_expr}: {msg}", file=sys.stderr)
+
+
+def main() -> int:
+    active = hyprctl_json("activeworkspace")
+    target_id = active["id"]
+    active_name = str(active.get("name", ""))
+    active_special: str | None = None
+
+    if active_name.startswith("special:"):
+        active_special = active_name.removeprefix("special:") or "magic"
+        target_id = 1
+
+    for client in hyprctl_json("clients"):
+        addr = client["address"]
+        window = f"address:{addr}"
+        ws_id = client["workspace"]["id"]
+        fullscreen = client.get("fullscreen", 0)
+
+        if ws_id != target_id:
+            dispatch(f'hl.dsp.window.move({{ workspace = {target_id}, window = "{window}" }})')
+
+        if fullscreen == 2:
+            dispatch(
+                f'hl.dsp.window.fullscreen_state({{ internal = 0, client = 0, action = "set", window = "{window}" }})'
+            )
+        elif fullscreen == 1:
+            dispatch(
+                f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "{window}" }})'
+            )
+
+    if active_special is not None:
+        dispatch(f'hl.dsp.workspace.toggle_special("{active_special}")')
+
+    dispatch(f"hl.dsp.focus({{ workspace = {target_id} }})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

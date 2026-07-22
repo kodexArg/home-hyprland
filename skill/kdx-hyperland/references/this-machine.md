@@ -30,12 +30,12 @@ Sync pattern: copy or symlink from `~/home-hyprland` into `~/.config/{hypr,ags,k
 
 ## Monitors (rotated-T `--|`)
 
-| Output | Role | transform | position |
-|---|---|---|---|
-| HDMI-A-1 | AOC left, landscape | 0 | `0x0` |
-| HDMI-A-2 | ASUS right, portrait | **3** (270°) | `1920x0` |
+| Output | Role | transform | scale | position | logical |
+|---|---|---|---|---|---|
+| HDMI-A-1 | AOC left, landscape | 0 | 1 | `0x100` | 1920×1080 |
+| HDMI-A-2 | ASUS right, portrait | **3** (270°) | **1.5** | `1920x0` | **720×1280** |
 
-Mode: `preferred`, scale `1`. Match GNOME portrait on mon1 when porting layout.
+Mode: `preferred`. Portrait UI zoom is permanent compositor scale (not crop).
 
 ## Autostart (`hl.on("hyprland.start")`)
 
@@ -78,7 +78,8 @@ AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1   # NVIDIA primary, Renoir secondar
 - `follow_mouse = 1`
 - Hardware cursors: `cursor.no_hardware_cursors = false` (AUTO left ghost cursor on NVIDIA dual-GPU)
 - Device disabled: `ducky-ducky-one2-sf-rgb-1` (Ducky One2 SF RGB HID mouse interface — second pointer)
-- Real pointer: Logitech G300s
+- Real pointer: Logitech G300s (`logitech-g300s-optical-gaming-mouse`) — `accel_profile = flat`, `sensitivity = -0.2` (~**0.8×** linear). ratbag/piper already on host (`thundering-gerbil`, active profile @ 1000dpi; no 800dpi step)
+
 
 ## Related ADRs (in force)
 

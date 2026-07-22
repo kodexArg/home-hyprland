@@ -21,11 +21,17 @@ $cream-100:  #F3EEE4;
 $warm-200:   #cdbfa8;
 $orange-500: #ff8c42;
 
-// Premultiplied over ink-1000 — same weights as hypr rgba alphas
-$border-inactive: color.mix($ink-600, $ink-1000, 66.7%);   // 3a352faa
-$fill-inactive:   color.mix($ink-600, $ink-1000, 45%);     // border −100
-$border-active:   color.mix($orange-500, $ink-1000, 53.3%); // ff8c4288
-$fill-active:     color.mix($orange-500, $ink-1000, 35%);  // border −100
+// Nautilus / Adwaita dark (prefer-dark) — main view gray, not warm ink
+// libadwaita dark window_bg ≈ #222226; Nautilus content reads a hair lighter
+$nautilus-bg:    #242424;
+$nautilus-bg-hi: #2a2a2a; // temp / hover lift
+$nautilus-edge:  #3d3d3d; // subtle rim on gray
+
+// Chrome: Nautilus fill + existing accent rims
+$border-inactive: $nautilus-edge;
+$fill-inactive:   $nautilus-bg;
+$border-active:   color.mix($orange-500, $nautilus-bg, 55%);
+$fill-active:     $nautilus-bg-hi;
 
 window.BarEdge {
   // 1% ink — invisible but captures pointer
@@ -42,7 +48,9 @@ window.Bar {
     border-radius: 10px;
     border: 2px solid $border-inactive;
     margin: 5px;
-    padding: 2px 8px;
+    // Vertical: previous +0.5rem. Horizontal: fixed rem so start (speaker)
+    // and end (clock) clear the rim without per-widget hacks.
+    padding: calc(4px + 0.5rem) 0.75rem;
     background: $fill-inactive;
   }
 
@@ -64,9 +72,10 @@ window.Bar {
   }
 
   button {
-    border-radius: 8px;
-    margin: 2px;
-    padding: 4px 8px;
+    border-radius: 6px;
+    // horizontal only — vertical margins stack and fatten the bar
+    margin: 0 1px;
+    padding: 1px 6px;
     color: $cream-100;
     border: 2px solid transparent;
     background: transparent;
@@ -82,39 +91,365 @@ window.Bar {
     }
   }
 
+  // Tight cluster: speaker · − · track · +
   .Volume {
-    margin: 2px 4px;
-    min-width: 240px;
+    margin: 0;
+    min-width: 0;
 
     &-mute,
     &-step {
-      min-height: 28px;
+      min-height: 20px;
+      margin: 0;
+      padding: 0 2px;
+      border-width: 1px;
+    }
+
+    &-mute {
+      min-width: 20px;
+      padding: 0 1px;
     }
 
     &-step {
-      min-width: 28px;
-      padding: 4px 6px;
-      font-size: 1.1em;
+      min-width: 16px;
+      padding: 0 1px;
+      font-size: 0.95em;
     }
 
     // Click/drag track — orange fill child grows with volume
     &-track {
       min-width: 120px;
-      min-height: 18px;
-      margin: 0 4px;
-      border-radius: 6px;
+      min-height: 14px;
+      margin: 0 1px;
+      border-radius: 5px;
       border: 2px solid $ink-600;
       background-color: $ink-600;
     }
 
     &-fill {
-      min-height: 18px;
+      min-height: 14px;
       background: $orange-500;
-      border-radius: 4px;
+      border-radius: 3px;
     }
   }
 
-  .Clock {
-    margin: 2px 4px;
+  // Capture tools: menubutton opens popover below (see popover.Capture-popover)
+  .Capture-toggle {
+    margin: 0 1px;
+    min-height: 22px;
+    min-width: 22px;
+    padding: 0 4px;
+    font-size: 0.9em;
+
+    &.open,
+    &:checked {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+  }
+
+  // Local LLM brain — same size as caffeine/volume icons; orange=live · amber=load · red=unload
+  .LocalLlm {
+    margin: 0 1px;
+    min-height: 22px;
+    min-width: 22px;
+    padding: 0 4px;
+
+    &.open {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    &.on {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    &.load {
+      border-color: color.mix(#e6b84d, $nautilus-bg, 70%);
+      background: color.mix(#e6b84d, $nautilus-bg, 22%);
+    }
+
+    &.unload {
+      border-color: color.mix(#c45c4a, $nautilus-bg, 65%);
+      background: color.mix(#c45c4a, $nautilus-bg, 18%);
+    }
+  }
+
+  // One chip: HH:MM ☕ — shared rim, no vertical rule; clicks stay split
+  .ClockCluster {
+    margin: 0 1px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background: transparent;
+    min-height: 22px;
+
+    // caffeine on → warm shell (whole pill)
+    &.caffeine-on {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    // hover on either half lifts the whole chip
+    &:hover {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    // Kill global `button { border: 2px … }` so halves don't look separate
+    button,
+    menubutton {
+      margin: 0;
+      padding: 0;
+      min-height: 18px;
+      border-radius: 0;
+      border: none;
+      background: transparent;
+
+      &:hover,
+      &:active {
+        border: none;
+        background: transparent;
+      }
+    }
+
+    &-time {
+      padding: 0 2px 0 6px;
+
+      .Clock-time {
+        font-size: 1.2em;
+        color: #faf8f4;
+      }
+    }
+
+    &-cup {
+      padding: 0 5px 0 2px;
+      min-width: 18px;
+    }
+  }
+}
+
+// Floating capture panel (separate layer-shell window under the bar)
+// Soft, non-invasive: muted orange icon chips + warm cream labels
+$capture-chip-bg:     color.mix($orange-500, $ink-1000, 18%);
+$capture-chip-border: color.mix($orange-500, $ink-1000, 32%);
+$capture-chip-hover:  color.mix($orange-500, $ink-1000, 28%);
+$capture-label:       color.mix($cream-100, $warm-200, 55%); // soft off-white
+
+window.CapturePanel {
+  // Never fully transparent under GSK gl — empty input region otherwise
+  background: rgba(12, 11, 9, 0.02);
+  color: $capture-label;
+
+  .Capture-actions {
+    border-radius: 10px;
+    border: 1px solid $border-inactive;
+    background: $fill-inactive;
+    padding: 8px;
+    margin: 0;
+    min-width: 176px;
+  }
+
+  // Full-row hit target; chrome lives on the icon chip
+  button.Capture-action {
+    min-height: 30px;
+    padding: 3px 8px 3px 4px;
+    border-radius: 7px;
+    color: $capture-label;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+
+      .Capture-icon {
+        background: $capture-chip-hover;
+        border-color: color.mix($orange-500, $ink-1000, 48%);
+      }
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+
+      .Capture-icon {
+        background: color.mix($orange-500, $ink-1000, 36%);
+        border-color: color.mix($orange-500, $ink-1000, 55%);
+      }
+    }
+  }
+
+  // Inverted chip: fixed square (size from width/heightRequest in JSX).
+  // Glyph centered via hexpand/vexpand + Align.CENTER on the image.
+  .Capture-icon {
+    min-width: 26px;
+    min-height: 26px;
+    border-radius: 6px;
+    border: 1px solid $capture-chip-border;
+    background: $capture-chip-bg;
+    padding: 0;
+    margin: 0;
+
+    image {
+      margin: 0;
+      padding: 0;
+    }
+  }
+
+  .Capture-label {
+    font-size: 0.88em;
+    font-weight: 500;
+    color: $capture-label;
+    letter-spacing: 0.01em;
+  }
+}
+
+// Full-monitor click-away under Local LLM menu (non-zero alpha → GSK hit-test)
+window.LocalLlmClickaway {
+  background: rgba(12, 11, 9, 0.02);
+}
+
+// Local LLM model menu (floating layer under the bar)
+window.LocalLlmPanel {
+  background: rgba(12, 11, 9, 0.02);
+  color: $capture-label;
+
+  .LocalLlm-menu {
+    border-radius: 10px;
+    border: 1px solid $border-inactive;
+    background: $fill-inactive;
+    padding: 8px;
+    margin: 0;
+    min-width: 240px;
+  }
+
+  .LocalLlm-status {
+    font-size: 0.8em;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: color.mix($cream-100, $warm-200, 40%);
+    padding: 2px 6px 4px;
+
+    &.ready {
+      color: color.mix($cream-100, $orange-500, 35%);
+    }
+
+    &.loading {
+      color: color.mix($cream-100, #e6b84d, 45%);
+    }
+
+    &.shutting {
+      color: color.mix($cream-100, #c45c4a, 40%);
+    }
+
+    &.failed {
+      color: color.mix($cream-100, #c45c4a, 55%);
+    }
+
+    &.off {
+      color: color.mix($cream-100, $warm-200, 35%);
+      font-weight: 500;
+    }
+  }
+
+  .LocalLlm-sep {
+    min-height: 1px;
+    background: $nautilus-edge;
+    margin: 4px 2px;
+    opacity: 0.9;
+  }
+
+  // Each model is a full-row button (cleaner than nested controls).
+  button.LocalLlm-model,
+  button.LocalLlm-off {
+    min-height: 30px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    color: $capture-label;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+    }
+  }
+
+  button.LocalLlm-model {
+    // live — warm orange (bar language), not green
+    &.on {
+      border-color: color.mix($orange-500, $ink-1000, 55%);
+      background: color.mix($orange-500, $ink-1000, 20%);
+
+      .LocalLlm-mark { color: $orange-500; }
+      .LocalLlm-label { color: $cream-100; }
+    }
+
+    // waiting for unload + loading weights — amber
+    &.load {
+      border-color: color.mix(#e6b84d, $ink-1000, 55%);
+      background: color.mix(#e6b84d, $ink-1000, 16%);
+
+      .LocalLlm-mark { color: #e6b84d; }
+      .LocalLlm-label { color: color.mix($cream-100, #e6b84d, 40%); }
+    }
+
+    // abandoned model still in VRAM — red (never used on OFF)
+    &.unload {
+      border-color: color.mix(#c45c4a, $ink-1000, 55%);
+      background: color.mix(#c45c4a, $ink-1000, 16%);
+
+      .LocalLlm-mark { color: #c45c4a; }
+      .LocalLlm-label { color: color.mix($cream-100, #c45c4a, 35%); }
+    }
+
+    // unit failed after load attempt
+    &.failed {
+      border-color: color.mix(#c45c4a, $ink-1000, 60%);
+      background: color.mix(#c45c4a, $ink-1000, 12%);
+
+      .LocalLlm-mark { color: #c45c4a; }
+      .LocalLlm-label { color: color.mix($cream-100, #c45c4a, 40%); }
+    }
+  }
+
+  button.LocalLlm-off {
+    margin-top: 2px;
+
+    .LocalLlm-label {
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: color.mix($cream-100, $warm-200, 50%);
+    }
+
+    // unit fully stopped — soft armed state (not red)
+    &.armed {
+      border-color: color.mix($cream-100, $ink-1000, 18%);
+      background: color.mix($cream-100, $ink-1000, 5%);
+    }
+
+    &:hover {
+      border-color: color.mix(#c45c4a, $ink-1000, 40%);
+      background: color.mix(#c45c4a, $ink-1000, 12%);
+
+      .LocalLlm-label {
+        color: color.mix($cream-100, #c45c4a, 30%);
+      }
+    }
+  }
+
+  .LocalLlm-mark {
+    font-size: 0.7em;
+    min-width: 1.1em;
+    color: color.mix($cream-100, $warm-200, 40%);
+  }
+
+  .LocalLlm-label {
+    font-size: 0.88em;
+    font-weight: 500;
+    color: $capture-label;
+    letter-spacing: 0.01em;
   }
 }

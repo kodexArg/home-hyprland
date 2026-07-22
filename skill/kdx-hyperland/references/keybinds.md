@@ -7,7 +7,7 @@
 
 | Bind | Action |
 |---|---|
-| Super+Q | Kitty terminal |
+| Super+T | Kitty terminal |
 | Super+G | Grok CLI (kitty class `grok-cli`, forced to HDMI-A-2) |
 | Super+X | Brave browser |
 | Super+E | Nautilus |
@@ -17,8 +17,9 @@
 | Super+CTRL+X | Kill active window |
 | Super+M | Exit (`hyprshutdown` if present, else exit dispatcher) |
 | Super+V | Toggle float |
+| Super+F | Toggle full panel (maximize / restore) |
 | Super+P | Pseudo (dwindle) |
-| Super+J | togglesplit (dwindle; needs `preserve_split`) |
+| Super+Q | togglesplit (dwindle; needs `preserve_split`) |
 
 ## AGS bar
 
@@ -28,7 +29,7 @@
 | Super_L | `ags request bar-peek` — **non_consuming** (does not steal Super+*) |
 | Super_R | same as Super_L |
 
-Modes: **always** (transparent chrome) · **temp** (active chrome, auto-hide 5s) · **hidden**.  
+Modes: **always** (transparent chrome) · **temp** (active chrome, auto-hide 2.5s) · **hidden**.  
 Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 
 ## Focus / move / resize
@@ -45,8 +46,10 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 |---|---|
 | Super+1…9,0 | Focus workspace 1–10 |
 | Super+Shift+1…9,0 | Move window to workspace 1–10 |
-| Super+S | Toggle special workspace `magic` |
+| Super+S | Toggle special workspace `magic` (show/hide) |
 | Super+Shift+S | Move window to `special:magic` |
+| Super+Ctrl+S | Toggle window on/off `special:magic` |
+| Super+A | Reveal all windows (gather every ws → active, exit scratchpad, un-maximize, tile) |
 | Super+mouse_down / mouse_up | Workspace e+1 / e−1 |
 
 ## Mouse
@@ -97,6 +100,6 @@ Helper: `~/.local/bin/hypr-screenshot` (`region` \| `full` \| `region-clip`).
 ## Window rules (related)
 
 - `grok-cli` → monitor HDMI-A-2
-- suppress maximize events (global)
+- Super+F toggles full panel (compositor maximize). Client Full Screen (YouTube F, F11, …) is confined: layout stays, client still gets FS inside the window.
 - XWayland empty drag fix
 - `hyprland-run` float near bottom

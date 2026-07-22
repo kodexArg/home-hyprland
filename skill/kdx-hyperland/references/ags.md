@@ -138,7 +138,7 @@ Implemented in `app.ts` → `requestHandler`.
 | Mode | CSS class | Behavior |
 |---|---|---|
 | `always` | `mode-always` | Visible; inactive-window chrome (dark gray rim) |
-| `temp` | `mode-temp` | Active chrome (orange rim); auto-hide **5s** unless hover/edge |
+| `temp` | `mode-temp` | Active chrome (orange rim); auto-hide **2.5s** unless hover/edge |
 | `hidden` | `mode-hidden` | Invisible |
 
 **Temp re-show:**
@@ -161,19 +161,18 @@ Default first paint: **temp** mode, edge poll started.
 
 | State | Icon | When |
 |---|---|---|
-| Speakers | `audio-volume-high-symbolic` | default sink unmuted, route ≠ headphones |
-| Muted | `audio-volume-muted-symbolic` | `mute` (always this slash — **no** headphones-mute) |
-| Headphones | `audio-headphones-symbolic` | route name/desc matches `headphone` / `headset` |
+| Speakers | `icons/speakers.svg` | Adwaita `audio-speakers-symbolic` — parlante only (no waves) |
+| Muted | `icons/muted.svg` | Adwaita `audio-volume-muted-symbolic` — parlante + X |
+| Headphones | `icons/headphones.svg` | Adwaita `audio-headphones-symbolic` |
 
-**Icon click cycle** (not mute toggle): `parlante → mute → auris → parlante`.  
-Speakers = mute default · Mute = default→headphones + unmute · Headphones = default→HDMI + unmute.
+Cream monochrome vendored under `~/.config/ags/icons/` (`image file=`). Not `audio-volume-high` (waves).
 
-Use **status** icons (`audio-volume-*`), not `audio-speakers-symbolic` (devices/) — same family as mute, paints reliably in this bar.
+**Icon click cycle:** `parlante → mute → auris → parlante`  
+(mute all · default→HP unmute · default→HDMI unmute).
 
-Reactive via nested `createBinding(wp, "defaultSpeaker", "mute" | "route" | "id", …)` + `createComputed`.  
-This host: HDMI `hdmi-output-0` (TU106) = speakers · Ryzen `analog-output-headphones` = headphones.  
-**Bar follows WirePlumber default sink.** If default is muted HDMI while auris are on analog, you only see mute — switch default: `wpctl set-default <id>` (GNOME jack path uses analog). Check: `wpctl status` · `~/.local/state/wireplumber/default-nodes`.  
-**Not** in shell scripts — no `~/Scripts/Hyperland/`; only `~/.local/bin/hypr-*`.
+**Bug fixed:** nested `createBinding(wp, "defaultSpeaker", "route", …)` could stick after sink switch → both unmuted states painted as auris. Classify with a **live** `defaultSpeaker` read (HDMI desc short-circuits to speakers) after mute/id notify + light route poll.
+
+This host: HDMI TU106 = speakers · Ryzen `analog-output-headphones` = auris.
 
 **Volume track:** custom box + GestureClick/Drag/Scroll — **not** `Gtk.Scale` (broken hit-target on layer-shell + GSK gl here). Fill width mirrors WirePlumber volume; fill is a **child** (do not rebind class on gesture target mid-click).
 

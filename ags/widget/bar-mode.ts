@@ -7,7 +7,7 @@ export type BarMode = "always" | "temp" | "hidden"
 
 const ORDER: BarMode[] = ["always", "temp", "hidden"]
 /** How long "temp" stays on screen after leave / reveal */
-const TEMP_MS = 5000
+const TEMP_MS = 2500
 /** Portrait ASUS — same as app.ts bar filter */
 const BAR_MONITOR = "HDMI-A-2"
 /** Logical pixels from monitor top that count as "tope" */
@@ -15,7 +15,7 @@ const EDGE_PX = 12
 /** Cursor poll while temp mode is active */
 const POLL_MS = 80
 
-const [mode, setMode] = createState<BarMode>("temp")
+const [mode, setMode] = createState<BarMode>("always")
 const [tempShown, setTempShown] = createState(true)
 
 let tempSource: number | null = null
@@ -174,6 +174,5 @@ export const barVisible = createComputed(() => {
   return tempShown()
 })
 
-// First paint in temp
-startEdgePoll()
-showTemp()
+// First paint: always visible (no edge poll until Super+B → temp)
+
