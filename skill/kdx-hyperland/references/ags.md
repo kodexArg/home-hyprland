@@ -112,9 +112,11 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
   tsconfig.json
   env.d.ts
   @girs/              # generated types
+  icons/              # cream monochrome SVGs (image file=, no icon theme)
   widget/
-    Bar.tsx           # Volume + Clock layer-shell window
+    Bar.tsx           # Volume + LocalLlm + Clock/Caffeine layer-shell window
     bar-mode.ts       # always | temp | hidden + edge poll + peek
+    LocalLlm.tsx      # brain menu: GGUF model picker + local-llm.service FSM
 ```
 
 ### Monitor policy
@@ -130,8 +132,14 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
 | `bar-cycle` / `bar` | `cycleBarMode()` | Super+B |
 | `bar-peek` / `peek` | `peekTemp()` | Super_L / Super_R (`non_consuming`) |
 | `bar-mode` | `getBarMode()` | (debug) |
+| `bar-set <mode>` | `setBarMode()` | (scripted) |
+| `caffeine` / `caffeine-toggle` | `toggleCaffeine()` | (bar click) |
+| `capture-toggle` / `capture` | `toggleCapture()` | (widget commented out) |
 
 Implemented in `app.ts` → `requestHandler`.
+
+`app.ts` also re-spawns the bar on `notify::monitors` plus one 400 ms retry —
+otherwise an `ags` restart could leave IPC up with no window (hotplug race).
 
 ### Three modes (ADR `20260715-ags-bar-super-b-three-mode`)
 
@@ -147,7 +155,7 @@ Implemented in `app.ts` → `requestHandler`.
 2. Super_L/R → `bar-peek` (non_consuming so Super+Q etc. still work).
 3. Pointer enter/leave on the bar itself holds visibility.
 
-Default first paint: **temp** mode, edge poll started.
+Default first paint: **`always`** mode — the edge poll does not run until you cycle into `temp` (see the trailing comment in `bar-mode.ts`).
 
 ### Bar widgets (`Bar.tsx`)
 
@@ -155,7 +163,11 @@ Default first paint: **temp** mode, edge poll started.
 |---|---|
 | start | **Volume** first: output icon, −, custom track, + (AstalWp `defaultSpeaker`) |
 | center | empty |
-| end | Clock (`%H:%M`) + Calendar popover |
+| end | **LocalLlm** brain button + **ClockCaffeine** cluster (`%H:%M` + Calendar popover + cup) |
+
+`CaptureToggle` / `CapturePanel` are written but **commented out in the `end` box
+since 2026-07-17** — both buttons were mocks; the real work is the `Print` binds
+on `hypr-screenshot`. Code kept for when it gets wired.
 
 **Volume output icon (triple, not volume ladder):**
 
@@ -182,6 +194,50 @@ Window props:
 - `exclusivity=EXCLUSIVE`, `layer=TOP`, `anchor=TOP|LEFT|RIGHT`
 - `keymode=NONE` (pointer only — ON_DEMAND steals keys)
 - `visible={barVisible}`, `class={barModeClass}`
+
+### Caffeine (`Bar.tsx` → `ClockCaffeine`)
+
+Cup glued to the clock in one chip (`ClockCluster`): left half = calendar
+menubutton, right half = caffeine toggle. No vertical rule — spacing separates
+the hit targets.
+
+- **`Gtk.Application.inhibit` is a no-op on this session** (logind wants a
+  session manager; there is no gnome-session under Hyprland). So we hold a child
+  process instead:
+  `systemd-inhibit --what=idle:sleep --who=ags-caffeine --mode=block sleep infinity`
+- Off → `force_exit()` on that `Gio.Subprocess`, handle cleared.
+- Icons: `icons/caffeine-on.svg` (cup + steam) / `caffeine-off.svg` (cup only).
+- Class `ClockCluster caffeine-on` when armed · `ags request caffeine`.
+
+Verify it actually took: `systemd-inhibit --list | grep ags-caffeine`.
+
+### Local LLM selector (`LocalLlm.tsx`)
+
+Brain button → layer-shell menu: status header, one button per `.gguf`, `OFF`.
+Plus a full-monitor **clickaway** window underneath (GSK needs non-zero alpha to
+hit-test) and Esc handling.
+
+| Piece | Value |
+|---|---|
+| Model dir | `~/Services/local-llm/models/gguf` (re-scanned every 5 s; `*embedding*` skipped) |
+| Selection file | `~/.config/local-llm/selected-model` |
+| Unit | `local-llm.service` (systemd **--user**) |
+| Ready probe | `curl -sf --max-time 1 http://127.0.0.1:28000/v1/models` |
+| Tick | 400 ms FSM tick · VRAM via `nvidia-smi` every 2 s hot / 8 s cold |
+
+**FSM:** `idle → unload (red on the outgoing model) → load (amber on the
+incoming) → idle`. Only one model fits in 8 GB, so switching always unloads first.
+
+- **Ready ≠ unit active.** A `running` unit with no `/v1/models` answer means
+  weights are still mapping — paint amber, not on. This distinction is the whole
+  point of the widget; do not "simplify" it to `systemctl is-active`.
+- Timeouts: load **90 s** (2 × the 45 s budget measured on densenet 9B Q4),
+  unload **30 s**. Both end in `systemctl --user kill -s SIGKILL` — a hybrid MoE
+  thrashing on mmap ignores polite SIGTERM.
+- Hybrid MoE (`/35B|A3B|MoE/`) rows are labelled `· hybrid`; ~21 GB on disk is
+  not a pure 8 GB load. Archived ones live in `models/gguf-archive/` (not scanned).
+- Brain tone: `on` (orange) only when ready **and** VRAM ≥ 7 GiB used; ready with
+  headroom (< 7 GiB) stays amber. Red = unloading or failed.
 
 ### Style rules we learned the hard way (`style.scss`)
 

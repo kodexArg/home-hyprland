@@ -25,9 +25,10 @@ description: >
 |---|---|
 | Hypr config (live) | `~/.config/hypr/hyprland.lua` |
 | Wallpaper | `~/.config/hypr/hyprpaper.conf` |
-| AGS bar (live) | `~/.config/ags/` (`app.ts`, `widget/`, `style.scss`) |
-| Git SSOT (private) | `~/home-hyprland/` — `hypr/`, `ags/`, `kitty/`, `wallpapers/`, `skill/kdx-hyperland/` |
-| Host helpers | `~/.local/bin/hypr-*` (e.g. `hypr-screenshot`) — **no** `~/Scripts/…/Hyperland/` |
+| AGS bar (live) | `~/.config/ags/` (`app.ts`, `widget/`, `icons/`, `style.scss`) |
+| Skill (live) | `~/.claude/skills/kdx-hyperland/` — **not** `~/Skills/` (does not exist) |
+| Git SSOT (private) | `~/home-hyprland/` — `hypr/`, `ags/`, `bin/`, `kitty/`, `wallpapers/`, `skill/kdx-hyperland/` |
+| Host helpers | `~/.local/bin/hypr-*` (`hypr-screenshot`, `hypr-record`, `hypr-reveal-all`) — **no** `~/Scripts/…/Hyperland/`; mirrored in repo `bin/` |
 | Narrative | `~/Documents/System/Desktop.md` |
 | ADRs | `~/Documents/System/ADRs/20260715-hyprland-*`, `20260715-ags-*` |
 | Binaries | `hyprland` 0.55.4 · `ags` 3.1.0 @ `/usr/local/bin/ags` |
@@ -57,9 +58,13 @@ Do **not** paste hyprlang from old blogs. Translate to `hl.*` using `references/
 
 - **Monitors:** HDMI-A-1 AOC landscape left (`scale 1`, `0x100`) · HDMI-A-2 ASUS portrait (`transform 3`, **`scale 1.5`** → logical 720×1280) right — layout `--|`
 - **Layout:** dwindle · **mod:** SUPER · **terminal:** kitty · **browser Super+X:** brave-browser
-- **AGS:** bar **only on HDMI-A-2** · Super+B cycles always→temp→hidden · Super_L/R peek (non_consuming)
+- **AGS:** bar **only on HDMI-A-2** · Super+B cycles always→temp→hidden · Super_L/R peek (non_consuming) · **first paint = `always`** (edge poll only starts once you cycle into `temp`)
+- **Bar contents:** start = Volume · end = **LocalLlm brain** + **Clock/Caffeine** cluster. Capture caret is commented out since 2026-07-17 (buttons were mocks).
 - **Volume icon (triple):** speakers · muted (speaker-slash) · headphones — no headphones-mute. Logic in `widget/Bar.tsx` via AstalWp `defaultSpeaker.route` (not shell scripts).
 - **Audio on this host:** default sink HDMI (`TU106` / AOC) = speakers · Ryzen analog `analog-output-headphones` = headphones
+- **Caffeine:** cup next to clock; holds a `systemd-inhibit --what=idle:sleep --mode=block` child process (`Gtk.Application.inhibit` is a no-op here — no gnome-session). `ags request caffeine`.
+- **Local LLM selector:** brain icon → GGUF model list + OFF (`widget/LocalLlm.tsx`). Drives `local-llm.service` (systemd --user); **ready = `127.0.0.1:28000/v1/models` answers**, not unit `active`. One model at a time on 8 GB; load timeout 90 s → SIGKILL. VRAM header from `nvidia-smi`.
+- **Screenshots / recording:** `hypr-screenshot` (Print / Ctrl+Print / Alt+Print) · `hypr-record` (Super+Shift+R region, +Alt window) · `hypr-reveal-all` (Super+A)
 - **NVIDIA:** `AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1` · GSK for AGS/anyrun: `GSK_RENDERER=gl`
 - **Pointer:** Ducky HID mouse disabled; hardware cursors forced
 
@@ -76,6 +81,15 @@ env PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin GSK_RENDERER=gl \
 ags request bar-cycle
 ags request bar-peek
 ags request bar-mode
+ags request bar-set always|temp|hidden
+ags request caffeine        # toggle idle/sleep inhibit
+ags request capture-toggle  # capture panel (currently commented out in Bar.tsx)
+
+# Local LLM selector plumbing
+systemctl --user status local-llm.service
+curl -sf --max-time 1 http://127.0.0.1:28000/v1/models   # ready check the bar uses
+cat ~/.config/local-llm/selected-model
+ls ~/Services/local-llm/models/gguf                       # what the menu lists
 ```
 
 ## Out of scope
