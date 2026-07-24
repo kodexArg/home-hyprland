@@ -147,7 +147,9 @@ window.Bar {
     }
   }
 
-  // Local LLM brain — same size as caffeine/volume icons; orange=live · amber=load · red=unload
+  // Local LLM brain — glyph color via SVG swap (cream/amber/orange/red).
+  // Chip rim only for live (on) / open menu. Load = amber glyph only (no yellow
+  // border — that read as “already loaded”).
   .LocalLlm {
     margin: 0 1px;
     min-height: 22px;
@@ -164,11 +166,7 @@ window.Bar {
       background: $fill-active;
     }
 
-    &.load {
-      border-color: color.mix(#e6b84d, $nautilus-bg, 70%);
-      background: color.mix(#e6b84d, $nautilus-bg, 22%);
-    }
-
+    // unload/fail: soft red chip optional; glyph is already red SVG
     &.unload {
       border-color: color.mix(#c45c4a, $nautilus-bg, 65%);
       background: color.mix(#c45c4a, $nautilus-bg, 18%);

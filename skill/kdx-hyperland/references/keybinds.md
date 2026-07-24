@@ -58,17 +58,19 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 |---|---|
 | Super+LMB (272) | Drag window |
 | Super+RMB (273) | Resize window |
+| MMB (274) | Drag window (no Super) |
 
 ## Screenshots (grim + slurp)
 
 | Bind | Action |
 |---|---|
-| Print | Region → file **and** clipboard (`image/png`) |
-| Shift+Print | Full desktop → file **and** clipboard |
-| Super+Print | Region → clipboard only |
+| Print | Focused window → file + clipboard |
+| Ctrl+Print | Region (slurp) → file + clipboard |
+| Alt+Print | Full desktop (all monitors) → file + clipboard |
+| Super+Print | Focused monitor only → file + clipboard |
 
-Files: `~/Pictures/Screenshots/YYYYMMDD-HHMMSS.png`.  
-Helper: `~/.local/bin/hypr-screenshot` (`region` \| `full` \| `region-clip`).
+Files: `~/Pictures/Screenshots/YYYYMMDD-HHMMSS-<pid>-<rand>.png`.  
+Helper: `~/.local/bin/hypr-screenshot` (`window` \| `region` \| `full` \| `monitor active` \| `panel …`).
 
 ## Media / brightness (locked, repeating where noted)
 

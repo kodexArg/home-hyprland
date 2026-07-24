@@ -232,9 +232,10 @@ hl.bind("Super_L", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consumi
 hl.bind("Super_R", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
 
 -- Screenshots (hypr-screenshot): toast labels + file + clipboard
-hl.bind("Print",               hl.dsp.exec_cmd(shot .. " window"))  -- focused app window
-hl.bind("CTRL + Print",        hl.dsp.exec_cmd(shot .. " region"))  -- area select
-hl.bind("ALT + Print",         hl.dsp.exec_cmd(shot .. " full"))    -- full screen
+hl.bind("Print",               hl.dsp.exec_cmd(shot .. " window"))           -- focused app window
+hl.bind("CTRL + Print",        hl.dsp.exec_cmd(shot .. " region"))           -- area select
+hl.bind("ALT + Print",         hl.dsp.exec_cmd(shot .. " full"))             -- full desktop
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(shot .. " monitor active"))   -- focused monitor only
 
 -- Screen record (hypr-record / wf-recorder): toggle stop if already recording
 hl.bind(mainMod .. " + SHIFT + R",     hl.dsp.exec_cmd(rec .. " toggle region"))  -- area
@@ -288,6 +289,8 @@ hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 hl.bind(mainMod .. " + mouse:272",  hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",  hl.dsp.window.resize(), { mouse = true })
+-- MMB alone: drag/move window (no Super). Super+LMB still works.
+hl.bind("mouse:274",                hl.dsp.window.drag(),   { mouse = true })
 
 hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
 hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })

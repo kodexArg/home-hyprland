@@ -24,7 +24,11 @@ import { barVisible, setOverBar } from "./bar-mode"
 
 const HOME = GLib.get_home_dir()
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
-const ICON_BRAIN = `${ICON_DIR}/brain.svg`
+/** Glyph-only state colors (border stays for live/open; load does not rim-highlight). */
+const ICON_BRAIN_IDLE = `${ICON_DIR}/brain.svg` // cream
+const ICON_BRAIN_LOAD = `${ICON_DIR}/brain-load.svg` // amber
+const ICON_BRAIN_ON = `${ICON_DIR}/brain-on.svg` // orange
+const ICON_BRAIN_UNLOAD = `${ICON_DIR}/brain-unload.svg` // red
 const GGUF_DIR = `${HOME}/Services/local-llm/models/gguf`
 const CONFIG_FILE = `${HOME}/.config/local-llm/selected-model`
 const SERVICE = "local-llm.service"
@@ -751,30 +755,50 @@ export default function LocalLlm({
 }) {
   LocalLlmPanel(gdkmonitor)
 
-  const cls = createComputed(() => {
+  /** idle | load | on | unload — drives glyph color + chip chrome (on only). */
+  const tone = createComputed(() => {
     void tx()
     void svcSnap()
-    void menuOpen()
     void apiReady()
     void lastFail()
     void vramUsedMib()
     const t = tx()
-    const open = menuOpen()
-    let tone = "idle"
-    if (t.phase === "unload") tone = "unload"
-    else if (t.phase === "load" || (svcSnap() === "running" && !apiReady()))
-      tone = "load"
-    else if (svcSnap() === "running" && apiReady()) {
-      // Live + used VRAM < 7 GiB → amber (headroom). ≥7 → orange (tight).
-      tone = vramHeadroomYellow() ? "load" : "on"
-    } else if (lastFail() || svcSnap() === "failed") tone = "unload"
+    if (t.phase === "unload") return "unload"
+    if (t.phase === "load" || (svcSnap() === "running" && !apiReady()))
+      return "load"
+    if (svcSnap() === "running" && apiReady()) {
+      // Live + used VRAM < 7 GiB → amber glyph (headroom). ≥7 → orange (tight).
+      return vramHeadroomYellow() ? "load" : "on"
+    }
+    if (lastFail() || svcSnap() === "failed") return "unload"
+    return "idle"
+  })
 
+  const cls = createComputed(() => {
+    void tone()
+    void menuOpen()
+    const t = tone()
+    const open = menuOpen()
     const parts = ["LocalLlm"]
-    if (tone === "on") parts.push("on")
-    if (tone === "load") parts.push("load")
-    if (tone === "unload") parts.push("unload")
+    // Chip border/fill only for live (on) and open menu — never for load:
+    // yellow rim looked like "already loaded"; amber is glyph-only.
+    if (t === "on") parts.push("on")
+    if (t === "unload") parts.push("unload")
     if (open) parts.push("open")
     return parts.join(" ")
+  })
+
+  const iconFile = createComputed(() => {
+    switch (tone()) {
+      case "load":
+        return ICON_BRAIN_LOAD
+      case "on":
+        return ICON_BRAIN_ON
+      case "unload":
+        return ICON_BRAIN_UNLOAD
+      default:
+        return ICON_BRAIN_IDLE
+    }
   })
 
   const tipClock = createPoll(0, 1000, () => Math.floor(nowSec()))
@@ -796,7 +820,7 @@ export default function LocalLlm({
       tooltipText={tip}
       onClicked={() => setMenuOpen(!menuOpen.peek())}
     >
-      <image file={ICON_BRAIN} pixelSize={16} />
+      <image file={iconFile} pixelSize={16} />
     </button>
   )
 }

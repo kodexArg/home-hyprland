@@ -64,7 +64,7 @@ Do **not** paste hyprlang from old blogs. Translate to `hl.*` using `references/
 - **Audio on this host:** default sink HDMI (`TU106` / AOC) = speakers · Ryzen analog `analog-output-headphones` = headphones
 - **Caffeine:** cup next to clock; holds a `systemd-inhibit --what=idle:sleep --mode=block` child process (`Gtk.Application.inhibit` is a no-op here — no gnome-session). `ags request caffeine`.
 - **Local LLM selector:** brain icon → GGUF model list + OFF (`widget/LocalLlm.tsx`). Drives `local-llm.service` (systemd --user); **ready = `127.0.0.1:28000/v1/models` answers**, not unit `active`. One model at a time on 8 GB; load timeout 90 s → SIGKILL. VRAM header from `nvidia-smi`.
-- **Screenshots / recording:** `hypr-screenshot` (Print / Ctrl+Print / Alt+Print) · `hypr-record` (Super+Shift+R region, +Alt window) · `hypr-reveal-all` (Super+A)
+- **Screenshots / recording:** `hypr-screenshot` (Print window · Ctrl+Print region · Alt+Print full · Super+Print active monitor) · `hypr-record` (Super+Shift+R region, +Alt window) · `hypr-reveal-all` (Super+A)
 - **NVIDIA:** `AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1` · GSK for AGS/anyrun: `GSK_RENDERER=gl`
 - **Pointer:** Ducky HID mouse disabled; hardware cursors forced
 

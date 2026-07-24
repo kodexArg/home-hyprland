@@ -449,28 +449,48 @@ const ICON_CAFFEINE_OFF = `${ICON_DIR}/caffeine-off.svg`
  * Held `systemd-inhibit` process. Gtk.Application.inhibit is a no-op for
  * logind on this Hyprland session (no gnome-session), so we block via:
  *   systemd-inhibit --what=idle:sleep --mode=block sleep infinity
+ *
+ * Failure mode (2026-07-23): if AGS/gjs dies without force_exit, the child
+ * reparents to PID 1 and keeps blocking sleep forever while UI restarts at
+ * `false`. Always reconcile against the process table (who=ags-caffeine),
+ * never trust the in-memory handle alone.
  */
+const CAFFEINE_WHO = "ags-caffeine"
 let caffeineProc: Gio.Subprocess | null = null
 const [caffeineOn, setCaffeineOn] = createState(false)
 
-function applyCaffeine(on: boolean): boolean {
-  if (on) {
-    if (!caffeineProc) {
-      caffeineProc = Gio.Subprocess.new(
-        [
-          "systemd-inhibit",
-          "--what=idle:sleep",
-          "--who=ags-caffeine",
-          "--why=Caffeine — keep awake",
-          "--mode=block",
-          "sleep",
-          "infinity",
-        ],
+/** PIDs of live `systemd-inhibit … --who=ags-caffeine` (may be orphans). */
+function listCaffeinePids(): number[] {
+  try {
+    // ps -C matches the real binary only — never shell wrappers that mention
+    // the string (pgrep -f false-positives agents / this file's own tooling).
+    const proc = Gio.Subprocess.new(
+      ["ps", "-C", "systemd-inhibit", "-o", "pid=,args="],
+      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    const [, stdout] = proc.communicate_utf8(null, null)
+    const out = (stdout ?? "").trim()
+    if (!out) return []
+    return out
+      .split("\n")
+      .filter((line) => line.includes(`--who=${CAFFEINE_WHO}`))
+      .map((line) => parseInt(line.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 1)
+  } catch {
+    return []
+  }
+}
+
+function killAllCaffeineInhibitors(): void {
+  for (const pid of listCaffeinePids()) {
+    try {
+      Gio.Subprocess.new(
+        ["kill", String(pid)],
         Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
-      )
+      ).wait(null)
+    } catch {
+      /* already gone */
     }
-    setCaffeineOn(true)
-    return true
   }
   if (caffeineProc) {
     try {
@@ -480,9 +500,63 @@ function applyCaffeine(on: boolean): boolean {
     }
     caffeineProc = null
   }
+}
+
+function spawnCaffeineInhibitor(): void {
+  const proc = Gio.Subprocess.new(
+    [
+      "systemd-inhibit",
+      "--what=idle:sleep",
+      `--who=${CAFFEINE_WHO}`,
+      "--why=Caffeine — keep awake",
+      "--mode=block",
+      "sleep",
+      "infinity",
+    ],
+    Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
+  )
+  caffeineProc = proc
+  // If the child dies externally, drop UI to off.
+  proc.wait_async(null, (_obj, res) => {
+    try {
+      proc.wait_finish(res)
+    } catch {
+      /* exit status / already reaped */
+    }
+    if (caffeineProc === proc) {
+      caffeineProc = null
+      // Only clear if no orphan still holds the lock.
+      if (listCaffeinePids().length === 0) setCaffeineOn(false)
+    }
+  })
+}
+
+function applyCaffeine(on: boolean): boolean {
+  if (on) {
+    // Collapse any ghost pile first, then hold exactly one.
+    const live = listCaffeinePids()
+    if (live.length === 0) {
+      spawnCaffeineInhibitor()
+    } else if (live.length > 1 || !caffeineProc) {
+      // Multiple orphans, or adopted without a handle: re-spawn cleanly.
+      killAllCaffeineInhibitors()
+      spawnCaffeineInhibitor()
+    }
+    setCaffeineOn(true)
+    return true
+  }
+  killAllCaffeineInhibitors()
   setCaffeineOn(false)
   return false
 }
+
+/**
+ * On AGS (re)start: if an orphan still holds the inhibit, show ON.
+ * Without this the cup is empty while sleep stays blocked.
+ */
+;(function syncCaffeineFromSystem() {
+  if (listCaffeinePids().length > 0) setCaffeineOn(true)
+})()
 
 /** Toggle idle/sleep inhibit. Used by bar button + `ags request caffeine`. */
 export function toggleCaffeine(): string {

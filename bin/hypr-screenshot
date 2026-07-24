@@ -10,9 +10,10 @@
 #   hypr-screenshot --agent …             # same as HYPR_SHOT_AGENT=1
 #
 # Keybinds (hyprland.lua):
-#   Print       → window
-#   Ctrl+Print  → region
-#   Alt+Print   → full
+#   Print         → window
+#   Ctrl+Print    → region
+#   Alt+Print     → full
+#   Super+Print   → monitor active (focused output only)
 #
 # Agent tip: always use HYPR_SHOT_AGENT=1 (or --agent) so setsid is skipped
 # and the PNG path is printed for read_file.
@@ -56,11 +57,11 @@ log "start mode=$mode arg2=$arg2 file=$file agent=${HYPR_SHOT_AGENT:-0} WAYLAND_
 
 label_for_mode() {
   case "$1" in
-    window)  echo "APP WINDOW CAPTURE" ;;
-    region)  echo "AREA CAPTURE" ;;
-    full)    echo "FULL SCREEN CAPTURE" ;;
-    monitor) echo "MONITOR CAPTURE" ;;
-    panel)   echo "PANEL CAPTURE" ;;
+    window)  echo "WINDOW capture" ;;
+    region)  echo "AREA capture" ;;
+    full)    echo "FULL SCREEN capture" ;;
+    monitor) echo "MONITOR SCREEN capture" ;;
+    panel)   echo "MONITOR SCREEN capture" ;;
     *)       echo "SCREENSHOT" ;;
   esac
 }
@@ -69,7 +70,8 @@ label_for_mode() {
 notify() {
   local msg="$1"
   local icon="${2:-5}"
-  hyprctl notify "$icon" 8750 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
+  # 4375 ms = half of the previous 8750 toast dwell
+  hyprctl notify "$icon" 4375 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
   if command -v notify-send >/dev/null 2>&1; then
     notify-send -a screenshot -i camera-photo "Screenshot" "$msg" || true
   fi
@@ -229,14 +231,14 @@ case "$mode" in
   window)
     if ! geom="$(active_window_geom)"; then
       log "no active window geom"
-      notify "APP WINDOW CAPTURE: no focused window" 3
+      notify "WINDOW capture: no focused window" 3
       exit 1
     fi
     log "window geom=$geom"
     sleep 0.05
     if ! grim -g "$geom" "$file" 2>>"$LOG"; then
       log "grim window failed geom=$geom"
-      notify "APP WINDOW CAPTURE: failed (grim)" 3
+      notify "WINDOW capture: failed (grim)" 3
       exit 1
     fi
     finish_ok window
@@ -244,13 +246,13 @@ case "$mode" in
   region)
     geom="$(slurp 2>>"$LOG")" || {
       log "slurp cancelled/failed"
-      notify "AREA CAPTURE: cancelled" 0
+      notify "AREA capture: cancelled" 0
       exit 0
     }
     log "slurp geom=$geom"
     if ! grim -g "$geom" "$file" 2>>"$LOG"; then
       log "grim region failed"
-      notify "AREA CAPTURE: failed (grim)" 3
+      notify "AREA capture: failed (grim)" 3
       exit 1
     fi
     finish_ok region
@@ -258,7 +260,7 @@ case "$mode" in
   full|all|desktop)
     if ! grim "$file" 2>>"$LOG"; then
       log "grim full failed"
-      notify "FULL SCREEN CAPTURE: failed (grim)" 3
+      notify "FULL SCREEN capture: failed (grim)" 3
       exit 1
     fi
     finish_ok full
@@ -267,20 +269,21 @@ case "$mode" in
     target="${arg2:-active}"
     if ! out="$(resolve_output "$target")"; then
       log "unknown panel/output: $target"
-      notify "PANEL CAPTURE: unknown target '$target'" 3
+      notify "MONITOR SCREEN capture: unknown target '$target'" 3
       echo "unknown panel/output: $target (try: inventory)" >&2
       exit 2
     fi
     log "resolved target=$target → $out"
-    capture_output "$out" panel
+    # Super+Print uses "monitor active" → kind=monitor; panel left|… → same toast text
+    capture_output "$out" monitor
     ;;
-  # bare aliases → panel capture (agent-friendly short form)
+  # bare aliases → one-output capture (agent-friendly short form)
   left|right|aoc|asus|bar|landscape|portrait|main|HDMI-A-1|HDMI-A-2|hdmi-a-1|hdmi-a-2)
     if ! out="$(resolve_output "$mode")"; then
-      notify "PANEL CAPTURE: unknown '$mode'" 3
+      notify "MONITOR SCREEN capture: unknown '$mode'" 3
       exit 2
     fi
-    capture_output "$out" panel
+    capture_output "$out" monitor
     ;;
   region-clip)
     exec env HYPR_SHOT_DETACHED=1 HYPR_SHOT_AGENT="${HYPR_SHOT_AGENT:-}" "$0" region
@@ -293,6 +296,7 @@ Modes:
   window              focused window (Print)
   region              slurp area (Ctrl+Print)
   full                entire layout (Alt+Print)
+  monitor active      focused output only (Super+Print)
   panel <alias>       one output (left|right|aoc|asus|bar|HDMI-A-1|…)
   monitor <name>      same as panel
   inventory           list panels + clients (no capture)
