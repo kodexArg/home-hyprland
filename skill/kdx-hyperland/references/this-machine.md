@@ -1,11 +1,11 @@
 # This machine — Hyprland live config
 
-Re-read files before editing. Snapshot below captured for skill authoring (2026-07-16); **live always wins**.
+Re-read files before editing. Snapshot **2026-07-25**; **live always wins** (`hyprctl monitors`).
 
 ## Stance
 
 - **GNOME + Wayland** = daily driver. **Hyprland** = GDM experiment session.
-- ADRs: `20260715-hyprland-gdm-dual-session`, `20260715-hyprland-single-pointer`, AGS ADRs.
+- ADRs: `20260715-hyprland-gdm-dual-session`, `20260715-hyprland-single-pointer`, AGS ADRs, zoom + caffeine (below).
 - Narrative: `~/Documents/System/Desktop.md`.
 
 ## Versions / packages
@@ -13,7 +13,7 @@ Re-read files before editing. Snapshot below captured for skill authoring (2026-
 | Item | Value |
 |---|---|
 | Hyprland | **0.55.4** (Debian `hyprland 0.55.4+ds-2`) |
-| Config language | **Lua only** (`hyprland.lua`) |
+| Config language | **Lua only** (`hyprland.lua`) — no legacy `keyword monitor` for runtime |
 | Satellite pkgs | hyprpaper, hypridle, hyprlock, hyprlauncher, hyprpolkitagent, xdg-desktop-portal-hyprland, hyprland-guiutils |
 | AGS | **3.1.0** @ `/usr/local/bin/ags` (built to `/usr` libs; see `references/ags.md`) |
 
@@ -22,25 +22,41 @@ Re-read files before editing. Snapshot below captured for skill authoring (2026-
 | Role | Path |
 |---|---|
 | Live Hypr | `~/.config/hypr/hyprland.lua`, `hyprpaper.conf` |
-| Git SSOT | `~/home-hyprland/` (`hypr/`, `ags/`, `kitty/`, `wallpapers/`, `skill/`) |
+| Git SSOT | `~/home-hyprland/` (`hypr/`, `ags/`, `bin/`, `kitty/`, `wallpapers/`, `skill/`) |
 | AGS | `~/.config/ags/` |
+| Zoom helper | `~/.local/bin/hypr-zoom-toggle` |
 | Wallpaper media | `~/home-hyprland/wallpapers/disco-elysium-thought-cabinet-art-cropped.avif` |
 
-Sync pattern: copy or symlink from `~/home-hyprland` into `~/.config/{hypr,ags,kitty}` — see repo README. After live edits, re-sync into the repo before commit.
+Sync pattern: live edits → re-sync `~/home-hyprland` → commit. Last related commit: `8b1cac3` (caffeine FSM + zoom).
 
-## Monitors (rotated-T `--|`)
+## Monitors (portrait LEFT, landscape RIGHT)
 
-| Output | Role | transform | scale | position | logical |
+| Output | Role | transform | scale (dense) | position (dense) | logical (dense) |
 |---|---|---|---|---|---|
-| HDMI-A-1 | AOC left, landscape | 0 | 1 | `0x100` | 1920×1080 |
-| HDMI-A-2 | ASUS right, portrait | **3** (270°) | **1.5** | `1920x0` | **720×1280** |
+| HDMI-A-2 | ASUS VA27EHF **left**, portrait | **1** (90°) | **1.5** | `-720x0` | **720×1280** |
+| HDMI-A-1 | AOC G2790G4 right, landscape | 0 | 1 | `0x100` | 1920×1080 |
 
-Mode: `preferred`. Portrait UI zoom is permanent compositor scale (not crop).
+Mode: `preferred` / explicit `1920x1080@60` in zoom script.
+
+**Super+Ctrl+Z** toggles dense (1.5) ↔ roomy (1.0). Roomy: portrait `-1080x0` scale 1 · AOC `0x420`.  
+ADR: `20260725-hyprland-super-ctrl-z-zoom-toggle` · default dense: `20260721-hyprland-portrait-scale-1.5`.
+
+### Zoom FSM + layer resync (do not skip)
+
+```
+dense ──Super+Ctrl+Z──► arming ──modesets sequential──► roomy
+  ▲                                                      │
+  └──────────────── Super+Ctrl+Z ────────────────────────┘
+```
+
+1. Sequential `hyprctl eval hl.monitor(…)` — **never batch** two monitors (DRM page-flip race).
+2. After apply: re-wallpaper **both** outputs + **restart AGS**.
+3. Verify: `hyprctl layers` xywh must match monitor layout (hyprpaper + ags-bar).
 
 ## Autostart (`hl.on("hyprland.start")`)
 
 1. `hyprpaper`
-2. Kitty terminal (so session is not empty black)
+2. Kitty terminal
 3. `anyrun daemon` with `GSK_RENDERER=gl`
 4. AGS:  
    `env PATH=…/.local/bin:… GSK_RENDERER=gl /usr/local/bin/ags run ~/.config/ags`
@@ -76,24 +92,40 @@ AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1   # NVIDIA primary, Renoir secondar
 
 - Keyboard: `us` + `altgr-intl`
 - `follow_mouse = 1`
-- Hardware cursors: `cursor.no_hardware_cursors = false` (AUTO left ghost cursor on NVIDIA dual-GPU)
-- Device disabled: `ducky-ducky-one2-sf-rgb-1` (Ducky One2 SF RGB HID mouse interface — second pointer)
-- Real pointer: Logitech G300s (`logitech-g300s-optical-gaming-mouse`) — `accel_profile = flat`, `sensitivity = -0.2` (~**0.8×** linear). ratbag/piper already on host (`thundering-gerbil`, active profile @ 1000dpi; no 800dpi step)
+- Hardware cursors: `cursor.no_hardware_cursors = false`
+- Device disabled: `ducky-ducky-one2-sf-rgb-1`
+- Real pointer: Logitech G300s — `accel_profile = flat`, `sensitivity = -0.2`
 
+## AGS bar (pattern for new widgets)
+
+**Template:** `widget/caffeine.ts` FSM — SSOT outside AGS memory, UI derived, tick reconcile, module boundary. ADR `20260720-ags-caffeine-toggle`.
+
+| Piece | Notes |
+|---|---|
+| Bar only HDMI-A-2 | `app.ts` + `bar-mode.ts` `BAR_MONITOR` |
+| Edge poll | use **phys/scale** then transform swap (`bar-mode.ts`) |
+| Caffeine | `ags request caffeine` / `caffeine-status` |
+| Local LLM | `LocalLlm.tsx` FSM; ready = HTTP `/v1/models` not unit active |
+| **Chat UI (next)** | treat as bar/shell surface; same FSM contract; no bool-only state |
 
 ## Related ADRs (in force)
 
 | ADR | Decision |
 |---|---|
-| `20260715-hyprland-gdm-dual-session` | GNOME daily; Hypr via GDM; no global desktop force |
-| `20260715-hyprland-single-pointer` | Ducky disabled; hardware cursors |
-| `20260715-ags-hyprland-volume-bar` | AGS v3 shell; WirePlumber volume first |
-| `20260715-ags-bar-super-b-three-mode` | Super+B cycle + Super peek + edge poll |
+| `20260715-hyprland-gdm-dual-session` | GNOME daily; Hypr via GDM |
+| `20260715-hyprland-single-pointer` | Ducky disabled; HW cursors |
+| `20260715-ags-hyprland-volume-bar` | AGS v3; WirePlumber volume |
+| `20260715-ags-bar-super-b-three-mode` | Super+B + peek + edge |
+| `20260720-ags-caffeine-toggle` | Caffeine FSM template |
+| `20260721-hyprland-portrait-scale-1.5` | Default dense scale 1.5 |
+| `20260724-audio-hdmi-headphones-mb-speakers` | HDMI=auris, MB=parlantes |
+| `20260725-hyprland-super-ctrl-z-zoom-toggle` | Super+Ctrl+Z zoom + layer resync |
 
 ## Edit checklist
 
-1. Read `hyprland.lua` (and AGS files if bar).
-2. Minimal change; keep Super+Q/R/M emergency binds.
-3. `hyprctl reload` (or full restart for permissions/devices that require it).
-4. If standing decision → new ADR under `~/Documents/System/ADRs/`.
-5. Optionally sync `~/home-hyprland` if that repo is still the backup SSOT.
+1. Read live `hyprland.lua` / AGS files.
+2. Minimal change; keep emergency binds.
+3. `hyprctl reload` (or full restart for devices/permissions).
+4. Scale/position change → wallpaper reapply + AGS restart.
+5. Standing decision → ADR under `~/Documents/System/ADRs/`.
+6. Sync + commit `~/home-hyprland` when durable.

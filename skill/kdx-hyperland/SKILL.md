@@ -30,7 +30,7 @@ description: >
 | Git SSOT (private) | `~/home-hyprland/` — `hypr/`, `ags/`, `bin/`, `kitty/`, `wallpapers/`, `skill/kdx-hyperland/` |
 | Host helpers | `~/.local/bin/hypr-*` (`hypr-screenshot`, `hypr-record`, `hypr-reveal-all`, `hypr-zoom-toggle`) — **no** `~/Scripts/…/Hyperland/`; mirrored in repo `bin/` |
 | Narrative | `~/Documents/System/Desktop.md` |
-| ADRs | `~/Documents/System/ADRs/20260715-hyprland-*`, `20260715-ags-*` |
+| ADRs | `~/Documents/System/ADRs/` — hypr/ags incl. `20260720-ags-caffeine-toggle`, `20260721-hyprland-portrait-scale-1.5`, `20260725-hyprland-super-ctrl-z-zoom-toggle` |
 | Binaries | `hyprland` 0.55.4 · `ags` 3.1.0 @ `/usr/local/bin/ags` |
 
 ## Workflow (every invocation)
@@ -56,17 +56,17 @@ Do **not** paste hyprlang from old blogs. Translate to `hl.*` using `references/
 
 ## Quick facts (live, re-verify on edit)
 
-- **Monitors:** HDMI-A-1 AOC landscape left (`scale 1`, `0x100`) · HDMI-A-2 ASUS portrait (`transform 3`, **`scale 1.5`** → logical 720×1280) right — layout `--|`
+- **Monitors (live):** HDMI-A-2 ASUS portrait **left** (`transform 1`, scale **1.5** dense → 720×1280 @ `-720x0`) · HDMI-A-1 AOC landscape right (`scale 1`, `0x100`). **Super+Ctrl+Z** toggles dense↔roomy (+ wallpaper/AGS resync). ADR `20260725-hyprland-super-ctrl-z-zoom-toggle`
 - **Layout:** dwindle · **mod:** SUPER · **terminal:** kitty · **browser Super+X:** brave-browser
-- **AGS:** bar **only on HDMI-A-2** · Super+B cycles always→temp→hidden · Super_L/R peek (non_consuming) · **first paint = `always`** (edge poll only starts once you cycle into `temp`)
-- **Bar contents:** start = Volume · end = **LocalLlm brain** + **Clock/Caffeine** cluster. Capture caret is commented out since 2026-07-17 (buttons were mocks).
-- **Volume icon (triple):** speakers · muted (speaker-slash) · headphones — no headphones-mute. Logic in `widget/Bar.tsx` via AstalWp `defaultSpeaker.route` (not shell scripts).
-- **Audio on this host:** default sink HDMI (`TU106` → AOC G2790G4) = **auriculares** · Ryzen ALC897 `analog-output-lineout` (MB jack) = **parlantes**. ADR `20260724-audio-hdmi-headphones-mb-speakers`
-- **Caffeine:** FSM in `widget/caffeine.ts` (SSOT=`ags-caffeine` pids, tick reconcile). Cup next to clock. `ags request caffeine` / `caffeine-status`.
-- **Local LLM selector:** brain icon → GGUF model list + OFF (`widget/LocalLlm.tsx`). Drives `local-llm.service` (systemd --user); **ready = `127.0.0.1:28000/v1/models` answers**, not unit `active`. One model at a time on 8 GB; load timeout 90 s → SIGKILL. VRAM header from `nvidia-smi`.
-- **Screenshots / recording:** `hypr-screenshot` (Print window · Ctrl+Print region · Alt+Print full · Super+Print active monitor) · `hypr-record` (Super+Shift+R region, +Alt window) · `hypr-reveal-all` (Super+A)
-- **NVIDIA:** `AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1` · GSK for AGS/anyrun: `GSK_RENDERER=gl`
-- **Pointer:** Ducky HID mouse disabled; hardware cursors forced
+- **AGS:** bar **only on HDMI-A-2** · Super+B always→temp→hidden · Super_L/R peek · first paint `always`
+- **Bar contents:** start = Volume · end = DictationIndicator + LocalLlm brain + Clock/Caffeine. Capture caret commented out since 2026-07-17
+- **Bar widget pattern:** FSM + external SSOT + derived UI — template `widget/caffeine.ts` (not bare bools). Next: **chat UI** follows same contract
+- **Volume:** speakers / muted / headphones via live `defaultSpeaker`. Audio topology ADR `20260724-audio-hdmi-headphones-mb-speakers` (HDMI=auris, MB jack=parlantes)
+- **Caffeine:** `widget/caffeine.ts` · `ags request caffeine` / `caffeine-status` · ADR `20260720-ags-caffeine-toggle`
+- **Local LLM:** `LocalLlm.tsx` · ready = `127.0.0.1:28000/v1/models` · 8 GB one model · 90 s load kill
+- **Screenshots / recording:** `hypr-screenshot` · `hypr-record` · `hypr-reveal-all` (Super+A) · **zoom:** `hypr-zoom-toggle`
+- **NVIDIA:** `AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1` · GSK: `GSK_RENDERER=gl`
+- **Pointer:** Ducky HID disabled; hardware cursors forced
 
 ## Reload cheatsheet
 
@@ -86,6 +86,10 @@ ags request caffeine        # toggle idle/sleep inhibit (FSM snapshot)
 ags request caffeine-status # phase + pids (no flip)
 ags request caffeine-on|off # force arm/disarm
 ags request capture-toggle  # capture panel (currently commented out in Bar.tsx)
+
+# Portrait zoom (scale 1.5 ↔ 1.0) + layer resync
+/bin/bash $HOME/.local/bin/hypr-zoom-toggle
+hyprctl layers | awk '/hyprpaper|ags-bar/'
 
 # Local LLM selector plumbing
 systemctl --user status local-llm.service
