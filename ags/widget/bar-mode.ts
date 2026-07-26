@@ -77,14 +77,18 @@ function cursorOnBarMonitorTop(): boolean {
       width: number
       height: number
       transform: number
+      scale: number
     }>
     const mon = mons.find((m) => m.name === BAR_MONITOR)
     if (!mon) return false
 
-    // transform 1/3 swap layout width/height
+    // hyprctl width/height are physical px; layout size = phys/scale, then transform swap
+    const s = mon.scale > 0 ? mon.scale : 1
+    const physW = mon.width / s
+    const physH = mon.height / s
     const rot = mon.transform === 1 || mon.transform === 3
-    const lw = rot ? mon.height : mon.width
-    const lh = rot ? mon.width : mon.height
+    const lw = rot ? physH : physW
+    const lh = rot ? physW : physH
     const rx = cx - mon.x
     const ry = cy - mon.y
     return rx >= 0 && rx < lw && ry >= 0 && ry < EDGE_PX && ry < lh

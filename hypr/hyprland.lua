@@ -1,6 +1,6 @@
--- Portrait HDMI-A-2 at 1.5 → logical 720×1280; center landscape Y ≈ (1280-1080)/2 = 100
+-- Portrait HDMI-A-2 at 1.5 → logical 720×1280 on left; center landscape Y ≈ (1280-1080)/2 = 100
 hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x100", scale = 1, transform = 0 })
-hl.monitor({ output = "HDMI-A-2", mode = "preferred", position = "1920x0", scale = 1.5, transform = 3 })
+hl.monitor({ output = "HDMI-A-2", mode = "preferred", position = "-720x0", scale = 1.5, transform = 1 })
 
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
@@ -16,6 +16,9 @@ local menu        = "hyprlauncher"
 local anyrun      = "/home/kodex/.local/bin/anyrun-launch"
 local shot        = "/home/kodex/.local/bin/hypr-screenshot"
 local rec         = "/home/kodex/.local/bin/hypr-record"
+local dictate     = "/home/kodex/.local/bin/dictate"
+-- Zoom toggle: sequential modesets (never batch — DRM page-flip race).
+local zoomToggle  = "/bin/bash /home/kodex/.local/bin/hypr-zoom-toggle"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
 -- Super+G: dedicated kitty (not gnome-terminal). Binary: ~/.local/bin/grok → ~/.grok/bin/grok
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
@@ -210,6 +213,15 @@ local function revealAllWindows()
     hl.dispatch(hl.dsp.focus({ workspace = targetId }))
 end
 
+--[[
+  Portrait zoom FSM (HDMI-A-2 scale). Same pattern as AGS caffeine:
+    - SSOT = live monitor scale (script reads hyprctl); phase file is cache
+    - phases: dense(1.5) | arming | roomy(1.0) | failed
+    - side effects sequential (DRM cannot double-modeset mid page-flip)
+  Bound via exec → bash script (hypr-zoom-toggle); not inlined here so the
+  sleep between modesets never blocks the compositor event loop.
+]]
+
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
@@ -217,6 +229,12 @@ hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(anyrun))
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
+-- Dictation toggle: G300s physical btn 7/8 → KEY_F20 (ratbag) → arranca/corta (tope 300s).
+-- Super+D = timed 5s fallback. Wheel (274) left free for middle-click paste/apps.
+-- F20 avoids BTN_SIDE (browser-back) and MMB conflict. mouse:275 kept as fallback if ratbag maps button 8.
+hl.bind("F20", hl.dsp.exec_cmd(dictate .. " toggle"))
+hl.bind("mouse:275", hl.dsp.exec_cmd(dictate .. " toggle"))
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictate .. " timed"))
 
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + CTRL + X", hl.dsp.window.kill())
@@ -226,6 +244,8 @@ hl.bind(mainMod .. " + Q", hl.dsp.layout("togglesplit"))
 hl.bind(mainMod .. " + A", revealAllWindows)
 -- Super+F: toggle full panel (maximize / restore). Not client true-FS.
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" }))
+-- Super+Ctrl+Z: portrait ASUS scale 1.5 ↔ 1.0 (re-anchors AOC Y)
+hl.bind(mainMod .. " + CTRL + Z", hl.dsp.exec_cmd(zoomToggle))
 
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(agsBin .. " request bar-cycle"))
 hl.bind("Super_L", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
@@ -289,8 +309,6 @@ hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 hl.bind(mainMod .. " + mouse:272",  hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",  hl.dsp.window.resize(), { mouse = true })
--- MMB alone: drag/move window (no Super). Super+LMB still works.
-hl.bind("mouse:274",                hl.dsp.window.drag(),   { mouse = true })
 
 hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
 hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })

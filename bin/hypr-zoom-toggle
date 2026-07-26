@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# Toggle HDMI-A-2 (portrait ASUS) scale 1.5 ↔ 1.0.
+#
+# FSM (same contract as AGS caffeine):
+#   SSOT reality = hyprctl monitors (scale + x of HDMI-A-2)
+#   phases: dense (1.5) | arming | roomy (1.0) | failed
+#   apply is sequential with settle delay — NEVER hyprctl --batch two
+#   hl.monitor() calls. Aquamarine: "Cannot commit when a page-flip is
+#   awaiting" → half layout / pantalla cortada.
+#
+# Bind: Super+Ctrl+Z → /bin/bash this script
+set -euo pipefail
+
+PORTRAIT=HDMI-A-2
+LANDSCAPE=HDMI-A-1
+TRANSFORM=1
+# NVIDIA + dual HDMI: need real settle between modesets
+GAP_SEC=0.55
+MODE="1920x1080@60"
+# Must match ~/.config/hypr/hyprpaper.conf (hyprpaper does not re-anchor after scale)
+WALLPAPER=/home/kodex/home-hyprland/wallpapers/disco-elysium-thought-cabinet-art-cropped.avif
+LOG="${XDG_RUNTIME_DIR:-/tmp}/hypr-zoom.log"
+STATE="${XDG_RUNTIME_DIR:-/tmp}/hypr-zoom.phase"
+
+log() { printf '%s %s\n' "$(date -Iseconds)" "$*" >>"$LOG"; }
+
+notify() {
+  hyprctl notify 5 2000 0 "fontsize:14 $1" >/dev/null 2>&1 || true
+}
+
+# After monitor move/scale, layer-shell clients keep old xywh:
+#   hyprpaper on AOC stayed at y=100 while monitor went to y=420
+#   AGS exclusive zone / bar geometry can lag the new logical size
+# Re-apply wallpaper per output + restart AGS (caffeine FSM re-adopts).
+resync_layers() {
+  log "resync wallpaper"
+  hyprctl hyprpaper wallpaper "${LANDSCAPE},${WALLPAPER},cover" >/dev/null 2>&1 || true
+  hyprctl hyprpaper wallpaper "${PORTRAIT},${WALLPAPER},cover" >/dev/null 2>&1 || true
+  sleep 0.15
+
+  log "resync ags restart"
+  ags quit 2>/dev/null || true
+  sleep 0.2
+  pkill -x ags 2>/dev/null || true
+  sleep 0.2
+  env PATH="/home/kodex/.local/bin:/usr/local/bin:/usr/bin" GSK_RENDERER=gl \
+    /usr/local/bin/ags run /home/kodex/.config/ags \
+    >>"${XDG_RUNTIME_DIR:-/tmp}/ags-zoom-restart.log" 2>&1 &
+  disown || true
+
+  local i
+  for i in $(seq 1 40); do
+    if ags request bar-mode >/dev/null 2>&1; then
+      log "ags up after ${i} tries"
+      return 0
+    fi
+    sleep 0.1
+  done
+  log "ags restart: IPC not up yet (bar may appear late)"
+}
+
+# Prints: scale x y
+portrait_geo() {
+  hyprctl monitors -j | PORTRAIT="$PORTRAIT" python3 -c '
+import json, os, sys
+name = os.environ["PORTRAIT"]
+for m in json.load(sys.stdin):
+    if m.get("name") == name:
+        print(float(m.get("scale", 1.0)), int(m.get("x", 0)), int(m.get("y", 0)))
+        raise SystemExit
+print(1.5, -720, 0)
+'
+}
+
+is_dense_scale() {
+  awk -v s="$1" 'BEGIN { exit !(s+0 >= 1.25) }'
+}
+
+apply_one() {
+  local lua="$1"
+  local out
+  out=$(hyprctl eval "$lua" 2>&1) || true
+  log "eval → $out | $lua"
+  [[ "$out" == *ok* ]] || return 1
+  # Wait for page-flip; fixed sleep (no timer-as-control-flow elsewhere — DRM has no ready FD here)
+  sleep "$GAP_SEC"
+  return 0
+}
+
+set_portrait() {
+  local pos="$1" scale="$2"
+  apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE}\", position = \"${pos}\", scale = ${scale}, transform = ${TRANSFORM} })"
+}
+
+set_landscape() {
+  local pos="$1"
+  apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE}\", position = \"${pos}\", scale = 1, transform = 0 })"
+}
+
+apply_roomy() {
+  set_portrait "-1080x0" 1 || return 1
+  set_landscape "0x420" || return 1
+  local s x y
+  read -r s x y <<<"$(portrait_geo)"
+  if is_dense_scale "$s"; then
+    log "verify roomy FAIL scale=$s pos=${x}x${y}"
+    return 1
+  fi
+  # expected x near -1080
+  if [[ "$x" -gt -1000 ]]; then
+    log "verify roomy pos suspicious x=$x (want ~-1080)"
+    return 1
+  fi
+  return 0
+}
+
+apply_dense() {
+  set_portrait "-720x0" 1.5 || return 1
+  set_landscape "0x100" || return 1
+  local s x y
+  read -r s x y <<<"$(portrait_geo)"
+  if ! is_dense_scale "$s"; then
+    log "verify dense FAIL scale=$s pos=${x}x${y}"
+    return 1
+  fi
+  if [[ "$x" -lt -900 ]]; then
+    log "verify dense pos suspicious x=$x (want ~-720)"
+    return 1
+  fi
+  return 0
+}
+
+# Heal half-applied layouts (e.g. scale 1.0 but still x=-720) before toggling.
+heal_if_inconsistent() {
+  local s x y
+  read -r s x y <<<"$(portrait_geo)"
+  if is_dense_scale "$s" && [[ "$x" -lt -900 ]]; then
+    log "heal: dense scale but roomy x=$x → re-dense"
+    apply_dense || true
+  elif ! is_dense_scale "$s" && [[ "$x" -gt -1000 ]]; then
+    log "heal: roomy scale but dense x=$x → re-roomy"
+    apply_roomy || true
+  fi
+}
+
+# ─── FSM ────────────────────────────────────────────────────────────────────
+read -r cur_s cur_x cur_y <<<"$(portrait_geo)"
+log "toggle start scale=$cur_s pos=${cur_x},${cur_y}"
+heal_if_inconsistent
+read -r cur_s cur_x cur_y <<<"$(portrait_geo)"
+
+if is_dense_scale "$cur_s"; then
+  echo arming >"$STATE"
+  if apply_roomy; then
+    echo roomy >"$STATE"
+    log "phase=roomy"
+    resync_layers
+    notify "zoom roomy · scale 1.0"
+    echo "zoom: ${PORTRAIT} scale=1.0 (roomy)"
+  else
+    echo failed >"$STATE"
+    log "failed→restore dense"
+    notify "zoom fail · restoring dense"
+    apply_dense || true
+    resync_layers
+    echo dense >"$STATE"
+    exit 1
+  fi
+else
+  echo arming >"$STATE"
+  if apply_dense; then
+    echo dense >"$STATE"
+    log "phase=dense"
+    resync_layers
+    notify "zoom dense · scale 1.5"
+    echo "zoom: ${PORTRAIT} scale=1.5 (dense)"
+  else
+    echo failed >"$STATE"
+    log "failed dense"
+    notify "zoom fail"
+    exit 1
+  fi
+fi

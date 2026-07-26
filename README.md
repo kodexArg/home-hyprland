@@ -60,11 +60,10 @@ Dos ciclos de tres estados, ambos con orden fijo:
 | **Salida de audio** (icono de volumen) | parlantes → **mute** → auriculares → parlantes | click en el icono |
 | **Modo de barra** | `always` → `temp` → `hidden` → `always` | `Super+B` o `ags request bar-cycle` |
 
-- **Salida de audio**: en este host HDMI (`TU106` / AOC) = parlantes y el jack
-  analógico Ryzen (`analog-output-headphones`) = auriculares. El mute siempre
-  pinta parlante-tachado (no existe "auriculares muteados"). La clasificación se
-  hace con una lectura **viva** de `defaultSpeaker` — los bindings anidados a
-  `route` quedaban pegados y pintaban auriculares sobre HDMI.
+- **Salida de audio** (2026-07-24): HDMI (`TU106` → AOC G2790G4) = **auriculares**;
+  jack motherboard Ryzen ALC897 (`analog-output-lineout`) = **parlantes**. Mute
+  siempre pinta parlante-tachado (no existe "auriculares muteados").
+  Clasificación con lectura **viva** de `defaultSpeaker`.
 - **Modo de barra**: en `temp` la barra se auto-oculta a los 2.5 s y reaparece
   al llevar el cursor al borde superior (poll de `hyprctl cursorpos` cada 80 ms,
   12 px de zona) o con `Super_L`/`Super_R` (bind `non_consuming`).

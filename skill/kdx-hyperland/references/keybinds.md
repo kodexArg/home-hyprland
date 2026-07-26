@@ -39,6 +39,7 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 | Super+←↑↓→ | Focus direction |
 | Super+Shift+←↑↓→ | Move window (swap / cross monitor) |
 | Super+Ctrl+←↑↓→ | Resize ±40px (repeating) |
+| Super+Ctrl+Z | Toggle HDMI-A-2 scale **1.5 ↔ 1.0** (`hypr-zoom-toggle`). Sequential modesets + settle delay (batching two monitors races DRM page-flip → cut-off). Toast confirms phase. |
 
 ## Workspaces
 

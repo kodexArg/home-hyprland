@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import style from "./style.scss"
-import Bar, { toggleCapture, toggleCaffeine } from "./widget/Bar"
+import Bar, { toggleCapture } from "./widget/Bar"
 import {
   cycleBarMode,
   getBarMode,
@@ -8,6 +8,13 @@ import {
   setBarMode,
   type BarMode,
 } from "./widget/bar-mode"
+import {
+  getCaffeineStatus,
+  getCaffeineToken,
+  requestCaffeineOff,
+  requestCaffeineOn,
+  toggleCaffeine,
+} from "./widget/caffeine"
 import GLib from "gi://GLib"
 
 /** Portrait ASUS (Hypr monitor 2 / transform 3). Bar never on HDMI-A-1. */
@@ -84,7 +91,24 @@ app.start({
       return
     }
     if (cmd === "caffeine-toggle" || cmd === "caffeine") {
-      res(toggleCaffeine())
+      // Transition first, then report verified snapshot (not pre-toggle desire).
+      const snap = toggleCaffeine()
+      res(`${getCaffeineToken()} | ${snap}`)
+      return
+    }
+    if (cmd === "caffeine-status" || cmd === "caffeine-get") {
+      const snap = getCaffeineStatus() // reconciles first
+      res(`${getCaffeineToken()} | ${snap}`)
+      return
+    }
+    if (cmd === "caffeine-on") {
+      const snap = requestCaffeineOn()
+      res(`${getCaffeineToken()} | ${snap}`)
+      return
+    }
+    if (cmd === "caffeine-off") {
+      const snap = requestCaffeineOff()
+      res(`${getCaffeineToken()} | ${snap}`)
       return
     }
     res(`unknown request: ${argv.join(" ")}`)

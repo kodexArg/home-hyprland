@@ -28,7 +28,7 @@ description: >
 | AGS bar (live) | `~/.config/ags/` (`app.ts`, `widget/`, `icons/`, `style.scss`) |
 | Skill (live) | `~/.claude/skills/kdx-hyperland/` — **not** `~/Skills/` (does not exist) |
 | Git SSOT (private) | `~/home-hyprland/` — `hypr/`, `ags/`, `bin/`, `kitty/`, `wallpapers/`, `skill/kdx-hyperland/` |
-| Host helpers | `~/.local/bin/hypr-*` (`hypr-screenshot`, `hypr-record`, `hypr-reveal-all`) — **no** `~/Scripts/…/Hyperland/`; mirrored in repo `bin/` |
+| Host helpers | `~/.local/bin/hypr-*` (`hypr-screenshot`, `hypr-record`, `hypr-reveal-all`, `hypr-zoom-toggle`) — **no** `~/Scripts/…/Hyperland/`; mirrored in repo `bin/` |
 | Narrative | `~/Documents/System/Desktop.md` |
 | ADRs | `~/Documents/System/ADRs/20260715-hyprland-*`, `20260715-ags-*` |
 | Binaries | `hyprland` 0.55.4 · `ags` 3.1.0 @ `/usr/local/bin/ags` |
@@ -61,8 +61,8 @@ Do **not** paste hyprlang from old blogs. Translate to `hl.*` using `references/
 - **AGS:** bar **only on HDMI-A-2** · Super+B cycles always→temp→hidden · Super_L/R peek (non_consuming) · **first paint = `always`** (edge poll only starts once you cycle into `temp`)
 - **Bar contents:** start = Volume · end = **LocalLlm brain** + **Clock/Caffeine** cluster. Capture caret is commented out since 2026-07-17 (buttons were mocks).
 - **Volume icon (triple):** speakers · muted (speaker-slash) · headphones — no headphones-mute. Logic in `widget/Bar.tsx` via AstalWp `defaultSpeaker.route` (not shell scripts).
-- **Audio on this host:** default sink HDMI (`TU106` / AOC) = speakers · Ryzen analog `analog-output-headphones` = headphones
-- **Caffeine:** cup next to clock; holds a `systemd-inhibit --what=idle:sleep --mode=block` child process (`Gtk.Application.inhibit` is a no-op here — no gnome-session). `ags request caffeine`.
+- **Audio on this host:** default sink HDMI (`TU106` → AOC G2790G4) = **auriculares** · Ryzen ALC897 `analog-output-lineout` (MB jack) = **parlantes**. ADR `20260724-audio-hdmi-headphones-mb-speakers`
+- **Caffeine:** FSM in `widget/caffeine.ts` (SSOT=`ags-caffeine` pids, tick reconcile). Cup next to clock. `ags request caffeine` / `caffeine-status`.
 - **Local LLM selector:** brain icon → GGUF model list + OFF (`widget/LocalLlm.tsx`). Drives `local-llm.service` (systemd --user); **ready = `127.0.0.1:28000/v1/models` answers**, not unit `active`. One model at a time on 8 GB; load timeout 90 s → SIGKILL. VRAM header from `nvidia-smi`.
 - **Screenshots / recording:** `hypr-screenshot` (Print window · Ctrl+Print region · Alt+Print full · Super+Print active monitor) · `hypr-record` (Super+Shift+R region, +Alt window) · `hypr-reveal-all` (Super+A)
 - **NVIDIA:** `AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1` · GSK for AGS/anyrun: `GSK_RENDERER=gl`
@@ -82,7 +82,9 @@ ags request bar-cycle
 ags request bar-peek
 ags request bar-mode
 ags request bar-set always|temp|hidden
-ags request caffeine        # toggle idle/sleep inhibit
+ags request caffeine        # toggle idle/sleep inhibit (FSM snapshot)
+ags request caffeine-status # phase + pids (no flip)
+ags request caffeine-on|off # force arm/disarm
 ags request capture-toggle  # capture panel (currently commented out in Bar.tsx)
 
 # Local LLM selector plumbing

@@ -114,7 +114,8 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
   @girs/              # generated types
   icons/              # cream monochrome SVGs (image file=, no icon theme)
   widget/
-    Bar.tsx           # Volume + LocalLlm + Clock/Caffeine layer-shell window
+    Bar.tsx           # Volume + LocalLlm + Clock chip layout
+    caffeine.ts       # caffeine FSM (SSOT=process table, tick reconcile)
     bar-mode.ts       # always | temp | hidden + edge poll + peek
     LocalLlm.tsx      # brain menu: GGUF model picker + local-llm.service FSM
 ```
@@ -180,11 +181,11 @@ on `hypr-screenshot`. Code kept for when it gets wired.
 Cream monochrome vendored under `~/.config/ags/icons/` (`image file=`). Not `audio-volume-high` (waves).
 
 **Icon click cycle:** `parlante → mute → auris → parlante`  
-(mute all · default→HP unmute · default→HDMI unmute).
+(mute all · default→HDMI auris unmute · default→MB lineout unmute).
 
-**Bug fixed:** nested `createBinding(wp, "defaultSpeaker", "route", …)` could stick after sink switch → both unmuted states painted as auris. Classify with a **live** `defaultSpeaker` read (HDMI desc short-circuits to speakers) after mute/id notify + light route poll.
+**Bug fixed:** nested `createBinding(wp, "defaultSpeaker", "route", …)` could stick after sink switch. Classify with a **live** `defaultSpeaker` read after mute/id notify + light route poll.
 
-This host: HDMI TU106 = speakers · Ryzen `analog-output-headphones` = auris.
+This host (2026-07-24): HDMI TU106 → AOC G2790G4 = **auriculares** · Ryzen ALC897 `analog-output-lineout` (MB jack) = **parlantes**. ADR `20260724-audio-hdmi-headphones-mb-speakers`.
 
 **Volume track:** custom box + GestureClick/Drag/Scroll — **not** `Gtk.Scale` (broken hit-target on layer-shell + GSK gl here). Fill width mirrors WirePlumber volume; fill is a **child** (do not rebind class on gesture target mid-click).
 
@@ -195,21 +196,25 @@ Window props:
 - `keymode=NONE` (pointer only — ON_DEMAND steals keys)
 - `visible={barVisible}`, `class={barModeClass}`
 
-### Caffeine (`Bar.tsx` → `ClockCaffeine`)
+### Caffeine (`widget/caffeine.ts` + `ClockCaffeine` in Bar)
 
 Cup glued to the clock in one chip (`ClockCluster`): left half = calendar
 menubutton, right half = caffeine toggle. No vertical rule — spacing separates
 the hit targets.
 
-- **`Gtk.Application.inhibit` is a no-op on this session** (logind wants a
-  session manager; there is no gnome-session under Hyprland). So we hold a child
-  process instead:
-  `systemd-inhibit --what=idle:sleep --who=ags-caffeine --mode=block sleep infinity`
-- Off → `force_exit()` on that `Gio.Subprocess`, handle cleared.
-- Icons: `icons/caffeine-on.svg` (cup + steam) / `caffeine-off.svg` (cup only).
-- Class `ClockCluster caffeine-on` when armed · `ags request caffeine`.
+**Pattern (replicate for other bar controls):** SSOT = process table
+(`--who=ags-caffeine`), not a UI bool. Explicit FSM
+`off|arming|on|disarming|failed` + ~1.5 s tick reconcile. UI projections
+(`caffeineUiOn`, tooltip, shell class) derive from phase × pids. Toggle
+direction from reality, not `!uiBool`. IPC returns verified snapshot.
 
-Verify it actually took: `systemd-inhibit --list | grep ags-caffeine`.
+- Mechanism: `systemd-inhibit --what=idle:sleep --who=ags-caffeine --mode=block sleep infinity`
+  (`Gtk.Application.inhibit` is a no-op without gnome-session).
+- Icons: `icons/caffeine-on.svg` / `caffeine-off.svg` · class `ClockCluster caffeine-on`.
+- IPC: `ags request caffeine` | `caffeine-status` | `caffeine-on` | `caffeine-off`.
+- ADR: `~/Documents/System/ADRs/20260720-ags-caffeine-toggle.md` (updated 2026-07-25).
+
+Verify: `systemd-inhibit --list | grep ags-caffeine`.
 
 ### Local LLM selector (`LocalLlm.tsx`)
 

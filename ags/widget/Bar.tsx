@@ -2,11 +2,27 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import AstalWp from "gi://AstalWp"
 import GLib from "gi://GLib"
-import Gio from "gi://Gio"
 import { createBinding, createComputed, createState } from "ags"
 import { createPoll } from "ags/time"
 import { barModeClass, barVisible, setOverBar } from "./bar-mode"
 import LocalLlm from "./LocalLlm"
+import DictationIndicator from "./DictationIndicator"
+import {
+  caffeineShellClass,
+  caffeineTooltip,
+  caffeineUiOn,
+  toggleCaffeine,
+} from "./caffeine"
+
+// Re-export for app.ts IPC (single import surface from Bar was legacy).
+export {
+  toggleCaffeine,
+  getCaffeineOn,
+  getCaffeineStatus,
+  getCaffeineToken,
+  requestCaffeineOn,
+  requestCaffeineOff,
+} from "./caffeine"
 
 const TRACK_W = 140
 
@@ -20,7 +36,9 @@ const TRACK_W = 140
  *
  * Not audio-volume-high (that one has speaker + sound arcs).
  *
- * This host: HDMI (TU106) = speakers · Ryzen analog headphones port = auris.
+ * This host topology (2026-07-24):
+ *   HDMI TU106 → AOC G2790G4 (primary) = auriculares
+ *   Ryzen ALC897 analog lineout (MB jack) = parlantes
  * Classify from a live defaultSpeaker read (nested route bindings stick).
  */
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
@@ -40,8 +58,8 @@ function routeLooksLikeHeadphones(
   )
 }
 
-/** HDMI / monitor path — never headphones even if a binding is stale. */
-function endpointLooksLikeHdmiSpeakers(ep: AstalWp.Endpoint): boolean {
+/** HDMI / DP on this host = headphones (jack on primary monitor HDMI). */
+function endpointLooksLikeHdmiHeadphones(ep: AstalWp.Endpoint): boolean {
   const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
   return (
     d.includes("hdmi") ||
@@ -51,10 +69,26 @@ function endpointLooksLikeHdmiSpeakers(ep: AstalWp.Endpoint): boolean {
   )
 }
 
+/** Motherboard analog speakers (lineout / ALC897), never HDMI. */
+function endpointLooksLikeMbSpeakers(ep: AstalWp.Endpoint): boolean {
+  if (endpointLooksLikeHdmiHeadphones(ep)) return false
+  const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
+  return (
+    d.includes("analog") ||
+    d.includes("ryzen") ||
+    d.includes("alc897") ||
+    d.includes("lineout") ||
+    d.includes("line-out")
+  )
+}
+
 type OutputMode = "speakers" | "mute" | "headphones"
 
 function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
-  if (endpointLooksLikeHdmiSpeakers(ep)) return false
+  // Primary path on this host: HDMI of AOC G2790G4.
+  if (endpointLooksLikeHdmiHeadphones(ep)) return true
+  if (endpointLooksLikeMbSpeakers(ep)) return false
+  // Fallback: USB/BT jack routes that advertise headphones.
   const r = ep.route
   return routeLooksLikeHeadphones(r?.name, r?.description)
 }
@@ -63,17 +97,17 @@ function listSpeakers(wp: AstalWp.Wp): AstalWp.Endpoint[] {
   return wp.audio?.speakers ?? []
 }
 
-/** HDMI / non-jack sink (this host: TU106 HDMI). */
+/** Motherboard lineout (this host: Ryzen ALC897 analog-stereo). */
 function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   const all = listSpeakers(wp)
   return (
-    all.find((s) => endpointLooksLikeHdmiSpeakers(s)) ??
+    all.find((s) => endpointLooksLikeMbSpeakers(s)) ??
     all.find((s) => !endpointIsHeadphones(s)) ??
     null
   )
 }
 
-/** Analog jack sink when route is headphones (this host: Ryzen ALC897). */
+/** HDMI headphones sink (this host: TU106 → G2790G4). */
 function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   return listSpeakers(wp).find((s) => endpointIsHeadphones(s)) ?? null
 }
@@ -113,7 +147,7 @@ function cycleOutputMode(wp: AstalWp.Wp) {
     return
   }
   if (mode === "mute") {
-    // → headphones: default jack, only that sink live
+    // → headphones: default HDMI (AOC), only that sink live
     if (sp) sp.set_mute(true)
     if (hp) {
       hp.set_is_default(true)
@@ -123,7 +157,7 @@ function cycleOutputMode(wp: AstalWp.Wp) {
     }
     return
   }
-  // headphones → speakers (HDMI)
+  // headphones → speakers (motherboard lineout)
   if (hp) hp.set_mute(true)
   if (sp) {
     sp.set_is_default(true)
@@ -212,12 +246,12 @@ function VolumeTrack() {
 /** Volume: output icon (speakers / mute / headphones), track, ±. First control on the bar. */
 function Volume() {
   const wp = AstalWp.get_default()!
-  // Always resolve default sink (HDMI speakers vs Ryzen analog headphones).
+  // Always resolve default sink (HDMI auris vs Ryzen MB parlantes).
   const speaker = () => wp.defaultSpeaker
 
   // Recompute when default sink identity / mute / description change.
   // Classification uses a *live* defaultSpeaker read (see modeOfEndpoint) —
-  // nested route bindings were sticky and painted auris for HDMI too.
+  // nested route bindings were sticky after sink switches.
   const mute = createBinding(wp, "defaultSpeaker", "mute")
   const sinkId = createBinding(wp, "defaultSpeaker", "id")
   const sinkDesc = createBinding(wp, "defaultSpeaker", "description")
@@ -441,153 +475,25 @@ function CaptureToggle({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
   )
 }
 
-// Caffeine: cup with steam (on) / cup only (off) — block idle + suspend
+// Caffeine icons — FSM lives in ./caffeine.ts (SSOT = process table).
 const ICON_CAFFEINE_ON = `${ICON_DIR}/caffeine-on.svg`
 const ICON_CAFFEINE_OFF = `${ICON_DIR}/caffeine-off.svg`
 
 /**
- * Held `systemd-inhibit` process. Gtk.Application.inhibit is a no-op for
- * logind on this Hyprland session (no gnome-session), so we block via:
- *   systemd-inhibit --what=idle:sleep --mode=block sleep infinity
- *
- * Failure mode (2026-07-23): if AGS/gjs dies without force_exit, the child
- * reparents to PID 1 and keeps blocking sleep forever while UI restarts at
- * `false`. Always reconcile against the process table (who=ags-caffeine),
- * never trust the in-memory handle alone.
- */
-const CAFFEINE_WHO = "ags-caffeine"
-let caffeineProc: Gio.Subprocess | null = null
-const [caffeineOn, setCaffeineOn] = createState(false)
-
-/** PIDs of live `systemd-inhibit … --who=ags-caffeine` (may be orphans). */
-function listCaffeinePids(): number[] {
-  try {
-    // ps -C matches the real binary only — never shell wrappers that mention
-    // the string (pgrep -f false-positives agents / this file's own tooling).
-    const proc = Gio.Subprocess.new(
-      ["ps", "-C", "systemd-inhibit", "-o", "pid=,args="],
-      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
-    )
-    const [, stdout] = proc.communicate_utf8(null, null)
-    const out = (stdout ?? "").trim()
-    if (!out) return []
-    return out
-      .split("\n")
-      .filter((line) => line.includes(`--who=${CAFFEINE_WHO}`))
-      .map((line) => parseInt(line.trim(), 10))
-      .filter((n) => Number.isFinite(n) && n > 1)
-  } catch {
-    return []
-  }
-}
-
-function killAllCaffeineInhibitors(): void {
-  for (const pid of listCaffeinePids()) {
-    try {
-      Gio.Subprocess.new(
-        ["kill", String(pid)],
-        Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
-      ).wait(null)
-    } catch {
-      /* already gone */
-    }
-  }
-  if (caffeineProc) {
-    try {
-      caffeineProc.force_exit()
-    } catch {
-      /* already dead */
-    }
-    caffeineProc = null
-  }
-}
-
-function spawnCaffeineInhibitor(): void {
-  const proc = Gio.Subprocess.new(
-    [
-      "systemd-inhibit",
-      "--what=idle:sleep",
-      `--who=${CAFFEINE_WHO}`,
-      "--why=Caffeine — keep awake",
-      "--mode=block",
-      "sleep",
-      "infinity",
-    ],
-    Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
-  )
-  caffeineProc = proc
-  // If the child dies externally, drop UI to off.
-  proc.wait_async(null, (_obj, res) => {
-    try {
-      proc.wait_finish(res)
-    } catch {
-      /* exit status / already reaped */
-    }
-    if (caffeineProc === proc) {
-      caffeineProc = null
-      // Only clear if no orphan still holds the lock.
-      if (listCaffeinePids().length === 0) setCaffeineOn(false)
-    }
-  })
-}
-
-function applyCaffeine(on: boolean): boolean {
-  if (on) {
-    // Collapse any ghost pile first, then hold exactly one.
-    const live = listCaffeinePids()
-    if (live.length === 0) {
-      spawnCaffeineInhibitor()
-    } else if (live.length > 1 || !caffeineProc) {
-      // Multiple orphans, or adopted without a handle: re-spawn cleanly.
-      killAllCaffeineInhibitors()
-      spawnCaffeineInhibitor()
-    }
-    setCaffeineOn(true)
-    return true
-  }
-  killAllCaffeineInhibitors()
-  setCaffeineOn(false)
-  return false
-}
-
-/**
- * On AGS (re)start: if an orphan still holds the inhibit, show ON.
- * Without this the cup is empty while sleep stays blocked.
- */
-;(function syncCaffeineFromSystem() {
-  if (listCaffeinePids().length > 0) setCaffeineOn(true)
-})()
-
-/** Toggle idle/sleep inhibit. Used by bar button + `ags request caffeine`. */
-export function toggleCaffeine(): string {
-  const next = !caffeineOn.peek()
-  applyCaffeine(next)
-  return next ? "caffeine-on" : "caffeine-off"
-}
-
-export function getCaffeineOn(): boolean {
-  return caffeineOn.peek()
-}
-
-/**
  * One visual chip: HH:MM ☕
  * Shared chrome; left = calendar menubutton, right = caffeine toggle.
- * No vertical rule — spacing alone separates the hit targets.
+ * State/icon/class come from caffeine.ts projections — not a local bool.
  */
 function ClockCaffeine({ timeFormat = "%H:%M" }) {
   const time = createPoll("", 1000, () =>
     GLib.DateTime.new_now_local().format(timeFormat)!,
   )
-  const iconFile = caffeineOn((on) => (on ? ICON_CAFFEINE_ON : ICON_CAFFEINE_OFF))
-  const cupTip = caffeineOn((on) =>
-    on ? "Caffeine on — click to allow sleep" : "Caffeine off — click to stay awake",
-  )
-  const shellClass = caffeineOn((on) =>
-    on ? "ClockCluster caffeine-on" : "ClockCluster",
+  const iconFile = caffeineUiOn((on) =>
+    on ? ICON_CAFFEINE_ON : ICON_CAFFEINE_OFF,
   )
 
   return (
-    <box class={shellClass} spacing={0} valign={Gtk.Align.CENTER}>
+    <box class={caffeineShellClass} spacing={0} valign={Gtk.Align.CENTER}>
       <menubutton class="ClockCluster-time" tooltipText="Calendar">
         <label class="Clock-time" label={time} />
         <popover>
@@ -597,7 +503,7 @@ function ClockCaffeine({ timeFormat = "%H:%M" }) {
 
       <button
         class="ClockCluster-cup"
-        tooltipText={cupTip}
+        tooltipText={caffeineTooltip}
         onClicked={() => toggleCaffeine()}
       >
         <image file={iconFile} pixelSize={14} />
@@ -650,6 +556,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           {/* Capture caret + panel — paused 2026-07-17 (cut here; re-enable later)
           <CaptureToggle gdkmonitor={gdkmonitor} />
           */}
+          <DictationIndicator />
           <LocalLlm gdkmonitor={gdkmonitor} />
           <ClockCaffeine />
         </box>
