@@ -1,13 +1,15 @@
--- Portrait HDMI-A-2 at 1.5 → logical 720×1280 on left; center landscape Y ≈ (1280-1080)/2 = 100
-hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x100", scale = 1, transform = 0 })
-hl.monitor({ output = "HDMI-A-2", mode = "preferred", position = "-720x0", scale = 1.5, transform = 1 })
-
+hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x420", scale = 1, transform = 0 })
+hl.monitor({ output = "HDMI-A-2", mode = "preferred", position = "-1080x0", scale = 1, transform = 1 })
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("LIBVA_DRIVER_NAME", "nvidia")
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
 hl.env("NVD_BACKEND", "direct")
+-- NVIDIA (card0) primary render + amdgpu (card1) portrait scanout.
+-- Without linear blit, Aquamarine fails dmabuf import into the secondary
+-- renderer (EGL_BAD_MATCH) and the panel stays powered with no usable frame.
 hl.env("AQ_DRM_DEVICES", "/dev/dri/card0:/dev/dri/card1")
+hl.env("AQ_FORCE_LINEAR_BLIT", "1")
 
 local terminal    = "kitty"
 local fileManager = "nautilus"
@@ -16,14 +18,30 @@ local menu        = "hyprlauncher"
 local anyrun      = "/home/kodex/.local/bin/anyrun-launch"
 local shot        = "/home/kodex/.local/bin/hypr-screenshot"
 local rec         = "/home/kodex/.local/bin/hypr-record"
-local dictate     = "/home/kodex/.local/bin/dictate"
--- Zoom toggle: sequential modesets (never batch — DRM page-flip race).
+-- PAUSED 2026-07-28: voice stack under work — Super+D / Super+L disabled.
+-- local dictate     = "/home/kodex/.local/bin/dictate"
+-- local voiceLive   = "/home/kodex/.local/bin/voice-live"
+local recMode     = "/home/kodex/.local/bin/kdx-rec-mode"
+local liveMode    = "/home/kodex/.local/bin/kdx-live-mode"
 local zoomToggle  = "/bin/bash /home/kodex/.local/bin/hypr-zoom-toggle"
+local kdxShare    = "/home/kodex/.local/bin/kdx-share"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
--- Super+G: dedicated kitty (not gnome-terminal). Binary: ~/.local/bin/grok → ~/.grok/bin/grok
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
 local mainMod     = "SUPER"
 local resizeStep  = 40
+
+local pointerSpeed80Percent     = -0.2
+local hyprlandWallpaperDisabled = 0
+-- Cursor policy (dual-GPU NVIDIA card0 + amdgpu card1):
+-- Software-only (no_hardware_cursors=1) left a stuck KMS HW cursor plane on
+-- HDMI-A-1 (AOC) bottom-right identical to the real cursor — grim cannot see it.
+-- Use HW cursors again + CPU buffer (multi-GPU safe path) so one plane is owned
+-- and updated. AQ_FORCE_LINEAR_BLIT already covers secondary-scanout import.
+local hardwareCursorsDisabled   = false
+local cursorUseCpuBuffer        = true
+local cursorDefaultMonitor      = "HDMI-A-2"
+local duckyPhantomPointer       = "ducky-ducky-one2-sf-rgb-1"
+local wirelessPhantomPointer    = "logitech-wireless-mouse-1"
 
 hl.config({
     general = {
@@ -69,21 +87,27 @@ hl.config({
         fullscreen_on_one_column = true,
     },
     misc = {
-        force_default_wallpaper  = 0,
+        force_default_wallpaper  = hyprlandWallpaperDisabled,
         disable_hyprland_logo    = true,
         disable_splash_rendering = true,
+        mouse_move_enables_dpms  = true,
+        key_press_enables_dpms   = true,
     },
+
     input = {
         kb_layout     = "us",
         kb_variant    = "altgr-intl",
         follow_mouse  = 1,
-        -- ~0.8× baseline pointer speed (flat: factor ≈ 1 + sensitivity → -0.2)
-        sensitivity   = -0.2,
+        sensitivity   = pointerSpeed80Percent,
         accel_profile = "flat",
         touchpad      = { natural_scroll = false },
     },
+
     cursor = {
-        no_hardware_cursors = false,
+        -- map: 0=allow HW, 1=force software, 2=auto
+        no_hardware_cursors = hardwareCursorsDisabled,
+        use_cpu_buffer      = cursorUseCpuBuffer,
+        default_monitor     = cursorDefaultMonitor,
     },
 })
 
@@ -113,19 +137,11 @@ hl.animation({ leaf = "workspacesOut", enabled = true, speed = 1.94, bezier = "a
 hl.animation({ leaf = "zoomFactor",    enabled = true, speed = 7,    bezier = "quick" })
 
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
-hl.device({ name = "ducky-ducky-one2-sf-rgb-1", enabled = false })
--- G300s: ~0.8× current speed. flat accel → factor ≈ 1 + sensitivity → -0.2 ≈ 0.8×
--- (ratbag DPI steps are 250…; no 800 — keep 1000dpi HW, software scale here)
-hl.device({
-    name          = "logitech-g300s-optical-gaming-mouse",
-    sensitivity   = -0.2,
-    accel_profile = "flat",
-})
 
--- No true monitor Full Screen. Client (YouTube F, F11, …) still gets client=2
--- so the app draws "fullscreen" *inside* its window; compositor keeps layout.
--- suppress_event is not enough for Chromium — it still takes the monitor.
--- Super+F maximize (internal=1) is left alone.
+hl.device({ name = duckyPhantomPointer, enabled = false })
+-- Unifying receiver still enumerates a pointer even without a live mouse.
+hl.device({ name = wirelessPhantomPointer, enabled = false })
+
 hl.window_rule({
     name            = "desync-fullscreen-states",
     match           = { class = ".*" },
@@ -137,7 +153,6 @@ hl.on("window.fullscreen", function(w)
     if confiningFs or w == nil then
         return
     end
-    -- fullscreen = internal: 0 none, 1 max, 2 FS, 3 max+FS
     local internal = w.fullscreen or 0
     if internal ~= 2 and internal ~= 3 then
         return
@@ -185,6 +200,24 @@ hl.window_rule({
     monitor = "HDMI-A-2",
 })
 
+-- kdx-share: menu floats; composite on headless kdxShare (class = app-id)
+hl.window_rule({
+    name   = "kdx-share-menu-float",
+    match  = { title = "^kdx-share$" },
+    float  = true,
+    center = true,
+})
+hl.window_rule({
+    name    = "kdx-share-both-headless",
+    match   = { class = "com.kodexarg.kdx-share.both" },
+    monitor = "kdxShare",
+})
+hl.window_rule({
+    name  = "kdx-share-mirror-float",
+    match = { class = "at.yrlf.wl_mirror", title = "kdx-share.*" },
+    float = true,
+})
+
 local function revealAllWindows()
     local targetWs = hl.get_active_workspace()
     if targetWs ~= nil and targetWs.name ~= nil and string.match(targetWs.name, "^special:") then
@@ -213,53 +246,45 @@ local function revealAllWindows()
     hl.dispatch(hl.dsp.focus({ workspace = targetId }))
 end
 
---[[
-  Portrait zoom FSM (HDMI-A-2 scale). Same pattern as AGS caffeine:
-    - SSOT = live monitor scale (script reads hyprctl); phase file is cache
-    - phases: dense(1.5) | arming | roomy(1.0) | failed
-    - side effects sequential (DRM cannot double-modeset mid page-flip)
-  Bound via exec → bash script (hypr-zoom-toggle); not inlined here so the
-  sleep between modesets never blocks the compositor event loop.
-]]
-
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(anyrun))
-hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
--- Dictation toggle: G300s physical btn 7/8 → KEY_F20 (ratbag) → arranca/corta (tope 300s).
--- Super+D = timed 5s fallback. Wheel (274) left free for middle-click paste/apps.
--- F20 avoids BTN_SIDE (browser-back) and MMB conflict. mouse:275 kept as fallback if ratbag maps button 8.
-hl.bind("F20", hl.dsp.exec_cmd(dictate .. " toggle"))
-hl.bind("mouse:275", hl.dsp.exec_cmd(dictate .. " toggle"))
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictate .. " timed"))
+-- Exit = Super+Shift+E (deliberate chord). Super+M = REC mode UI toggle (WIP).
+hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
+hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(recMode .. " toggle"))
+hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(liveMode .. " toggle"))
+-- PAUSED 2026-07-28: real voice workers under work — UI mode toggles only (above).
+-- hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictate .. " toggle"))
+-- hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(voiceLive .. " toggle"))
 
+-- Close vs kill (same key family): Super+C polite close · Super+Ctrl+C force kill.
+-- Super+Ctrl+X kept as alias for muscle memory.
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
+hl.bind(mainMod .. " + CTRL + C", hl.dsp.window.kill())
 hl.bind(mainMod .. " + CTRL + X", hl.dsp.window.kill())
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + Q", hl.dsp.layout("togglesplit"))
 hl.bind(mainMod .. " + A", revealAllWindows)
--- Super+F: toggle full panel (maximize / restore). Not client true-FS.
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" }))
--- Super+Ctrl+Z: portrait ASUS scale 1.5 ↔ 1.0 (re-anchors AOC Y)
 hl.bind(mainMod .. " + CTRL + Z", hl.dsp.exec_cmd(zoomToggle))
+-- Super+R = hyprlauncher (keep). Super+Ctrl+R = kdx-share transmit picker.
+hl.bind(mainMod .. " + CTRL + R", hl.dsp.exec_cmd(kdxShare .. " menu"))
 
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(agsBin .. " request bar-cycle"))
 hl.bind("Super_L", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
 hl.bind("Super_R", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
 
--- Screenshots (hypr-screenshot): toast labels + file + clipboard
-hl.bind("Print",               hl.dsp.exec_cmd(shot .. " window"))           -- focused app window
-hl.bind("CTRL + Print",        hl.dsp.exec_cmd(shot .. " region"))           -- area select
-hl.bind("ALT + Print",         hl.dsp.exec_cmd(shot .. " full"))             -- full desktop
-hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(shot .. " monitor active"))   -- focused monitor only
+hl.bind("Print",               hl.dsp.exec_cmd(shot .. " window"))
+hl.bind("CTRL + Print",        hl.dsp.exec_cmd(shot .. " region"))
+hl.bind("ALT + Print",         hl.dsp.exec_cmd(shot .. " full"))
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(shot .. " monitor active"))
 
--- Screen record (hypr-record / wf-recorder): toggle stop if already recording
-hl.bind(mainMod .. " + SHIFT + R",     hl.dsp.exec_cmd(rec .. " toggle region"))  -- area
-hl.bind(mainMod .. " + SHIFT + ALT + R", hl.dsp.exec_cmd(rec .. " toggle window"))  -- focused app
+hl.bind(mainMod .. " + SHIFT + R",     hl.dsp.exec_cmd(rec .. " toggle region"))
+hl.bind(mainMod .. " + SHIFT + ALT + R", hl.dsp.exec_cmd(rec .. " toggle window"))
 
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
 hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
@@ -282,8 +307,6 @@ for i = 1, 10 do
     hl.bind(mainMod .. " + SHIFT + " .. key, hl.dsp.window.move({ workspace = i }))
 end
 
--- Super+S: show/hide special:magic. Super+Shift+S: send focused → special.
--- Super+Ctrl+S: toggle focused window membership of special:magic.
 local function toggleWindowOnSpecialMagic()
     local w = hl.get_active_window()
     if w == nil then
@@ -309,6 +332,9 @@ hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 hl.bind(mainMod .. " + mouse:272",  hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",  hl.dsp.window.resize(), { mouse = true })
+-- MMB (274): drag without mod; Super+MMB same (wheel click)
+hl.bind("mouse:274",               hl.dsp.window.drag(),   { mouse = true })
+hl.bind(mainMod .. " + mouse:274", hl.dsp.window.drag(),   { mouse = true })
 
 hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
 hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })
@@ -323,7 +349,14 @@ hl.bind("XF86AudioPrev",         hl.dsp.exec_cmd("playerctl previous"),   { lock
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("hyprpaper")
+    hl.exec_cmd("systemctl --user start hypridle.service")
+    -- Supervised AGS (Restart=always). Bare `ags run` dies after monitor storms
+    -- and never returns — bar lives only on portrait HDMI-A-2.
+    hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE DISPLAY")
+    hl.exec_cmd("systemctl --user start ags-hyprland.service")
     hl.exec_cmd(terminal)
     hl.exec_cmd("GSK_RENDERER=gl /home/kodex/.cargo/bin/anyrun daemon")
-    hl.exec_cmd("env PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin GSK_RENDERER=gl /usr/local/bin/ags run /home/kodex/.config/ags")
 end)
+
+-- Dual-GPU escape: wake + soft-hotplug portrait CRTC + re-layout + AGS
+hl.bind(mainMod .. " + SHIFT + O", hl.dsp.exec_cmd("/bin/bash /home/kodex/.local/bin/hypr-monitor-heal manual"), { locked = true })

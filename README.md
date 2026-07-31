@@ -79,7 +79,7 @@ Dos ciclos de tres estados, ambos con orden fijo:
 | `bin/` | Helpers `hypr-*` (captura, grabación, reveal-all) | `~/.local/bin/` |
 | `kitty/` | Kitty (+ perfil `grok`) | `~/.config/kitty/` |
 | `wallpapers/` | Media del wallpaper | referenciado por hyprpaper |
-| `skill/kdx-hyperland/` | Skill de agentes (snapshot) | `~/.claude/skills/kdx-hyperland/` |
+| `skill/kdx-hypr-control/` | Skill de agentes (snapshot) | `~/.claude/skills/kdx-hypr-control/` |
 
 ## Scripts (`bin/`)
 
@@ -124,7 +124,7 @@ install -m 755 bin/hypr-* ~/.local/bin/
 cp -a kitty/* ~/.config/kitty/
 
 # Skill de agentes
-rsync -a skill/kdx-hyperland/ ~/.claude/skills/kdx-hyperland/
+rsync -a skill/kdx-hypr-control/ ~/.claude/skills/kdx-hypr-control/
 ```
 
 AGS **no tiene reload**: hay que `ags quit` y volver a levantarlo. Cambios de

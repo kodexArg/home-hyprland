@@ -1,17 +1,3 @@
-// Minimal bar — volume is the primary control
-// Chrome = Hyprland window frame, solid stand-ins for what those
-// rgba() borders actually look like over ink-1000 (kdx-design-system).
-//
-// hyprland.lua:
-//   border_size = 2, gaps_out = 5, rounding = 10
-//   active_border   = orange-500@88 / orange-400@77  → dark warm rim
-//   inactive_border = ink-600@aa                     → dark gray rim
-// Fill = same mix, one step more ink (less accent weight).
-// Super+B: always = inactive window | temp = active window
-//
-// IMPORTANT: fully transparent window backgrounds + GSK gl often yield an
-// empty input region on layer-shell (clicks pass through). Keep a tiny alpha
-// on the window so the surface stays clickable.
 
 @use "sass:color";
 
@@ -21,25 +7,20 @@ $cream-100:  #F3EEE4;
 $warm-200:   #cdbfa8;
 $orange-500: #ff8c42;
 
-// Nautilus / Adwaita dark (prefer-dark) — main view gray, not warm ink
-// libadwaita dark window_bg ≈ #222226; Nautilus content reads a hair lighter
 $nautilus-bg:    #242424;
-$nautilus-bg-hi: #2a2a2a; // temp / hover lift
-$nautilus-edge:  #3d3d3d; // subtle rim on gray
+$nautilus-bg-hi: #2a2a2a;
+$nautilus-edge:  #3d3d3d;
 
-// Chrome: Nautilus fill + existing accent rims
 $border-inactive: $nautilus-edge;
 $fill-inactive:   $nautilus-bg;
 $border-active:   color.mix($orange-500, $nautilus-bg, 55%);
 $fill-active:     $nautilus-bg-hi;
 
 window.BarEdge {
-  // 1% ink — invisible but captures pointer
   background: rgba(12, 11, 9, 0.01);
 }
 
 window.Bar {
-  // Same: never fully transparent (input region)
   background: rgba(12, 11, 9, 0.02);
   color: $cream-100;
   font-weight: 600;
@@ -48,19 +29,15 @@ window.Bar {
     border-radius: 10px;
     border: 2px solid $border-inactive;
     margin: 5px;
-    // Vertical: previous +0.5rem. Horizontal: fixed rem so start (speaker)
-    // and end (clock) clear the rim without per-widget hacks.
     padding: calc(4px + 0.5rem) 0.75rem;
     background: $fill-inactive;
   }
 
-  // always — inactive window chrome
   &.mode-always > centerbox {
     border-color: $border-inactive;
     background: $fill-inactive;
   }
 
-  // temp — active window chrome (muted orange rim + darker fill)
   &.mode-temp > centerbox {
     border-color: $border-active;
     background: $fill-active;
@@ -73,7 +50,6 @@ window.Bar {
 
   button {
     border-radius: 6px;
-    // horizontal only — vertical margins stack and fatten the bar
     margin: 0 1px;
     padding: 1px 6px;
     color: $cream-100;
@@ -91,7 +67,6 @@ window.Bar {
     }
   }
 
-  // Tight cluster: speaker · − · track · +
   .Volume {
     margin: 0;
     min-width: 0;
@@ -115,7 +90,6 @@ window.Bar {
       font-size: 0.95em;
     }
 
-    // Click/drag track — orange fill child grows with volume
     &-track {
       min-width: 120px;
       min-height: 14px;
@@ -132,24 +106,6 @@ window.Bar {
     }
   }
 
-  // Capture tools: menubutton opens popover below (see popover.Capture-popover)
-  .Capture-toggle {
-    margin: 0 1px;
-    min-height: 22px;
-    min-width: 22px;
-    padding: 0 4px;
-    font-size: 0.9em;
-
-    &.open,
-    &:checked {
-      border-color: $border-active;
-      background: $fill-active;
-    }
-  }
-
-  // Local LLM brain — glyph color via SVG swap (cream/amber/orange/red).
-  // Chip rim only for live (on) / open menu. Load = amber glyph only (no yellow
-  // border — that read as “already loaded”).
   .LocalLlm {
     margin: 0 1px;
     min-height: 22px;
@@ -166,14 +122,30 @@ window.Bar {
       background: $fill-active;
     }
 
-    // unload/fail: soft red chip optional; glyph is already red SVG
     &.unload {
       border-color: color.mix(#c45c4a, $nautilus-bg, 65%);
       background: color.mix(#c45c4a, $nautilus-bg, 18%);
     }
   }
 
-  // One chip: HH:MM ☕ — shared rim, no vertical rule; clicks stay split
+  /* REC lamp — same hitbox as LocalLlm brain (16px glyph in 22×22 button) */
+  .Rec {
+    margin: 0 1px;
+    min-height: 22px;
+    min-width: 22px;
+    padding: 0 4px;
+
+    &.open {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    &.armed {
+      border-color: color.mix(#e53935, $nautilus-bg, 55%);
+      background: color.mix(#e53935, $nautilus-bg, 14%);
+    }
+  }
+
   .ClockCluster {
     margin: 0 1px;
     border-radius: 6px;
@@ -181,19 +153,21 @@ window.Bar {
     background: transparent;
     min-height: 22px;
 
-    // caffeine on → warm shell (whole pill)
     &.caffeine-on {
       border-color: $border-active;
       background: $fill-active;
     }
 
-    // hover on either half lifts the whole chip
+    &.caffeine-foreign {
+      border-color: color.mix($border-active, $nautilus-bg, 45%);
+      background: transparent;
+    }
+
     &:hover {
       border-color: $border-active;
       background: $fill-active;
     }
 
-    // Kill global `button { border: 2px … }` so halves don't look separate
     button,
     menubutton {
       margin: 0;
@@ -214,7 +188,10 @@ window.Bar {
       padding: 0 2px 0 6px;
 
       .Clock-time {
-        font-size: 1.2em;
+        font-family: "DSEG7 Classic", monospace;
+        font-weight: bold;
+        font-size: 0.9rem;
+        letter-spacing: 0.04em;
         color: #faf8f4;
       }
     }
@@ -226,89 +203,15 @@ window.Bar {
   }
 }
 
-// Floating capture panel (separate layer-shell window under the bar)
-// Soft, non-invasive: muted orange icon chips + warm cream labels
-$capture-chip-bg:     color.mix($orange-500, $ink-1000, 18%);
-$capture-chip-border: color.mix($orange-500, $ink-1000, 32%);
-$capture-chip-hover:  color.mix($orange-500, $ink-1000, 28%);
-$capture-label:       color.mix($cream-100, $warm-200, 55%); // soft off-white
+$panel-label: color.mix($cream-100, $warm-200, 55%);
 
-window.CapturePanel {
-  // Never fully transparent under GSK gl — empty input region otherwise
-  background: rgba(12, 11, 9, 0.02);
-  color: $capture-label;
-
-  .Capture-actions {
-    border-radius: 10px;
-    border: 1px solid $border-inactive;
-    background: $fill-inactive;
-    padding: 8px;
-    margin: 0;
-    min-width: 176px;
-  }
-
-  // Full-row hit target; chrome lives on the icon chip
-  button.Capture-action {
-    min-height: 30px;
-    padding: 3px 8px 3px 4px;
-    border-radius: 7px;
-    color: $capture-label;
-    border: 1px solid transparent;
-    background: transparent;
-
-    &:hover {
-      background: color.mix($cream-100, $ink-1000, 6%);
-
-      .Capture-icon {
-        background: $capture-chip-hover;
-        border-color: color.mix($orange-500, $ink-1000, 48%);
-      }
-    }
-
-    &:active {
-      background: color.mix($orange-500, $ink-1000, 12%);
-
-      .Capture-icon {
-        background: color.mix($orange-500, $ink-1000, 36%);
-        border-color: color.mix($orange-500, $ink-1000, 55%);
-      }
-    }
-  }
-
-  // Inverted chip: fixed square (size from width/heightRequest in JSX).
-  // Glyph centered via hexpand/vexpand + Align.CENTER on the image.
-  .Capture-icon {
-    min-width: 26px;
-    min-height: 26px;
-    border-radius: 6px;
-    border: 1px solid $capture-chip-border;
-    background: $capture-chip-bg;
-    padding: 0;
-    margin: 0;
-
-    image {
-      margin: 0;
-      padding: 0;
-    }
-  }
-
-  .Capture-label {
-    font-size: 0.88em;
-    font-weight: 500;
-    color: $capture-label;
-    letter-spacing: 0.01em;
-  }
-}
-
-// Full-monitor click-away under Local LLM menu (non-zero alpha → GSK hit-test)
 window.LocalLlmClickaway {
   background: rgba(12, 11, 9, 0.02);
 }
 
-// Local LLM model menu (floating layer under the bar)
 window.LocalLlmPanel {
   background: rgba(12, 11, 9, 0.02);
-  color: $capture-label;
+  color: $panel-label;
 
   .LocalLlm-menu {
     border-radius: 10px;
@@ -355,13 +258,12 @@ window.LocalLlmPanel {
     opacity: 0.9;
   }
 
-  // Each model is a full-row button (cleaner than nested controls).
   button.LocalLlm-model,
   button.LocalLlm-off {
     min-height: 30px;
     padding: 5px 10px;
     border-radius: 7px;
-    color: $capture-label;
+    color: $panel-label;
     border: 1px solid transparent;
     background: transparent;
 
@@ -376,7 +278,6 @@ window.LocalLlmPanel {
   }
 
   button.LocalLlm-model {
-    // live — warm orange (bar language), not green
     &.on {
       border-color: color.mix($orange-500, $ink-1000, 55%);
       background: color.mix($orange-500, $ink-1000, 20%);
@@ -385,7 +286,6 @@ window.LocalLlmPanel {
       .LocalLlm-label { color: $cream-100; }
     }
 
-    // waiting for unload + loading weights — amber
     &.load {
       border-color: color.mix(#e6b84d, $ink-1000, 55%);
       background: color.mix(#e6b84d, $ink-1000, 16%);
@@ -394,7 +294,6 @@ window.LocalLlmPanel {
       .LocalLlm-label { color: color.mix($cream-100, #e6b84d, 40%); }
     }
 
-    // abandoned model still in VRAM — red (never used on OFF)
     &.unload {
       border-color: color.mix(#c45c4a, $ink-1000, 55%);
       background: color.mix(#c45c4a, $ink-1000, 16%);
@@ -403,7 +302,6 @@ window.LocalLlmPanel {
       .LocalLlm-label { color: color.mix($cream-100, #c45c4a, 35%); }
     }
 
-    // unit failed after load attempt
     &.failed {
       border-color: color.mix(#c45c4a, $ink-1000, 60%);
       background: color.mix(#c45c4a, $ink-1000, 12%);
@@ -422,7 +320,6 @@ window.LocalLlmPanel {
       color: color.mix($cream-100, $warm-200, 50%);
     }
 
-    // unit fully stopped — soft armed state (not red)
     &.armed {
       border-color: color.mix($cream-100, $ink-1000, 18%);
       background: color.mix($cream-100, $ink-1000, 5%);
@@ -447,7 +344,290 @@ window.LocalLlmPanel {
   .LocalLlm-label {
     font-size: 0.88em;
     font-weight: 500;
-    color: $capture-label;
+    color: $panel-label;
     letter-spacing: 0.01em;
+  }
+}
+
+window.RecClickaway {
+  background: rgba(12, 11, 9, 0.02);
+}
+
+window.RecPanel {
+  background: rgba(12, 11, 9, 0.02);
+  color: $panel-label;
+
+  .Rec-menu {
+    border-radius: 10px;
+    border: 1px solid $border-inactive;
+    background: $fill-inactive;
+    padding: 8px;
+    margin: 0;
+    min-width: 200px;
+  }
+
+  .Rec-status {
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: color.mix($cream-100, $warm-200, 40%);
+    padding: 2px 6px 4px;
+  }
+
+  .Rec-sep {
+    min-height: 1px;
+    background: $nautilus-edge;
+    margin: 4px 2px;
+    opacity: 0.9;
+  }
+
+  button.Rec-row {
+    min-height: 30px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    color: $panel-label;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+    }
+
+    &.on {
+      border-color: color.mix($orange-500, $ink-1000, 55%);
+      background: color.mix($orange-500, $ink-1000, 20%);
+
+      .Rec-mark {
+        color: $orange-500;
+      }
+
+      .Rec-label {
+        color: $cream-100;
+      }
+    }
+  }
+
+  .Rec-mark {
+    font-size: 0.7em;
+    min-width: 1.1em;
+    color: color.mix($cream-100, $warm-200, 40%);
+  }
+
+  .Rec-label {
+    font-size: 0.88em;
+    font-weight: 500;
+    color: $panel-label;
+    letter-spacing: 0.01em;
+  }
+}
+
+@keyframes pulse-dictate {
+  0% {
+    opacity: 0.5;
+    border-color: rgba(255, 140, 66, 0.4);
+    background: rgba(255, 140, 66, 0.08);
+  }
+  50% {
+    opacity: 1.0;
+    border-color: rgba(255, 140, 66, 0.95);
+    background: rgba(255, 140, 66, 0.25);
+  }
+  100% {
+    opacity: 0.5;
+    border-color: rgba(255, 140, 66, 0.4);
+    background: rgba(255, 140, 66, 0.08);
+  }
+}
+
+.LiveIndicator {
+  margin: 0 4px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+
+  &.state-idle {
+    opacity: 0;
+  }
+
+  &.state-mic-green,
+  &.state-rec,
+  &.state-stt,
+  &.state-paste,
+  &.state-arming {
+    opacity: 1;
+    border-color: rgba(80, 220, 140, 0.85);
+    background: rgba(40, 160, 100, 0.22);
+    animation: pulse-live-green 1.6s infinite ease-in-out;
+    .LiveIndicator-mic {
+      color: #5CFF9A;
+    }
+  }
+
+  &.state-mic-yellow,
+  &.state-silence,
+  &.state-ok,
+  &.state-refine,
+  &.state-think,
+  &.state-stopping {
+    opacity: 1;
+    border-color: rgba(230, 190, 60, 0.9);
+    background: rgba(180, 140, 30, 0.2);
+    animation: pulse-live-yellow 2s infinite ease-in-out;
+    .LiveIndicator-mic {
+      color: #FFD54A;
+    }
+  }
+
+  &.state-mic-err,
+  &.state-err {
+    border-color: rgba(220, 80, 80, 0.95);
+    background: rgba(220, 80, 80, 0.2);
+    animation: none;
+    .LiveIndicator-mic {
+      color: #e06060;
+    }
+  }
+
+  &.state-mic-paused,
+  &.state-paused {
+    opacity: 0.85;
+    border-color: rgba(140, 140, 140, 0.7);
+    background: rgba(80, 80, 80, 0.25);
+    animation: none;
+    .LiveIndicator-mic {
+      color: #b0b0b0;
+    }
+  }
+
+  &-mic {
+    color: #5CFF9A;
+  }
+
+  &-label {
+    font-size: 0.78em;
+    font-weight: 800;
+    color: #5CFF9A;
+    letter-spacing: 0.14em;
+    font-family: monospace;
+  }
+}
+
+@keyframes pulse-live-green {
+  0%,
+  100% {
+    opacity: 0.88;
+    border-color: rgba(80, 200, 120, 0.7);
+    background: rgba(40, 140, 90, 0.16);
+  }
+  50% {
+    opacity: 1;
+    border-color: rgba(100, 240, 160, 0.95);
+    background: rgba(50, 180, 120, 0.3);
+  }
+}
+
+@keyframes pulse-live-yellow {
+  0%,
+  100% {
+    opacity: 0.88;
+    border-color: rgba(210, 170, 50, 0.65);
+    background: rgba(160, 120, 20, 0.14);
+  }
+  50% {
+    opacity: 1;
+    border-color: rgba(255, 220, 80, 0.95);
+    background: rgba(200, 160, 40, 0.28);
+  }
+}
+
+.DictationIndicator {
+  margin: 0 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 140, 66, 0.7);
+  background: rgba(255, 140, 66, 0.15);
+  animation: none;
+
+  &.state-idle {
+    opacity: 0;
+  }
+
+  &.state-arming {
+    opacity: 0.45;
+    border-color: rgba(255, 140, 66, 0.3);
+    background: rgba(255, 140, 66, 0.05);
+    animation: none;
+  }
+
+  &.state-rec {
+    opacity: 1;
+    border-color: rgba(255, 140, 66, 0.95);
+    background: rgba(255, 140, 66, 0.28);
+    animation: none;
+  }
+
+  &.state-stopping {
+    opacity: 0.85;
+    border-color: rgba(255, 140, 66, 0.55);
+    background: rgba(255, 140, 66, 0.12);
+    animation: pulse-dictate 0.9s infinite ease-in-out;
+  }
+
+  &.state-stt,
+  &.state-busy {
+    opacity: 1;
+    border-color: rgba(255, 180, 90, 0.85);
+    background: rgba(255, 140, 66, 0.18);
+    animation: pulse-dictate 1.2s infinite ease-in-out;
+  }
+
+  &.state-refine {
+    opacity: 1;
+    border-color: rgba(140, 160, 255, 0.85);
+    background: rgba(100, 120, 220, 0.18);
+    animation: pulse-dictate 1.2s infinite ease-in-out;
+    .DictationIndicator-label {
+      color: #a8b8ff;
+    }
+  }
+
+  &.state-paste {
+    opacity: 1;
+    border-color: rgba(255, 200, 80, 0.9);
+    background: rgba(255, 180, 40, 0.2);
+    animation: pulse-dictate 0.8s infinite ease-in-out;
+  }
+
+  &.state-ok {
+    opacity: 1;
+    border-color: rgba(80, 200, 120, 0.95);
+    background: rgba(80, 200, 120, 0.22);
+    animation: none;
+    .DictationIndicator-label {
+      color: #50c878;
+    }
+  }
+
+  &.state-err {
+    opacity: 1;
+    border-color: rgba(220, 80, 80, 0.95);
+    background: rgba(220, 80, 80, 0.2);
+    animation: none;
+    .DictationIndicator-label {
+      color: #e06060;
+    }
+  }
+
+  &-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    color: #ff8c42;
+    letter-spacing: 0.08em;
   }
 }

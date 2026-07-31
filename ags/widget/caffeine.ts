@@ -1,44 +1,3 @@
-/**
- * Caffeine — logind idle+sleep inhibit (Hyprland / no gnome-session).
- *
- * ## Design contract (bar widget pattern — replicate this)
- *
- * 1. **SSOT is outside AGS memory.** Truth = process table:
- *      `systemd-inhibit … --who=ags-caffeine`
- *    Never trust a lone `createState` bool for "is sleep blocked".
- *
- * 2. **UI is derived.** Icon / class / tooltip project `(phase × pids)`.
- *    They never decide the next toggle direction alone.
- *
- * 3. **Explicit FSM.** Named phases + one reconcile path. Side effects only
- *    from transitions (spawn / kill), never from render.
- *
- * 4. **Tick reconcile.** Drift (orphan after crash, external kill, multi-PID)
- *    self-heals without a user click.
- *
- * 5. **IPC reports verified snapshot**, not the caller's desire string alone.
- *
- * ## FSM
- *
- * ```
- *   off ──requestOn──► arming ──pid≥1──► on
- *    ▲                   │fail/timeout      │
- *    │                   └──────► failed ───┤
- *    │                                      │
- *    └──── pids=0 ◄── disarming ◄──requestOff┘
- *
- *   tick (steady):
- *     on  + pids=0      → off
- *     off + pids=1      → on   (adopt orphan)
- *     *   + pids>1      → kill-all → arming (single actor)
- * ```
- *
- * Mechanism: held child
- *   systemd-inhibit --what=idle:sleep --who=ags-caffeine --mode=block sleep infinity
- * Gtk.Application.inhibit is a no-op here (no session manager → logind).
- *
- * ADR: ~/Documents/System/ADRs/20260720-ags-caffeine-toggle.md
- */
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createComputed, createState } from "ags"
@@ -51,19 +10,21 @@ export type CaffeinePhase =
   | "failed"
 
 const CAFFEINE_WHO = "ags-caffeine"
-const TICK_MS = 1500
+const TICK_WHILE_WATCHING_MS = 1500
+const TICK_WHILE_SETTLED_MS = 10000
 const ARM_TIMEOUT_SEC = 3
 const DISARM_TIMEOUT_SEC = 3
-/** After failed with no pids, collapse to off so the cup is clickable again. */
 const FAILED_HOLD_SEC = 2
 
 const [phase, setPhase] = createState<CaffeinePhase>("off")
 const [pidCount, setPidCount] = createState(0)
+const [foreignIdleHold, setForeignIdleHold] = createState(false)
 const [lastError, setLastError] = createState("")
 
-/** Owned child only (orphans live in the process table without a handle). */
 let ownedProc: Gio.Subprocess | null = null
 let tickSource: number | null = null
+let tickIntervalMs = 0
+let reconcileInFlight = false
 let phaseSince = 0
 let started = false
 
@@ -74,12 +35,11 @@ function nowSec(): number {
 function enter(p: CaffeinePhase): void {
   setPhase(p)
   phaseSince = nowSec()
+  ensureTick()
 }
 
-/** PIDs of live `systemd-inhibit … --who=ags-caffeine` (may be orphans). */
 export function listCaffeinePids(): number[] {
   try {
-    // ps -C = real binary only — not pgrep -f (agents / tooling false-positives).
     const proc = Gio.Subprocess.new(
       ["ps", "-C", "systemd-inhibit", "-o", "pid=,args="],
       Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
@@ -97,6 +57,26 @@ export function listCaffeinePids(): number[] {
   }
 }
 
+function idleBlockedSystemWide(): boolean {
+  try {
+    const proc = Gio.Subprocess.new(
+      [
+        "busctl",
+        "get-property",
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        "BlockInhibited",
+      ],
+      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    const [, stdout] = proc.communicate_utf8(null, null)
+    return (stdout ?? "").includes("idle")
+  } catch {
+    return false
+  }
+}
+
 function killAllInhibitors(): void {
   for (const pid of listCaffeinePids()) {
     try {
@@ -104,16 +84,12 @@ function killAllInhibitors(): void {
         ["kill", String(pid)],
         Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
       ).wait(null)
-    } catch {
-      /* already gone */
-    }
+    } catch {}
   }
   if (ownedProc) {
     try {
       ownedProc.force_exit()
-    } catch {
-      /* already dead */
-    }
+    } catch {}
     ownedProc = null
   }
 }
@@ -123,7 +99,7 @@ function spawnInhibitor(): void {
     const proc = Gio.Subprocess.new(
       [
         "systemd-inhibit",
-        "--what=idle:sleep",
+        "--what=idle",
         `--who=${CAFFEINE_WHO}`,
         "--why=Caffeine — keep awake",
         "--mode=block",
@@ -136,11 +112,8 @@ function spawnInhibitor(): void {
     proc.wait_async(null, (_obj, res) => {
       try {
         proc.wait_finish(res)
-      } catch {
-        /* exit status / already reaped */
-      }
+      } catch {}
       if (ownedProc === proc) ownedProc = null
-      // Child gone → let reconcile decide (on→off, or orphan still holds).
       GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
         reconcile()
         return GLib.SOURCE_REMOVE
@@ -154,13 +127,10 @@ function spawnInhibitor(): void {
   }
 }
 
-/**
- * Single reconcile path. Call after transitions, on tick, and on child exit.
- * Reality (pid count) wins over steady UI phases.
- */
 function reconcile(): void {
   const pids = listCaffeinePids()
   setPidCount(pids.length)
+  setForeignIdleHold(pids.length === 0 && idleBlockedSystemWide())
   const n = pids.length
   const p = phase.peek()
   const age = nowSec() - phaseSince
@@ -201,7 +171,6 @@ function reconcile(): void {
 
   if (p === "failed") {
     if (n >= 1) {
-      // Reality still blocking — adopt rather than lie with empty cup.
       setLastError("")
       enter(n === 1 ? "on" : "arming")
       if (n > 1) {
@@ -214,7 +183,6 @@ function reconcile(): void {
     return
   }
 
-  // Multi-PID anywhere in steady state → collapse to exactly one.
   if (n > 1) {
     printerr(`caffeine: collapsing ${n} inhibitors → 1`)
     killAllInhibitors()
@@ -234,22 +202,53 @@ function reconcile(): void {
 
   if (p === "off") {
     if (n === 1) {
-      // Orphan from prior AGS death — adopt, show ON.
       setLastError("")
       enter("on")
     }
   }
 }
 
-function ensureTick(): void {
-  if (tickSource !== null) return
-  tickSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, () => {
+function isSettled(): boolean {
+  return phase.peek() === "off"
+}
+
+function tickIntervalForPhase(): number {
+  return isSettled() ? TICK_WHILE_SETTLED_MS : TICK_WHILE_WATCHING_MS
+}
+
+function reconcileOnce(): void {
+  reconcileInFlight = true
+  try {
     reconcile()
-    return GLib.SOURCE_CONTINUE
+  } finally {
+    reconcileInFlight = false
+  }
+}
+
+function armTick(intervalMs: number): void {
+  tickIntervalMs = intervalMs
+
+  tickSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, intervalMs, () => {
+    reconcileOnce()
+
+    if (tickIntervalForPhase() === tickIntervalMs) return GLib.SOURCE_CONTINUE
+
+    tickSource = null
+    ensureTick()
+    return GLib.SOURCE_REMOVE
   })
 }
 
-/** Boot: start tick + adopt any orphan left by a previous AGS instance. */
+function ensureTick(): void {
+  if (reconcileInFlight) return
+
+  const wanted = tickIntervalForPhase()
+  if (tickSource !== null && tickIntervalMs === wanted) return
+  if (tickSource !== null) GLib.source_remove(tickSource)
+
+  armTick(wanted)
+}
+
 export function startCaffeine(): void {
   if (started) return
   started = true
@@ -257,20 +256,12 @@ export function startCaffeine(): void {
   reconcile()
 }
 
-// Module load = app imported Bar → caffeine. Safe: no window deps.
 startCaffeine()
 
-// ─── commands (bar click + IPC) ─────────────────────────────────────────────
-
-/**
- * Desire ON. Idempotent if already armed / arming.
- * Returns verified status line after reconcile.
- */
 export function requestCaffeineOn(): string {
   ensureTick()
   const n = listCaffeinePids().length
   const p = phase.peek()
-  // Already blocking (owned or orphan): adopt / stay on — no second spawn.
   if (n === 1 && (p === "on" || p === "arming" || p === "off" || p === "failed")) {
     setLastError("")
     enter("on")
@@ -289,10 +280,6 @@ export function requestCaffeineOn(): string {
   return statusLine()
 }
 
-/**
- * Desire OFF. Always kills reality — even if phase thinks `off` (stale UI
- * while an orphan still holds logind). Idempotent when nothing is blocking.
- */
 export function requestCaffeineOff(): string {
   ensureTick()
   const n = listCaffeinePids().length
@@ -306,10 +293,6 @@ export function requestCaffeineOff(): string {
   return statusLine()
 }
 
-/**
- * Toggle from **reality + phase**, never from a naked UI bool.
- * Re-list pids here so direction is never based on a stale pidCount.
- */
 export function toggleCaffeine(): string {
   ensureTick()
   const n = listCaffeinePids().length
@@ -320,12 +303,6 @@ export function toggleCaffeine(): string {
   return armed ? requestCaffeineOff() : requestCaffeineOn()
 }
 
-// ─── UI projections ─────────────────────────────────────────────────────────
-
-/**
- * Cup + steam / warm chip when sleep is blocked by us or we are mid-transition
- * that still means "blocking or about to". failed → empty (error in tooltip).
- */
 export const caffeineUiOn = createComputed(() => {
   const p = phase()
   if (p === "on" || p === "arming" || p === "disarming") return true
@@ -343,12 +320,15 @@ export const caffeineTooltip = createComputed(() => {
       : "Caffeine failed — click to retry"
   if (p === "on" || pidCount() > 0)
     return "Caffeine on — click to allow sleep"
+  if (foreignIdleHold())
+    return "Caffeine off — but idle is held by another inhibitor (not the cup)"
   return "Caffeine off — click to stay awake"
 })
 
-export const caffeineShellClass = createComputed(() =>
-  caffeineUiOn() ? "ClockCluster caffeine-on" : "ClockCluster",
-)
+export const caffeineShellClass = createComputed(() => {
+  if (caffeineUiOn()) return "ClockCluster caffeine-on"
+  return foreignIdleHold() ? "ClockCluster caffeine-foreign" : "ClockCluster"
+})
 
 export function getCaffeineOn(): boolean {
   const p = phase.peek()
@@ -360,7 +340,6 @@ export function getCaffeinePhase(): CaffeinePhase {
   return phase.peek()
 }
 
-/** Snapshot after reconcile — never return a stale phase/pidCount. */
 export function getCaffeineStatus(): string {
   ensureTick()
   reconcile()
@@ -371,11 +350,11 @@ function statusLine(): string {
   const p = phase.peek()
   const n = pidCount.peek()
   const err = lastError.peek()
-  const base = `caffeine phase=${p} pids=${n}`
+  const foreign = foreignIdleHold.peek() ? " foreign=idle" : ""
+  const base = `caffeine phase=${p} pids=${n}${foreign}`
   return err ? `${base} err=${err}` : base
 }
 
-/** Compact token for scripts that only need on/off-ish. Caller should reconcile first (status/on/off/toggle do). */
 export function getCaffeineToken(): string {
   const p = phase.peek()
   if (p === "on" || p === "arming" || p === "disarming") return `caffeine-${p}`

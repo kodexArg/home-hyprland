@@ -1,0 +1,26 @@
+[Unit]
+Description=AGS bar for Hyprland (supervised)
+Documentation=file:///home/kodex/Documents/System/ADRs/20260727-hypr-monitor-heal-portrait-crtc.md
+# Only under Hyprland; started from hyprland.start after import-environment.
+ConditionEnvironment=XDG_CURRENT_DESKTOP=Hyprland
+ConditionEnvironment=WAYLAND_DISPLAY
+# Do not WantedBy=default.target alone — races GDM before WAYLAND exists.
+# hyprland.start: import-environment then systemctl --user start this unit.
+
+[Service]
+Type=simple
+# Inherit compositor sockets from the user manager (after import-environment).
+PassEnvironment=WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR XDG_SESSION_TYPE
+Environment=PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin
+Environment=GSK_RENDERER=gl
+ExecStartPre=/bin/sh -c 'test -n "$WAYLAND_DISPLAY" && test -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"'
+ExecStart=/usr/local/bin/ags run /home/kodex/.config/ags
+Restart=on-failure
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=8
+KillMode=mixed
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

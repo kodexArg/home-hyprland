@@ -11,10 +11,12 @@
 | Super+G | Grok CLI (kitty class `grok-cli`, forced to HDMI-A-2) |
 | Super+X | Brave browser |
 | Super+E | Nautilus |
-| Super+R | hyprlauncher |
+| Super+R | hyprlauncher (**do not steal** — share is Super+Ctrl+R) |
+| Super+Ctrl+R | `kdx-share menu` — transmit picker (vertical / horizontal / both stack) |
 | Super+SPACE | anyrun (`~/.local/bin/anyrun-launch`) |
-| Super+C | Close window |
-| Super+CTRL+X | Kill active window |
+| Super+C | **Close** window (graceful — app can save/prompt) |
+| Super+Ctrl+C | **Force kill** active window (compositor kills client; no prompt) |
+| Super+Ctrl+X | Force kill (alias of Super+Ctrl+C) |
 | Super+M | Exit (`hyprshutdown` if present, else exit dispatcher) |
 | Super+V | Toggle float |
 | Super+F | Toggle full panel (maximize / restore) |
@@ -40,6 +42,7 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 | Super+Shift+←↑↓→ | Move window (swap / cross monitor) |
 | Super+Ctrl+←↑↓→ | Resize ±40px (repeating) |
 | Super+Ctrl+Z | Toggle HDMI-A-2 scale **1.5 ↔ 1.0** (`hypr-zoom-toggle`). Sequential modesets + settle delay (batching two monitors races DRM page-flip → cut-off). Toast confirms phase. |
+| Super+Ctrl+R | **kdx-share** menu — which panel(s) to transmit (portal share prep). Not Super+R. See `references/host-commands.md`. |
 
 ## Workspaces
 
@@ -60,6 +63,7 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 | Super+LMB (272) | Drag window |
 | Super+RMB (273) | Resize window |
 | MMB (274) | Drag window (no Super) |
+| Super+MMB (274) | Drag window |
 
 ## Screenshots (grim + slurp)
 

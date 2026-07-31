@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# hypr-monitor-heal — recover dual-GPU Hyprland after blank / sleep / CRTC death
+#
+# Topology (this host):
+#   HDMI-A-1  AOC landscape  → card0 NVIDIA   — only output we may DPMS-on
+#   HDMI-A-2  ASUS portrait  → card1 amdgpu   — ANY dpms (on or off) can kill CRTC
+#
+# HARD RULES (verified live 2026-07-27):
+#   1. NEVER hyprctl dpms on/off for HDMI-A-2
+#   2. NEVER global hl.dsp.dpms(...) — only 'on' for HDMI-A-1
+#   3. Soft-hotplug (sysfs status off→on) only when portrait kernel-dead
+#   4. Sequential modesets only when geometry/CRTC broken (zoom settle GAP)
+#   5. Automatic blanking is DISABLED (hypridle has no DPMS listener)
+#
+# TTY escape (no display):  Ctrl+Alt+F3 → login → hypr-monitor-heal
+# Modes: idle-resume | after-sleep | manual | (default=manual)
+set -euo pipefail
+
+PORTRAIT=HDMI-A-2
+LANDSCAPE=HDMI-A-1
+PORTRAIT_SYS=/sys/class/drm/card1-HDMI-A-2
+LANDSCAPE_SYS=/sys/class/drm/card0-HDMI-A-1
+TRANSFORM=1
+MODE="1920x1080@60"
+GAP_SEC=0.55
+WALLPAPER=/home/kodex/home-hyprland/wallpapers/disco-elysium-thought-cabinet-art-cropped.avif
+REASON="${1:-manual}"
+
+# ─── TTY / seat bootstrap (works from Ctrl+Alt+F3 as same user) ─────────────
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+  # Prefer live instance under $XDG_RUNTIME_DIR/hypr, then /tmp/hypr
+  for base in "${XDG_RUNTIME_DIR}/hypr" /tmp/hypr; do
+    [[ -d "$base" ]] || continue
+    # newest dir with a socket
+    inst=$(find "$base" -maxdepth 1 -mindepth 1 -type d -printf '%T@ %f\n' 2>/dev/null \
+      | sort -nr | awk 'NR==1{print $2}')
+    if [[ -n "${inst:-}" && -S "${base}/${inst}/.socket.sock" ]]; then
+      export HYPRLAND_INSTANCE_SIGNATURE="$inst"
+      break
+    fi
+  done
+fi
+ZOOM_STATE="${XDG_RUNTIME_DIR}/hypr-zoom.phase"
+LOG="${XDG_RUNTIME_DIR}/hypr-monitor-heal.log"
+
+log() { printf '%s [%s] %s\n' "$(date -Iseconds)" "$REASON" "$*" | tee -a "$LOG" >/dev/null; }
+
+notify() {
+  hyprctl notify 5 2500 0 "fontsize:14 $1" >/dev/null 2>&1 || true
+}
+
+sys_triple() {
+  local d="$1"
+  if [[ ! -d "$d" ]]; then
+    echo "missing unknown unknown"
+    return
+  fi
+  printf '%s %s %s\n' \
+    "$(cat "$d/status" 2>/dev/null || echo missing)" \
+    "$(cat "$d/enabled" 2>/dev/null || echo unknown)" \
+    "$(cat "$d/dpms" 2>/dev/null || echo unknown)"
+}
+
+hypr_portrait_json() {
+  hyprctl monitors -j 2>/dev/null | PORTRAIT="$PORTRAIT" python3 -c '
+import json, os, sys
+name = os.environ["PORTRAIT"]
+try:
+    mons = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+for m in mons:
+    if m.get("name") == name:
+        w = int(m.get("width") or 0)
+        h = int(m.get("height") or 0)
+        x = int(m.get("x") or 0)
+        y = int(m.get("y") or 0)
+        s = float(m.get("scale") or 1.0)
+        t = int(m.get("transform") or 0)
+        d = bool(m.get("disabled"))
+        print(f"{w} {h} {x} {y} {s} {t} {int(d)}")
+        raise SystemExit(0)
+print("0 0 0 0 0 0 1")
+raise SystemExit(2)
+' || echo "0 0 0 0 0 0 1"
+}
+
+# Kernel truth for portrait CRTC death (ADR 20260726).
+portrait_kernel_dead() {
+  local st en dp
+  read -r st en dp <<<"$(sys_triple "$PORTRAIT_SYS")"
+  # disconnected / missing
+  if [[ "$st" != "connected" ]]; then
+    return 0
+  fi
+  # connected but CRTC off
+  if [[ "$en" != "enabled" || "$dp" == "Off" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+portrait_hypr_dead() {
+  local w h x y s t dis
+  read -r w h x y s t dis <<<"$(hypr_portrait_json)"
+  if [[ "$w" -eq 0 || "$h" -eq 0 || "$dis" -eq 1 ]]; then
+    return 0
+  fi
+  if ! hyprctl monitors -j 2>/dev/null | grep -q "\"name\": \"$PORTRAIT\""; then
+    return 0
+  fi
+  return 1
+}
+
+landscape_kernel_off() {
+  local st en dp
+  read -r st en dp <<<"$(sys_triple "$LANDSCAPE_SYS")"
+  [[ "$en" != "enabled" || "$dp" == "Off" ]]
+}
+
+ags_up() {
+  ags request bar-mode >/dev/null 2>&1
+}
+
+# ─── actions ─────────────────────────────────────────────────────────────────
+
+# ONLY safe DPMS path on this host.
+wake_landscape() {
+  hyprctl dispatch "hl.dsp.dpms('on', '${LANDSCAPE}')" >/dev/null 2>&1 || true
+  log "dpms on ${LANDSCAPE} only"
+  sleep 0.35
+  if landscape_kernel_off; then
+    log "landscape still off after dpms — retry"
+    hyprctl dispatch "hl.dsp.dpms('on', '${LANDSCAPE}')" >/dev/null 2>&1 || true
+    sleep 0.35
+  fi
+}
+
+soft_hotplug_portrait() {
+  if ! sudo -n true 2>/dev/null && [[ ! -w "$PORTRAIT_SYS/status" ]]; then
+    log "soft-hotplug: no sudo/write — skip"
+    return 1
+  fi
+  log "soft-hotplug: off → on on $PORTRAIT_SYS"
+  write_status() {
+    local val="$1"
+    if [[ -w "$PORTRAIT_SYS/status" ]]; then
+      echo "$val" >"$PORTRAIT_SYS/status" || return 1
+    else
+      sudo -n sh -c "echo $val >'$PORTRAIT_SYS/status'" || return 1
+    fi
+  }
+  write_status off || true
+  sleep 0.7
+  write_status on || write_status detect || true
+  sleep 0.9
+  if portrait_kernel_dead; then
+    log "soft-hotplug: second detect"
+    write_status detect || true
+    sleep 0.7
+  fi
+}
+
+apply_one() {
+  local lua="$1" out
+  out=$(hyprctl eval "$lua" 2>&1) || true
+  log "eval → $out | $lua"
+  [[ "$out" == *ok* ]] || return 1
+  sleep "$GAP_SEC"
+  return 0
+}
+
+is_dense_phase() {
+  if [[ -f "$ZOOM_STATE" ]]; then
+    local ph
+    ph=$(cat "$ZOOM_STATE" 2>/dev/null || true)
+    [[ "$ph" == "dense" ]] && return 0
+  fi
+  local w h x y s t dis
+  read -r w h x y s t dis <<<"$(hypr_portrait_json)"
+  awk -v s="$s" 'BEGIN { exit !(s+0 >= 1.25) }'
+}
+
+reapply_layout() {
+  # Portrait first (the fragile one), then landscape. Never batch.
+  if is_dense_phase; then
+    log "reapply dense"
+    apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE}\", position = \"-720x0\", scale = 1.5, transform = ${TRANSFORM} })" || return 1
+    apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE}\", position = \"0x100\", scale = 1, transform = 0 })" || return 1
+  else
+    log "reapply roomy"
+    apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE}\", position = \"-1080x0\", scale = 1, transform = ${TRANSFORM} })" || return 1
+    apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE}\", position = \"0x420\", scale = 1, transform = 0 })" || return 1
+  fi
+  # Modeset can leave landscape DPMS-off on NVIDIA — wake it only.
+  wake_landscape
+  return 0
+}
+
+resync_wallpaper() {
+  hyprctl hyprpaper wallpaper "${LANDSCAPE},${WALLPAPER},cover" >/dev/null 2>&1 || true
+  hyprctl hyprpaper wallpaper "${PORTRAIT},${WALLPAPER},cover" >/dev/null 2>&1 || true
+}
+
+ensure_ags() {
+  if ags_up; then
+    log "ags already up"
+    return 0
+  fi
+  log "ags down — restart unit/direct"
+  if systemctl --user cat ags-hyprland.service >/dev/null 2>&1; then
+    systemctl --user reset-failed ags-hyprland.service 2>/dev/null || true
+    systemctl --user restart ags-hyprland.service 2>/dev/null || true
+  else
+    ags quit 2>/dev/null || true
+    pkill -x ags 2>/dev/null || true
+    sleep 0.2
+    env PATH="/home/kodex/.local/bin:/usr/local/bin:/usr/bin" GSK_RENDERER=gl \
+      /usr/local/bin/ags run /home/kodex/.config/ags \
+      >>"${XDG_RUNTIME_DIR:-/tmp}/ags-heal-restart.log" 2>&1 &
+    disown || true
+  fi
+  local i
+  for i in $(seq 1 50); do
+    if ags_up; then
+      log "ags up after ${i} tries"
+      return 0
+    fi
+    sleep 0.1
+  done
+  log "ags still not responding"
+  return 1
+}
+
+portrait_needs_layout() {
+  local w h x y s t dis
+  read -r w h x y s t dis <<<"$(hypr_portrait_json)"
+  [[ "$t" -ne "$TRANSFORM" || "$w" -eq 0 || "$h" -eq 0 ]]
+}
+
+# ─── main ────────────────────────────────────────────────────────────────────
+
+if ! hyprctl version >/dev/null 2>&1; then
+  log "no hyprland session — exit"
+  exit 0
+fi
+
+log "start"
+log "kernel landscape: $(sys_triple "$LANDSCAPE_SYS")"
+log "kernel portrait:  $(sys_triple "$PORTRAIT_SYS")"
+log "hypr portrait:    $(hypr_portrait_json)"
+
+# 1) Always wake landscape (the only DPMS target). Never touch portrait DPMS.
+wake_landscape
+
+healed=0
+
+# 2) Portrait CRTC dead → soft-hotplug + layout
+if portrait_kernel_dead || portrait_hypr_dead; then
+  log "portrait DEAD — soft-hotplug"
+  notify "heal · portrait CRTC"
+  soft_hotplug_portrait || true
+  sleep 0.4
+  reapply_layout || true
+  healed=1
+elif portrait_needs_layout; then
+  log "portrait geometry wrong — reapply layout"
+  reapply_layout || true
+  healed=1
+else
+  log "portrait healthy"
+fi
+
+# 3) Landscape still off after any modeset → wake again
+if landscape_kernel_off; then
+  log "landscape off after heal steps — wake"
+  wake_landscape
+  healed=1
+fi
+
+resync_wallpaper
+ensure_ags || true
+
+# 4) Final verify (kernel truth)
+fail=0
+if portrait_kernel_dead || portrait_hypr_dead; then
+  log "FAIL portrait still dead — physical HDMI unplug/replug required"
+  notify "heal FAIL · unplug ASUS HDMI"
+  echo "hypr-monitor-heal: FAIL portrait still dead" >&2
+  fail=1
+fi
+if landscape_kernel_off; then
+  log "FAIL landscape still off"
+  notify "heal FAIL · landscape off"
+  echo "hypr-monitor-heal: FAIL landscape off" >&2
+  fail=1
+fi
+if ! ags_up; then
+  log "WARN ags still down"
+  notify "heal · AGS still down"
+fi
+
+if [[ "$fail" -eq 0 ]]; then
+  [[ "$healed" -eq 1 ]] && notify "heal ok"
+  log "done ok"
+  echo "hypr-monitor-heal: ok ($REASON)"
+  exit 0
+fi
+exit 1

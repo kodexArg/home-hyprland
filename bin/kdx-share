@@ -1,0 +1,987 @@
+#!/usr/bin/env python3
+"""kdx-share — desktop as video input (OBS + optional virtual camera).
+
+Hotkey: Super+Ctrl+R → menu   (Super+R stays hyprlauncher)
+
+Targets:
+  vertical   — ASUS portrait LEFT  (HDMI-A-2)
+  horizontal — AOC landscape RIGHT (HDMI-A-1)
+  both       — stack H top + V native width on headless kdxShare 1920×3000
+
+Sinks (hybrid — independent):
+  surface (default ON)  — Fase 1: wl-mirror / headless window for OBS Window/Output Capture
+  camera  (opt-in OFF)  — Fase 2: /dev/video10 (v4l2loopback label kdx-share)
+
+CLI:
+  kdx-share                          # menu
+  kdx-share vertical|horizontal|both [--camera] [--no-surface]
+  kdx-share stop | status | inventory | help
+  kdx-share camera-on|camera-off     # toggle cam on current/last target
+
+Env:
+  KDX_SHARE_V4L2=/dev/video10
+  KDX_SHARE_FPS=15              # single-panel camera
+  KDX_SHARE_FPS_BOTH=12         # stack camera
+  KDX_SHARE_BOTH_SCALE=0.5      # 1920×3000 → 960×1500 into the cam
+"""
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+APP_ID = "com.kodexarg.kdx-share"
+MENU_TITLE = "kdx-share"
+MIRROR_TITLE = {
+    "vertical": "kdx-share · vertical (left)",
+    "horizontal": "kdx-share · horizontal (right)",
+}
+BOTH_TITLE = "kdx-share · both (stack)"
+HEADLESS_NAME = "kdxShare"
+HEADLESS_W = 1920
+HEADLESS_H = 3000
+HEADLESS_POS = "0x-5000"
+
+OUT_VERTICAL = "HDMI-A-2"
+OUT_HORIZONTAL = "HDMI-A-1"
+
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+STATE_PATH = RUNTIME / "kdx-share.state"
+LOG_PATH = RUNTIME / "kdx-share.log"
+MENU_PID_PATH = RUNTIME / "kdx-share-menu.pid"
+PREFS_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "kdx-share" / "prefs.json"
+
+V4L2_DEV = Path(os.environ.get("KDX_SHARE_V4L2", "/dev/video10"))
+FPS_SINGLE = int(os.environ.get("KDX_SHARE_FPS", "15"))
+FPS_BOTH = int(os.environ.get("KDX_SHARE_FPS_BOTH", "12"))
+BOTH_SCALE = float(os.environ.get("KDX_SHARE_BOTH_SCALE", "0.5"))
+
+ACCENT = "#ff8c42"
+
+
+# ── logging / notify ────────────────────────────────────────────────────────
+
+def log(msg: str) -> None:
+    line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {msg}"
+    try:
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def notify(msg: str, icon: int = 5) -> None:
+    subprocess.run(
+        ["hyprctl", "notify", str(icon), "6500", "rgb(ff8c42)", msg],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["notify-send", "-a", "kdx-share", "kdx-share", msg],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def shutil_which(name: str) -> str | None:
+    from shutil import which
+
+    return which(name)
+
+
+# ── prefs ───────────────────────────────────────────────────────────────────
+
+def load_prefs() -> dict:
+    try:
+        return json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"surface": True, "camera": False}
+
+
+def save_prefs(surface: bool, camera: bool) -> None:
+    PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PREFS_PATH.write_text(
+        json.dumps({"surface": surface, "camera": camera}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+# ── hypr helpers ────────────────────────────────────────────────────────────
+
+def hypr_json(cmd: list[str]):
+    try:
+        out = subprocess.check_output(["hyprctl", "-j", *cmd], text=True, timeout=5)
+        return json.loads(out)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, subprocess.TimeoutExpired):
+        return None
+
+
+def monitors() -> list[dict]:
+    data = hypr_json(["monitors"])
+    return data if isinstance(data, list) else []
+
+
+def monitor_logical_size(name: str) -> tuple[int, int] | None:
+    for m in monitors():
+        if m.get("name") != name:
+            continue
+        w, h = int(m["width"]), int(m["height"])
+        # Hypr reports buffer size; transform 1/3 swaps for logical capture size.
+        if int(m.get("transform") or 0) in (1, 3):
+            w, h = h, w
+        scale = float(m.get("scale") or 1) or 1.0
+        return int(w / scale), int(h / scale)
+    return None
+
+
+def dispatch_lua(expr: str) -> None:
+    r = subprocess.run(
+        ["hyprctl", "dispatch", expr],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0 or (r.stdout and "error" in r.stdout.lower()):
+        log(f"dispatch fail: {expr!r} → {r.stdout!r} {r.stderr!r}")
+    else:
+        log(f"dispatch ok: {expr}")
+
+
+def client_by_title_substr(substr: str) -> dict | None:
+    data = hypr_json(["clients"])
+    if not isinstance(data, list):
+        return None
+    for c in data:
+        if substr in (c.get("title") or ""):
+            return c
+    return None
+
+
+def move_window_to_monitor(title_substr: str, monitor: str, *, maximize: bool = False) -> bool:
+    w = client_by_title_substr(title_substr)
+    if not w:
+        log(f"move: no client title~{title_substr!r}")
+        return False
+    addr = w.get("address") or ""
+    if not addr:
+        return False
+    dispatch_lua(
+        f'hl.dsp.window.move({{ monitor = "{monitor}", window = "address:{addr}" }})'
+    )
+    if maximize:
+        dispatch_lua(
+            f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "set", '
+            f'window = "address:{addr}" }})'
+        )
+    return True
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def kill_pg(pid: int) -> None:
+    if not pid or not pid_alive(pid):
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return
+    for _ in range(30):
+        if not pid_alive(pid):
+            return
+        time.sleep(0.05)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+# ── state ───────────────────────────────────────────────────────────────────
+
+def empty_state() -> dict:
+    return {
+        "mode": None,
+        "surface": False,
+        "camera": False,
+        "surface_pid": 0,
+        "camera_pid": 0,
+        "output": None,
+        "v4l2": str(V4L2_DEV),
+        "fps": None,
+        "cam_size": None,
+        "started": None,
+    }
+
+
+def write_state(st: dict) -> None:
+    STATE_PATH.write_text(json.dumps(st, indent=2) + "\n", encoding="utf-8")
+
+
+def read_state() -> dict:
+    try:
+        st = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(st, dict):
+            return empty_state()
+        return {**empty_state(), **st}
+    except (OSError, json.JSONDecodeError):
+        return empty_state()
+
+
+def clear_state() -> None:
+    try:
+        STATE_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def live_state() -> dict:
+    """Reconcile pids; drop dead halves."""
+    st = read_state()
+    changed = False
+    if st.get("surface_pid") and not pid_alive(int(st["surface_pid"])):
+        st["surface_pid"] = 0
+        st["surface"] = False
+        changed = True
+    if st.get("camera_pid") and not pid_alive(int(st["camera_pid"])):
+        st["camera_pid"] = 0
+        st["camera"] = False
+        changed = True
+    if not st.get("surface") and not st.get("camera"):
+        if st.get("mode"):
+            st["mode"] = None
+            changed = True
+        if changed:
+            # keep file only if something left; else clear
+            if not st.get("mode"):
+                clear_state()
+                return empty_state()
+    if changed:
+        write_state(st)
+    return st
+
+
+# ── headless ────────────────────────────────────────────────────────────────
+
+def remove_headless() -> None:
+    names = {m.get("name") for m in monitors()}
+    if HEADLESS_NAME in names:
+        subprocess.run(
+            ["hyprctl", "output", "remove", HEADLESS_NAME],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        log(f"removed headless {HEADLESS_NAME}")
+        time.sleep(0.15)
+
+
+def ensure_headless() -> bool:
+    names = {m.get("name") for m in monitors()}
+    if HEADLESS_NAME not in names:
+        r = subprocess.run(
+            ["hyprctl", "output", "create", "headless", HEADLESS_NAME],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            log(f"headless create failed: {r.stdout} {r.stderr}")
+            return False
+        time.sleep(0.2)
+    expr = (
+        f'hl.monitor({{ output = "{HEADLESS_NAME}", '
+        f'mode = "{HEADLESS_W}x{HEADLESS_H}@60", '
+        f'position = "{HEADLESS_POS}", scale = 1 }})'
+    )
+    r = subprocess.run(
+        ["hyprctl", "eval", expr],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        log(f"headless modeset failed: {r.stdout} {r.stderr}")
+        return False
+    time.sleep(0.2)
+    return any(m.get("name") == HEADLESS_NAME for m in monitors())
+
+
+# ── stop ────────────────────────────────────────────────────────────────────
+
+def close_kdx_clients() -> None:
+    """Close leftover kdx-share windows via Hypr (no pkill -f — avoids self-match)."""
+    data = hypr_json(["clients"])
+    if not isinstance(data, list):
+        return
+    for c in data:
+        title = c.get("title") or ""
+        if "kdx-share" not in title:
+            continue
+        addr = c.get("address")
+        if not addr:
+            continue
+        dispatch_lua(f'hl.dsp.window.close({{ window = "address:{addr}" }})')
+
+
+def stop_session(*, quiet: bool = False) -> str:
+    st = read_state()
+    kill_pg(int(st.get("surface_pid") or 0))
+    kill_pg(int(st.get("camera_pid") or 0))
+    close_kdx_clients()
+    remove_headless()
+    clear_state()
+    if not quiet:
+        notify("input stopped", 1)
+    log("session stopped")
+    return "stopped"
+
+
+# ── surface (Fase 1) ────────────────────────────────────────────────────────
+
+def start_mirror_surface(mode: str) -> int:
+    output = OUT_VERTICAL if mode == "vertical" else OUT_HORIZONTAL
+    title = MIRROR_TITLE[mode]
+    if not shutil_which("wl-mirror"):
+        raise RuntimeError("wl-mirror missing")
+    proc = subprocess.Popen(
+        ["wl-mirror", "--title", title, "--scaling", "fit", output],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=open(LOG_PATH, "a", encoding="utf-8"),
+    )
+    other = OUT_HORIZONTAL if mode == "vertical" else OUT_VERTICAL
+    time.sleep(0.35)
+    move_window_to_monitor(title, other)
+    log(f"surface mirror mode={mode} pid={proc.pid}")
+    return proc.pid
+
+
+def start_both_surface() -> int:
+    if not ensure_headless():
+        raise RuntimeError("headless create failed")
+    proc = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--composite-worker"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=open(LOG_PATH, "a", encoding="utf-8"),
+        env={**os.environ, "GDK_BACKEND": "wayland"},
+    )
+    log(f"surface both pid={proc.pid}")
+    return proc.pid
+
+
+# ── camera (Fase 2) ─────────────────────────────────────────────────────────
+
+def v4l2_ready() -> tuple[bool, str]:
+    if not V4L2_DEV.exists():
+        return False, f"{V4L2_DEV} missing (modprobe v4l2loopback)"
+    if not os.access(V4L2_DEV, os.W_OK):
+        return False, f"{V4L2_DEV} not writable (udev/group video)"
+    if not shutil_which("wf-recorder"):
+        return False, "wf-recorder missing"
+    if not shutil_which("ffmpeg"):
+        return False, "ffmpeg missing"
+    return True, "ok"
+
+
+def even(n: int) -> int:
+    return n if n % 2 == 0 else n - 1
+
+
+def start_camera_pipeline(mode: str) -> tuple[int, str, str, int]:
+    """Return (pid, output_name, cam_size WxH, fps)."""
+    ok, why = v4l2_ready()
+    if not ok:
+        raise RuntimeError(why)
+
+    if mode == "both":
+        if not ensure_headless():
+            raise RuntimeError("headless required for both-camera")
+        # composite must be painting — start surface if not up
+        st = live_state()
+        if not (st.get("surface") and st.get("mode") == "both" and pid_alive(int(st.get("surface_pid") or 0))):
+            # lightweight: ensure composite worker for frames on headless
+            # (camera alone still needs something on kdxShare — start composite)
+            spid = start_both_surface()
+            st = live_state()
+            st.update(
+                {
+                    "mode": "both",
+                    "surface": True,
+                    "surface_pid": spid,
+                    "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
+            write_state(st)
+            # wait for window on headless
+            for _ in range(30):
+                c = client_by_title_substr("both (stack)")
+                if c and c.get("monitor") is not None:
+                    break
+                time.sleep(0.1)
+            time.sleep(0.4)
+        output = HEADLESS_NAME
+        src_w, src_h = HEADLESS_W, HEADLESS_H
+        fps = FPS_BOTH
+        scale = BOTH_SCALE
+    else:
+        output = OUT_VERTICAL if mode == "vertical" else OUT_HORIZONTAL
+        sz = monitor_logical_size(output)
+        if not sz:
+            raise RuntimeError(f"monitor {output} not found")
+        src_w, src_h = sz
+        fps = FPS_SINGLE
+        scale = 1.0
+
+    out_w, out_h = even(int(src_w * scale)), even(int(src_h * scale))
+    if out_w < 2 or out_h < 2:
+        raise RuntimeError("invalid camera size")
+
+    vf = ""
+    if (out_w, out_h) != (src_w, src_h):
+        vf = f'-vf "scale={out_w}:{out_h}:flags=fast_bilinear" '
+
+    # Non-tty: wf-recorder may print overwrite prompt then continue on /dev/stdout.
+    shell = f"""
+set -e
+wf-recorder -o {output} -r {fps} -x yuv420p -c rawvideo -m rawvideo -D -f /dev/stdout 2>>"{LOG_PATH}" \
+| ffmpeg -hide_banner -loglevel warning \
+    -f rawvideo -pix_fmt yuv420p -s {src_w}x{src_h} -r {fps} -i /dev/stdin \
+    {vf}-f v4l2 -pix_fmt yuv420p "{V4L2_DEV}" >>"{LOG_PATH}" 2>&1
+"""
+    log(f"camera start mode={mode} out={output} src={src_w}x{src_h} cam={out_w}x{out_h}@{fps}")
+    proc = subprocess.Popen(
+        ["bash", "-c", shell],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(0.6)
+    if not pid_alive(proc.pid):
+        raise RuntimeError("camera pipeline exited early — see kdx-share.log")
+    return proc.pid, output, f"{out_w}x{out_h}", fps
+
+
+# ── session start ───────────────────────────────────────────────────────────
+
+def start_session(mode: str, *, surface: bool = True, camera: bool = False) -> str:
+    if mode not in ("vertical", "horizontal", "both"):
+        return f"error: bad mode {mode}"
+    if not surface and not camera:
+        return "error: enable surface and/or camera"
+
+    cur = live_state()
+    # toggle-off if same mode + same sinks already running
+    if (
+        cur.get("mode") == mode
+        and bool(cur.get("surface")) == surface
+        and bool(cur.get("camera")) == camera
+        and (cur.get("surface") or cur.get("camera"))
+    ):
+        stop_session()
+        return f"toggled-off {mode}"
+
+    stop_session(quiet=True)
+
+    st = empty_state()
+    st["mode"] = mode
+    st["started"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    st["v4l2"] = str(V4L2_DEV)
+
+    try:
+        # both always needs headless composite (producer for stack + camera).
+        if mode == "both":
+            spid = start_both_surface()
+            st["surface"] = True
+            st["surface_pid"] = spid
+            st["output"] = HEADLESS_NAME
+            write_state(st)  # so camera path sees live surface
+            time.sleep(0.6)
+        elif surface:
+            st["surface"] = True
+            st["surface_pid"] = start_mirror_surface(mode)
+            st["output"] = OUT_VERTICAL if mode == "vertical" else OUT_HORIZONTAL
+            write_state(st)
+
+        if camera:
+            cpid, out, cam_size, fps = start_camera_pipeline(mode)
+            st = live_state()
+            st["mode"] = mode
+            st["camera"] = True
+            st["camera_pid"] = cpid
+            st["output"] = out
+            st["cam_size"] = cam_size
+            st["fps"] = fps
+            st["v4l2"] = str(V4L2_DEV)
+            if not st.get("started"):
+                st["started"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+        write_state(st)
+        # prefs: requested sinks (both may force internal surface)
+        save_prefs(surface=surface, camera=camera)
+
+        bits = []
+        if st.get("surface"):
+            bits.append("OBS surface")
+        if st.get("camera"):
+            bits.append(f"cam {V4L2_DEV} {st.get('cam_size')}@{st.get('fps')}")
+        notify(f"{mode}\n" + " · ".join(bits), 5)
+        return f"started {mode} surface={st.get('surface')} camera={st.get('camera')}"
+    except Exception as e:
+        log(f"start_session error: {e}")
+        stop_session(quiet=True)
+        notify(f"kdx-share failed: {e}", 3)
+        return f"error: {e}"
+
+
+# ── composite worker (unchanged idea, grim for both surface) ────────────────
+
+def composite_worker() -> int:
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Gdk", "4.0")
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # type: ignore
+
+    log("composite-worker start")
+
+    class Comp(Gtk.ApplicationWindow):
+        def __init__(self, app: Gtk.Application):
+            super().__init__(application=app, title=BOTH_TITLE)
+            self.set_default_size(HEADLESS_W, HEADLESS_H)
+            self._pic = Gtk.Picture(content_fit=Gtk.ContentFit.FILL, hexpand=True, vexpand=True)
+            self.set_child(self._pic)
+            self._busy = False
+            self._tick = GLib.timeout_add(250, self._on_tick)
+            self.connect("close-request", self._on_close)
+
+        def _on_close(self, *_a):
+            if self._tick:
+                GLib.source_remove(self._tick)
+                self._tick = 0
+            return False
+
+        def _on_tick(self) -> bool:
+            if self._busy:
+                return True
+            self._busy = True
+            threading.Thread(target=self._grab_and_paint, daemon=True).start()
+            return True
+
+        def _grab_and_paint(self) -> None:
+            try:
+                h_png = self._grim(OUT_HORIZONTAL)
+                v_png = self._grim(OUT_VERTICAL)
+                if not h_png or not v_png:
+                    return
+                h_pb = GdkPixbuf.Pixbuf.new_from_file(h_png)
+                v_pb = GdkPixbuf.Pixbuf.new_from_file(v_png)
+                canvas = GdkPixbuf.Pixbuf.new(
+                    GdkPixbuf.Colorspace.RGB, False, 8, HEADLESS_W, HEADLESS_H
+                )
+                canvas.fill(0x101010FF)
+                h_pb.copy_area(
+                    0, 0, min(h_pb.get_width(), HEADLESS_W), min(h_pb.get_height(), 1080), canvas, 0, 0
+                )
+                vw = min(v_pb.get_width(), HEADLESS_W)
+                vh = min(v_pb.get_height(), HEADLESS_H - 1080)
+                v_pb.copy_area(0, 0, vw, vh, canvas, 0, 1080)
+                GLib.idle_add(self._set_pb, canvas)
+            except Exception as e:
+                log(f"composite tick error: {e}")
+            finally:
+                self._busy = False
+                for p in (RUNTIME / "kdx-share-h.png", RUNTIME / "kdx-share-v.png"):
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+        def _set_pb(self, pb: GdkPixbuf.Pixbuf) -> bool:
+            self._pic.set_paintable(Gdk.Texture.new_for_pixbuf(pb))
+            return False
+
+        @staticmethod
+        def _grim(output: str) -> str | None:
+            path = str(RUNTIME / (f"kdx-share-{'h' if output == OUT_HORIZONTAL else 'v'}.png"))
+            r = subprocess.run(
+                ["grim", "-o", output, path],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return path if r.returncode == 0 and Path(path).is_file() else None
+
+    def on_activate(app: Gtk.Application) -> None:
+        win = Comp(app)
+        win.present()
+
+        def place():
+            move_window_to_monitor(BOTH_TITLE, HEADLESS_NAME, maximize=True)
+            if shutil_which("wl-mirror"):
+                subprocess.Popen(
+                    [
+                        "wl-mirror",
+                        "--title",
+                        "kdx-share · both preview",
+                        "--scaling",
+                        "fit",
+                        HEADLESS_NAME,
+                    ],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=open(LOG_PATH, "a", encoding="utf-8"),
+                )
+
+                def place_preview() -> bool:
+                    move_window_to_monitor("both preview", OUT_HORIZONTAL)
+                    return False
+
+                GLib.timeout_add(400, place_preview)
+            return False
+
+        GLib.timeout_add(500, place)
+
+    app = Gtk.Application(application_id=APP_ID + ".both")
+    app.connect("activate", on_activate)
+    return app.run(None)
+
+
+# ── menu ────────────────────────────────────────────────────────────────────
+
+def run_menu() -> int:
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    gi.require_version("Gdk", "4.0")
+    from gi.repository import Adw, Gdk, GLib, Gtk  # type: ignore
+
+    MENU_PID_PATH.write_text(str(os.getpid()) + "\n", encoding="utf-8")
+    prefs = load_prefs()
+
+    css = f"""
+    window.kdx-share-menu {{
+      background: #1a1714; color: #f5ebe0;
+      border-radius: 14px; border: 1px solid rgba(255, 140, 66, 0.35);
+    }}
+    .kdx-share-title {{ font-weight: 700; font-size: 15px; color: {ACCENT}; }}
+    .kdx-share-sub {{ font-size: 11px; color: #a89888; }}
+    button.kdx-share-opt {{
+      background: #2a241f; color: #f5ebe0; border-radius: 10px;
+      border: 1px solid #3a352f; padding: 12px 14px;
+    }}
+    button.kdx-share-opt:hover {{ background: #3a3028; border-color: {ACCENT}; }}
+    button.kdx-share-opt.active {{
+      border-color: {ACCENT}; box-shadow: inset 0 0 0 1px {ACCENT};
+    }}
+    button.kdx-share-stop {{
+      background: #3a2020; color: #ffb4a8; border-radius: 10px;
+      border: 1px solid #6a3030; padding: 10px 14px;
+    }}
+    .kdx-share-badge {{ font-size: 10px; color: {ACCENT}; font-weight: 600; }}
+    checkbutton {{ color: #f5ebe0; }}
+    """
+
+    class MenuWin(Adw.ApplicationWindow):
+        def __init__(self, app: Adw.Application):
+            super().__init__(application=app, title=MENU_TITLE)
+            self.set_default_size(380, 420)
+            self.set_resizable(False)
+            self.add_css_class("kdx-share-menu")
+
+            provider = Gtk.CssProvider()
+            provider.load_from_data(css.encode())
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(),
+                provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+
+            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            for m in (16, 16, 16, 16):
+                pass
+            root.set_margin_top(16)
+            root.set_margin_bottom(16)
+            root.set_margin_start(16)
+            root.set_margin_end(16)
+
+            t = Gtk.Label(label="kdx-share", xalign=0)
+            t.add_css_class("kdx-share-title")
+            s = Gtk.Label(label="Desktop → video input · Super+Ctrl+R", xalign=0)
+            s.add_css_class("kdx-share-sub")
+            root.append(t)
+            root.append(s)
+
+            self._status = Gtk.Label(xalign=0)
+            self._status.add_css_class("kdx-share-badge")
+            self._status.set_wrap(True)
+            root.append(self._status)
+
+            # sinks
+            sinks = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            self._chk_surface = Gtk.CheckButton(label="Superficie OBS (ventana / headless)")
+            self._chk_surface.set_active(bool(prefs.get("surface", True)))
+            self._chk_camera = Gtk.CheckButton(label=f"Cámara virtual  {V4L2_DEV}")
+            self._chk_camera.set_active(bool(prefs.get("camera", False)))
+            ok, why = v4l2_ready()
+            if not ok:
+                self._chk_camera.set_sensitive(False)
+                self._chk_camera.set_label(f"Cámara virtual  (no: {why[:42]})")
+            sinks.append(self._chk_surface)
+            sinks.append(self._chk_camera)
+            hint = Gtk.Label(
+                label="OBS: Window/Output Capture · Apps solo-cámara: /dev/video10",
+                xalign=0,
+            )
+            hint.add_css_class("kdx-share-sub")
+            sinks.append(hint)
+            root.append(sinks)
+
+            opts = [
+                ("vertical", "Vertical (izquierda)", "ASUS · HDMI-A-2 · 1080×1920"),
+                ("horizontal", "Horizontal (derecha)", "AOC · HDMI-A-1 · 1920×1080"),
+                ("both", "Ambos (stack)", "H arriba + V abajo · headless → un input"),
+            ]
+            self._btns: dict[str, Gtk.Button] = {}
+            for mode, label, detail in opts:
+                btn = Gtk.Button()
+                btn.add_css_class("kdx-share-opt")
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                l1 = Gtk.Label(xalign=0)
+                l1.set_markup(f"<b>{label}</b>")
+                l2 = Gtk.Label(label=detail, xalign=0)
+                l2.add_css_class("kdx-share-sub")
+                box.append(l1)
+                box.append(l2)
+                btn.set_child(box)
+                btn.connect("clicked", self._on_pick, mode)
+                self._btns[mode] = btn
+                root.append(btn)
+
+            stop = Gtk.Button(label="Detener input")
+            stop.add_css_class("kdx-share-stop")
+            stop.connect("clicked", self._on_stop)
+            root.append(stop)
+
+            self.set_content(root)
+            self._refresh_status()
+            GLib.timeout_add(1000, self._refresh_status)
+
+            key = Gtk.EventControllerKey()
+            key.connect("key-pressed", self._on_key)
+            self.add_controller(key)
+
+        def _sinks(self) -> tuple[bool, bool]:
+            surface = bool(self._chk_surface.get_active())
+            camera = bool(self._chk_camera.get_active()) and self._chk_camera.get_sensitive()
+            if not surface and not camera:
+                surface = True  # never allow empty
+                self._chk_surface.set_active(True)
+            return surface, camera
+
+        def _on_key(self, _c, keyval, _code, _state) -> bool:
+            if keyval == Gdk.KEY_Escape:
+                self.close()
+                return True
+            if keyval in (Gdk.KEY_1, Gdk.KEY_KP_1):
+                self._on_pick(None, "vertical")
+                return True
+            if keyval in (Gdk.KEY_2, Gdk.KEY_KP_2):
+                self._on_pick(None, "horizontal")
+                return True
+            if keyval in (Gdk.KEY_3, Gdk.KEY_KP_3):
+                self._on_pick(None, "both")
+                return True
+            if keyval in (Gdk.KEY_0, Gdk.KEY_KP_0, Gdk.KEY_s, Gdk.KEY_S):
+                self._on_stop(None)
+                return True
+            if keyval in (Gdk.KEY_c, Gdk.KEY_C):
+                self._chk_camera.set_active(not self._chk_camera.get_active())
+                return True
+            return False
+
+        def _refresh_status(self) -> bool:
+            st = live_state()
+            if st.get("mode"):
+                parts = [f"activo: {st['mode']}"]
+                if st.get("surface"):
+                    parts.append("surface")
+                if st.get("camera"):
+                    parts.append(f"cam {st.get('cam_size')}@{st.get('fps')} → {st.get('v4l2')}")
+                self._status.set_text(" · ".join(parts))
+                for m, b in self._btns.items():
+                    if m == st.get("mode"):
+                        b.add_css_class("active")
+                    else:
+                        b.remove_css_class("active")
+            else:
+                self._status.set_text("inactivo · elegí target + sinks")
+                for b in self._btns.values():
+                    b.remove_css_class("active")
+            return True
+
+        def _on_pick(self, _btn, mode: str) -> None:
+            surface, camera = self._sinks()
+
+            def work():
+                msg = start_session(mode, surface=surface, camera=camera)
+                log(f"menu pick {mode} surface={surface} camera={camera} → {msg}")
+                GLib.idle_add(self.close)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def _on_stop(self, _btn) -> None:
+            stop_session()
+            self.close()
+
+    def on_activate(app: Adw.Application) -> None:
+        MenuWin(app).present()
+
+    def on_shutdown(_app) -> None:
+        try:
+            MENU_PID_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    Adw.init()
+    app = Adw.Application(application_id=APP_ID)
+    app.connect("activate", on_activate)
+    app.connect("shutdown", on_shutdown)
+    return app.run(None)
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+def cmd_inventory() -> int:
+    print("=== kdx-share inventory ===")
+    print(f"vertical   → {OUT_VERTICAL}")
+    print(f"horizontal → {OUT_HORIZONTAL}")
+    print(f"both       → headless {HEADLESS_NAME} {HEADLESS_W}x{HEADLESS_H}")
+    print(f"v4l2       → {V4L2_DEV}")
+    ok, why = v4l2_ready()
+    print(f"camera     → {'ready' if ok else 'NO: ' + why}")
+    print(f"fps        → single={FPS_SINGLE} both={FPS_BOTH} both_scale={BOTH_SCALE}")
+    print()
+    for m in monitors():
+        name = m.get("name")
+        tag = ""
+        if name == OUT_VERTICAL:
+            tag = " ← vertical"
+        elif name == OUT_HORIZONTAL:
+            tag = " ← horizontal"
+        elif name == HEADLESS_NAME:
+            tag = " ← stack canvas"
+        print(
+            f"  {name}: {m.get('width')}x{m.get('height')} "
+            f"@ {m.get('x')},{m.get('y')} transform={m.get('transform')}{tag}"
+        )
+    print()
+    print("session:", json.dumps(live_state(), indent=2))
+    return 0
+
+
+def cmd_status() -> int:
+    st = live_state()
+    if not st.get("mode"):
+        print("inactive")
+        return 1
+    print(json.dumps(st, indent=2))
+    return 0
+
+
+def cmd_help() -> int:
+    print(__doc__)
+    return 0
+
+
+def parse_flags(argv: list[str]) -> tuple[list[str], dict]:
+    flags = {"camera": False, "surface": True}
+    pos: list[str] = []
+    for a in argv:
+        if a in ("--camera", "-c", "--cam"):
+            flags["camera"] = True
+        elif a in ("--no-surface", "--camera-only"):
+            flags["surface"] = False
+            flags["camera"] = True
+        elif a in ("--no-camera",):
+            flags["camera"] = False
+        elif a in ("--surface-only",):
+            flags["surface"] = True
+            flags["camera"] = False
+        else:
+            pos.append(a)
+    return pos, flags
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("menu", "ui", "pick"):
+        return run_menu()
+
+    if argv[0] == "--composite-worker":
+        return composite_worker()
+
+    pos, flags = parse_flags(argv)
+    if not pos:
+        return run_menu()
+    cmd = pos[0].lower()
+
+    if cmd in ("-h", "--help", "help"):
+        return cmd_help()
+    if cmd in ("inventory", "list", "panels"):
+        return cmd_inventory()
+    if cmd == "status":
+        return cmd_status()
+    if cmd == "stop":
+        print(stop_session())
+        return 0
+    if cmd in ("vertical", "vert", "portrait", "left", "asus", "v"):
+        print(start_session("vertical", surface=flags["surface"], camera=flags["camera"]))
+        return 0
+    if cmd in ("horizontal", "horiz", "landscape", "right", "aoc", "h"):
+        print(start_session("horizontal", surface=flags["surface"], camera=flags["camera"]))
+        return 0
+    if cmd in ("both", "stack", "composite", "all", "b"):
+        print(start_session("both", surface=flags["surface"], camera=flags["camera"]))
+        return 0
+    if cmd == "camera-on":
+        st = live_state()
+        mode = st.get("mode") or "horizontal"
+        print(start_session(mode, surface=bool(st.get("surface") or True), camera=True))
+        return 0
+    if cmd == "camera-off":
+        st = live_state()
+        if not st.get("mode"):
+            print("inactive")
+            return 1
+        print(start_session(st["mode"], surface=True, camera=False))
+        return 0
+
+    print(f"unknown: {cmd}", file=sys.stderr)
+    cmd_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

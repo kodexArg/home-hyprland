@@ -25,28 +25,38 @@ Re-read files before editing. Snapshot **2026-07-25**; **live always wins** (`hy
 | Git SSOT | `~/home-hyprland/` (`hypr/`, `ags/`, `bin/`, `kitty/`, `wallpapers/`, `skill/`) |
 | AGS | `~/.config/ags/` |
 | Zoom helper | `~/.local/bin/hypr-zoom-toggle` |
+| Monitor heal | `~/.local/bin/hypr-monitor-heal` · Super+Shift+O · ADR `20260727-hypr-monitor-heal-portrait-crtc` |
+| Share / transmit | `~/.local/bin/kdx-share` · Super+Ctrl+R · ADR `20260726-hyprland-super-ctrl-r-kdx-share` |
 | Wallpaper media | `~/home-hyprland/wallpapers/disco-elysium-thought-cabinet-art-cropped.avif` |
 
 Sync pattern: live edits → re-sync `~/home-hyprland` → commit. Last related commit: `8b1cac3` (caffeine FSM + zoom).
 
+> **Drift pendiente (2026-07-26):** el repo va atrás de `~/.config/ags/`.
+> Faltan `widget/DictationIndicator.tsx` y `widget/LiveIndicator.tsx`, y `Bar.tsx`
+> difiere (live 07-26 02:27 vs repo 07-25 22:01). Verificar con
+> `diff -rq ~/.config/ags/widget ~/home-hyprland/ags/widget` antes de asumir que
+> el repo es SSOT de la barra.
+
 ## Monitors (portrait LEFT, landscape RIGHT)
 
-| Output | Role | transform | scale (dense) | position (dense) | logical (dense) |
+**Default de sesión = roomy, scale 1** (corregido 2026-07-26; la doc vieja decía dense 1.5).
+
+| Output | Role | transform | scale (default) | position (default) | logical (default) |
 |---|---|---|---|---|---|
-| HDMI-A-2 | ASUS VA27EHF **left**, portrait | **1** (90°) | **1.5** | `-720x0` | **720×1280** |
-| HDMI-A-1 | AOC G2790G4 right, landscape | 0 | 1 | `0x100` | 1920×1080 |
+| HDMI-A-2 | ASUS VA27EHF **left**, portrait | **1** (90°) | **1** | `-1080x0` | **1080×1920** |
+| HDMI-A-1 | AOC G2790G4 right, landscape | 0 | 1 | `0x420` | 1920×1080 |
 
 Mode: `preferred` / explicit `1920x1080@60` in zoom script.
 
-**Super+Ctrl+Z** toggles dense (1.5) ↔ roomy (1.0). Roomy: portrait `-1080x0` scale 1 · AOC `0x420`.  
-ADR: `20260725-hyprland-super-ctrl-z-zoom-toggle` · default dense: `20260721-hyprland-portrait-scale-1.5`.
+**Super+Ctrl+Z** toggles roomy (1.0) ↔ dense (1.5). Dense: portrait `-720x0` scale 1.5 · AOC `0x100`.  
+ADRs: default roomy `20260726-hyprland-portrait-default-scale-1` (supersede `20260721-hyprland-portrait-scale-1.5`) · toggle `20260725-hyprland-super-ctrl-z-zoom-toggle`.
 
 ### Zoom FSM + layer resync (do not skip)
 
 ```
-dense ──Super+Ctrl+Z──► arming ──modesets sequential──► roomy
-  ▲                                                      │
-  └──────────────── Super+Ctrl+Z ────────────────────────┘
+roomy (default) ──Super+Ctrl+Z──► arming ──modesets sequential──► dense
+  ▲                                                                 │
+  └──────────────────── Super+Ctrl+Z ───────────────────────────────┘
 ```
 
 1. Sequential `hyprctl eval hl.monitor(…)` — **never batch** two monitors (DRM page-flip race).
@@ -56,10 +66,21 @@ dense ──Super+Ctrl+Z──► arming ──modesets sequential──► room
 ## Autostart (`hl.on("hyprland.start")`)
 
 1. `hyprpaper`
-2. Kitty terminal
-3. `anyrun daemon` with `GSK_RENDERER=gl`
-4. AGS:  
-   `env PATH=…/.local/bin:… GSK_RENDERER=gl /usr/local/bin/ags run ~/.config/ags`
+2. `systemctl --user start hypridle.service`
+3. `import-environment` + `ags-hyprland.service` (`Restart=always`)
+4. Kitty terminal
+5. `anyrun daemon` with `GSK_RENDERER=gl`
+
+## Idle / blank / portrait death
+
+| Piece | Policy |
+|---|---|
+| Blank | **OFF** — hypridle has 0 rules (no DPMS timeout) |
+| Suspend wake | `after_sleep_cmd` → `hypr-monitor-heal after-sleep` |
+| Escape | **Super+Shift+O** or TTY `hypr-monitor-heal` |
+| HARD | never any `dpms` targeting HDMI-A-2 (on **or** off kills amdgpu CRTC) |
+| AGS | supervised unit — bar only on HDMI-A-2 |
+| ADRs | `20260727-hypr-monitor-heal-portrait-crtc` (supersedes blanking in `20260726-hypridle-dpms-caffeine`) |
 
 ## Environment
 
@@ -120,6 +141,7 @@ AQ_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1   # NVIDIA primary, Renoir secondar
 | `20260721-hyprland-portrait-scale-1.5` | Default dense scale 1.5 |
 | `20260724-audio-hdmi-headphones-mb-speakers` | HDMI=auris, MB=parlantes |
 | `20260725-hyprland-super-ctrl-z-zoom-toggle` | Super+Ctrl+Z zoom + layer resync |
+| `20260726-hyprland-super-ctrl-r-kdx-share` | Super+Ctrl+R transmit picker (vertical/horizontal/both) |
 
 ## Edit checklist
 

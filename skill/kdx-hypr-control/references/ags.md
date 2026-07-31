@@ -135,9 +135,14 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
 | `bar-mode` | `getBarMode()` | (debug) |
 | `bar-set <mode>` | `setBarMode()` | (scripted) |
 | `caffeine` / `caffeine-toggle` | `toggleCaffeine()` | (bar click) |
-| `capture-toggle` / `capture` | `toggleCapture()` | (widget commented out) |
+| `capture-toggle` / `capture` | `toggleCapture()` | ⚠️ **no-op** — ver abajo |
 
 Implemented in `app.ts` → `requestHandler`.
+
+> ⚠️ `capture-toggle` responde `capture-open` / `capture-closed` **sin abrir nada**:
+> flipea un state que ningún widget montado lee (`CaptureToggle` está comentado, y
+> es el único constructor de `CapturePanel`). Único IPC de la barra que reporta
+> éxito sin efecto — ADR `20260726-ags-surfaces-inventory-capture-parked`.
 
 `app.ts` also re-spawns the bar on `notify::monitors` plus one 400 ms retry —
 otherwise an `ags` restart could leave IPC up with no window (hotplug race).
@@ -164,11 +169,29 @@ Default first paint: **`always`** mode — the edge poll does not run until you 
 |---|---|
 | start | **Volume** first: output icon, −, custom track, + (AstalWp `defaultSpeaker`) |
 | center | empty |
-| end | **LocalLlm** brain button + **ClockCaffeine** cluster (`%H:%M` + Calendar popover + cup) |
+| end | **LiveIndicator** + **DictationIndicator** + **LocalLlm** brain button + **ClockCaffeine** cluster (`%H:%M` + Calendar popover + cup) |
 
 `CaptureToggle` / `CapturePanel` are written but **commented out in the `end` box
 since 2026-07-17** — both buttons were mocks; the real work is the `Print` binds
 on `hypr-screenshot`. Code kept for when it gets wired.
+
+### Surface inventory (audit 2026-07-26)
+
+| Surface | `namespace` | Visible when | State |
+|---|---|---|---|
+| `bar` | `ags-bar` | mode ≠ `hidden` | live, HDMI-A-2 only |
+| `local-llm` | `ags-local-llm` | brain click | on-demand |
+| `local-llm-clickaway` | `ags-local-llm-clickaway` | with the LLM panel | on-demand |
+| `capture` | `ags-capture` | **never** (no constructor mounted) | parked |
+| `LiveIndicator` | inline box | `/tmp/voice_live_state.json` phase = `stream`/`error` | on-demand |
+| `DictationIndicator` | inline box | `/tmp/dictate_state.json` phase ≠ `idle` | on-demand |
+
+Ambos indicadores son **invisibles en reposo por diseño**: el daemon borra su
+state file al parar, y la UI deriva `visible: false` de `phase=off`. Archivo
+ausente = apagado, **no** roto — no lo diagnostiques como bug.
+
+Regla: toda superficie declarada debe ser alcanzable, o su IPC se borra con ella.
+ADR `20260726-ags-surfaces-inventory-capture-parked`.
 
 **Volume output icon (triple, not volume ladder):**
 
