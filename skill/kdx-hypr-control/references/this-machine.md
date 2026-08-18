@@ -12,7 +12,7 @@ Re-read files before editing. Snapshot **2026-07-25**; **live always wins** (`hy
 
 | Item | Value |
 |---|---|
-| Hyprland | **0.55.4** (Debian `hyprland 0.55.4+ds-2`) |
+| Hyprland | **0.56.2** (Debian `hyprland 0.56.2+ds-1`) |
 | Config language | **Lua only** (`hyprland.lua`) — no legacy `keyword monitor` for runtime |
 | Satellite pkgs | hyprpaper, hypridle, hyprlock, hyprlauncher, hyprpolkitagent, xdg-desktop-portal-hyprland, hyprland-guiutils |
 | AGS | **3.1.0** @ `/usr/local/bin/ags` (built to `/usr` libs; see `references/ags.md`) |
@@ -41,15 +41,41 @@ Sync pattern: live edits → re-sync `~/home-hyprland` → commit. Last related 
 
 **Default de sesión = roomy, scale 1** (corregido 2026-07-26; la doc vieja decía dense 1.5).
 
-| Output | Role | transform | scale (default) | position (default) | logical (default) |
-|---|---|---|---|---|---|
-| HDMI-A-2 | ASUS VA27EHF **left**, portrait | **1** (90°) | **1** | `-1080x0` | **1080×1920** |
-| HDMI-A-1 | AOC G2790G4 right, landscape | 0 | 1 | `0x420` | 1920×1080 |
+| Panel | Role | bind | transform | scale | position | logical |
+|---|---|---|---|---|---|---|
+| ASUS VA27EHF | **left**, portrait, ws 1–3 | `desc:ASUSTek COMPUTER INC VA27EHF` | **1** (90°) | **1** | `-1080x0` | **1080×1920** |
+| AOC G2790G4 | right, landscape, ws 4–6 | `desc:AOC G2790G4` | 0 | 1 | `0x420` | 1920×1080 |
+
+Connector names **move**. After kernel 7.1.8 (AMD probes first): ASUS=`HDMI-A-1`, AOC=`HDMI-A-2`. ADR `20260818-hypr-monitors-desc-nvidia-dkms-718`.
 
 Mode: `preferred` / explicit `1920x1080@60` in zoom script.
 
 **Super+Ctrl+Z** toggles roomy (1.0) ↔ dense (1.5). Dense: portrait `-720x0` scale 1.5 · AOC `0x100`.  
 ADRs: default roomy `20260726-hyprland-portrait-default-scale-1` (supersede `20260721-hyprland-portrait-scale-1.5`) · toggle `20260725-hyprland-super-ctrl-z-zoom-toggle`.
+
+## Workspaces (pinned to monitors — 2026-08-01)
+
+Live: `hl.workspace_rule` in `~/.config/hypr/hyprland.lua` (mirrored in `~/home-hyprland/hypr/hyprland.lua`).
+
+| Workspaces | Panel | Role | Notes |
+|---|---|---|---|
+| **1, 2, 3** | ASUS VA27EHF (left / portrait) | `default` on **1** | all `persistent = true` |
+| **4, 5, 6** | AOC G2790G4 (right / landscape) | `default` on **4** | all `persistent = true` |
+
+Visible pair at session start: **1 + 4**. Binds Super+1…6 / Super+Shift+1…6 unchanged (IDs 1–10 still bound; 7–10 unpinned).
+
+Lua shape:
+
+```lua
+hl.workspace_rule({ workspace = "1", monitor = asus, default = true,  persistent = true })
+hl.workspace_rule({ workspace = "2", monitor = asus, persistent = true })
+hl.workspace_rule({ workspace = "3", monitor = asus, persistent = true })
+hl.workspace_rule({ workspace = "4", monitor = aoc,  default = true,  persistent = true })
+hl.workspace_rule({ workspace = "5", monitor = aoc,  persistent = true })
+hl.workspace_rule({ workspace = "6", monitor = aoc,  persistent = true })
+```
+
+Verify: `hyprctl workspaces -j` · `hyprctl monitors -j` (activeWorkspace per output).
 
 ### Zoom FSM + layer resync (do not skip)
 

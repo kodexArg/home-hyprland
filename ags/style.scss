@@ -1,11 +1,23 @@
 
 @use "sass:color";
 
+/* ── Presentation Orange + bar chrome ─────────────────────────────────
+   Align with ~/Skills/kdx-design-system (ink/cream/orange) and the live
+   AGS status palette used by brain / rec / load / RAM track.
+   SSOT note: skill kdx-hypr-control references/ags.md §status palette.
+   ─────────────────────────────────────────────────────────────────── */
 $ink-1000:   #0C0B09;
 $ink-600:    #3a352f;
 $cream-100:  #F3EEE4;
 $warm-200:   #cdbfa8;
-$orange-500: #ff8c42;
+$orange-500: #ff8c42; /* custom / busy — design-system --orange-500 */
+
+/* Status tones (bar chips — brain, RAM, confirm, cast warn) */
+$status-gray:   rgba(160, 160, 160, 0.5); /* off / empty / idle pip */
+$status-green:  #7bc96f;                  /* ready / low RAM — brain green */
+$status-yellow: #e6b84d;                  /* med / loading / reboot warn */
+$status-red:    #c45c4a;                  /* high / failed / ocre-red */
+$status-rec:    #e53935;                  /* live disk REC only */
 
 $nautilus-bg:    #242424;
 $nautilus-bg-hi: #2a2a2a;
@@ -106,25 +118,106 @@ window.Bar {
     }
   }
 
-  .LocalLlm {
-    margin: 0 1px;
+  /* Extreme-right sandwich — system menu (mic · restart · power off).
+     Hitbox stays 22×22; glyph is 20px (1.25×) warm-grey via menu.svg. */
+  .SystemMenu {
+    margin: 0; /* gap = Bar-end spacing only */
     min-height: 22px;
     min-width: 22px;
-    padding: 0 4px;
+    padding: 0 2px;
 
     &.open {
       border-color: $border-active;
       background: $fill-active;
     }
+  }
 
-    &.on {
-      border-color: $border-active;
-      background: $fill-active;
+  /* Memory track — right of brain (same wide gap). KISS 5×3:
+     rows top→bottom: VRAM (8 GiB) · RAM · SWAP
+     label ≈ white · cells L→R by used/total
+     cell gap 1px · row gap 2px · cell 6px · H ≈ Clock 1.5rem
+     4 color bands, first two green: b0–b1 green · b2 yellow · b3 orange · b4 red */
+  .RamTrack {
+    margin: 0; /* gap = Bar-end spacing only */
+    padding: 0;
+    border: none;
+    background: transparent;
+    min-height: 1.5rem; /* same floor as .Clock */
+
+    &-row {
+      padding: 0;
+      border: none;
+      background: transparent;
     }
 
-    &.unload {
-      border-color: color.mix(#c45c4a, $nautilus-bg, 65%);
-      background: color.mix(#c45c4a, $nautilus-bg, 18%);
+    /* very very light brain cream — whisper labels, right-packed */
+    &-label {
+      font-size: 0.32em;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      color: #faf8f4; /* almost white (clock digit cream) */
+      opacity: 0.92;
+      min-width: 1.8em; /* VRAM / RAM / SWAP — right edge against cells */
+      padding: 0 1px 0 0;
+    }
+
+    &-cell {
+      /* GTK CSS: min-* only (no width/height props) */
+      min-width: 6px;
+      min-height: 6px;
+      border: none;
+      border-radius: 0;
+      background: $status-gray;
+      opacity: 0.35;
+
+      /* 4 blocks: first two green, then yellow / orange / red */
+      &.on.b0,
+      &.on.b1 {
+        background: $status-green;
+        opacity: 1;
+      }
+      &.on.b2 {
+        background: $status-yellow;
+        opacity: 1;
+      }
+      &.on.b3 {
+        background: $orange-500;
+        opacity: 1;
+      }
+      &.on.b4 {
+        background: $status-red;
+        opacity: 1;
+      }
+    }
+  }
+
+  .LocalLlm {
+    margin: 0; /* gap = Bar-end spacing only (override button 0 1px) */
+    min-height: 22px;
+    min-width: 22px;
+    padding: 0 2px;
+
+    /* state carried by icon color only — no persistent rectangle
+       beyond the standard (transparent → hover) border */
+    image {
+      color: $status-gray; /* off */
+    }
+
+    &.ready image {
+      color: $status-green; /* model selected & /v1/models answering */
+    }
+
+    &.thinking image {
+      color: $orange-500; /* generation in flight (color/thinking contract) */
+    }
+
+    &.red image {
+      color: $status-red; /* unknown intent — client-requested, typically 3s */
+    }
+
+    &.open {
+      border-color: $border-active;
+      background: $fill-active;
     }
   }
 
@@ -146,6 +239,7 @@ window.Bar {
     }
   }
 
+  /* parked: ClockCluster (clock + caffeine cup) — restore with ClockCaffeine in Bar.tsx
   .ClockCluster {
     margin: 0 1px;
     border-radius: 6px;
@@ -199,6 +293,51 @@ window.Bar {
     &-cup {
       padding: 0 5px 0 2px;
       min-width: 18px;
+    }
+  }
+  */
+
+  /* Clock — DSEG7; one chrome box (kill nested menubutton>button border). */
+  .Clock {
+    margin: 0; /* gap = Bar-end spacing only */
+    padding: 0 0.25rem 0 0;
+    min-height: 1.5rem;
+    border-radius: 0.375rem;
+    border: 2px solid transparent;
+    background: transparent;
+
+    &:hover,
+    &:checked,
+    &:active {
+      border-color: $border-active;
+      background: $fill-active;
+    }
+
+    button {
+      margin: 0;
+      padding: 0;
+      min-height: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      outline: none;
+
+      &:hover,
+      &:active,
+      &:checked {
+        border: none;
+        background: transparent;
+        box-shadow: none;
+      }
+    }
+
+    .Clock-time {
+      font-family: "DSEG7 Classic", monospace;
+      font-weight: bold;
+      font-size: 1.2rem;
+      letter-spacing: 0.04em;
+      color: #faf8f4;
     }
   }
 }
@@ -346,6 +485,325 @@ window.LocalLlmPanel {
     font-weight: 500;
     color: $panel-label;
     letter-spacing: 0.01em;
+  }
+}
+
+/* System sandwich panel — anchored top-right under the bar icon */
+window.SystemClickaway {
+  background: rgba(12, 11, 9, 0.02);
+}
+
+window.SystemPanel {
+  background: rgba(12, 11, 9, 0.02);
+  color: $panel-label;
+
+  .SystemMenu-menu {
+    border-radius: 10px;
+    border: 1px solid $border-inactive;
+    background: $fill-inactive;
+    padding: 8px;
+    margin: 0;
+    min-width: 168px;
+  }
+
+  .SystemMenu-status {
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: color.mix($cream-100, $warm-200, 40%);
+    padding: 2px 6px 4px;
+  }
+
+  .SystemMenu-sep {
+    min-height: 1px;
+    background: $nautilus-edge;
+    margin: 4px 2px;
+    opacity: 0.9;
+  }
+
+  /* Row = [icon] [fixed-width text]. Whole button is the hit target. */
+  button.SystemMenu-row {
+    min-height: 32px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    color: $panel-label;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+    }
+
+    /* mic currently muted — dim + muted glyph already shows slash */
+    &.muted {
+      .SystemMenu-label {
+        color: color.mix($cream-100, $warm-200, 35%);
+      }
+    }
+
+    /* Gabriel-L2TP FSM: cream connected · grey disconnected */
+    &.vpn {
+      &.on {
+        border-color: color.mix($orange-500, $ink-1000, 40%);
+        background: color.mix($orange-500, $ink-1000, 12%);
+
+        .SystemMenu-label {
+          color: $cream-100;
+        }
+      }
+
+      &.busy {
+        border-color: color.mix(#e6b84d, $ink-1000, 40%);
+        background: color.mix(#e6b84d, $ink-1000, 10%);
+
+        .SystemMenu-label {
+          color: color.mix($cream-100, #e6b84d, 40%);
+        }
+      }
+
+      &.failed {
+        border-color: color.mix(#c45c4a, $ink-1000, 50%);
+        background: color.mix(#c45c4a, $ink-1000, 12%);
+
+        .SystemMenu-label {
+          color: color.mix($cream-100, #c45c4a, 35%);
+        }
+      }
+
+      &.off {
+        .SystemMenu-label {
+          color: color.mix($cream-100, $warm-200, 40%);
+        }
+      }
+    }
+
+    /* Cloudflare WARP FSM: default connected (sin resaltar), paused (resaltado) */
+    &.warp {
+      &.connected {
+        /* default: normal row, sin resaltar */
+        .SystemMenu-label {
+          color: $panel-label;
+        }
+      }
+
+      &.paused {
+        /* paused / disconnected: resaltado */
+        border-color: color.mix($orange-500, $ink-1000, 40%);
+        background: color.mix($orange-500, $ink-1000, 12%);
+
+        .SystemMenu-label {
+          color: $cream-100;
+        }
+      }
+
+      &.busy {
+        border-color: color.mix(#e6b84d, $ink-1000, 40%);
+        background: color.mix(#e6b84d, $ink-1000, 10%);
+
+        .SystemMenu-label {
+          color: color.mix($cream-100, #e6b84d, 40%);
+        }
+      }
+
+      &.failed {
+        border-color: color.mix(#c45c4a, $ink-1000, 50%);
+        background: color.mix(#c45c4a, $ink-1000, 12%);
+
+        .SystemMenu-label {
+          color: color.mix($cream-100, #c45c4a, 35%);
+        }
+      }
+    }
+
+    &.cast {
+      &.recording {
+        border-color: color.mix(#c45c4a, $ink-1000, 50%);
+        background: color.mix(#c45c4a, $ink-1000, 14%);
+
+        .SystemMenu-label {
+          color: color.mix($cream-100, #c45c4a, 20%);
+        }
+      }
+
+      &.ready {
+        .SystemMenu-label {
+          color: color.mix($cream-100, $orange-500, 20%);
+        }
+      }
+    }
+
+  }
+
+  box.SystemMenu-row.cast {
+    min-height: 32px;
+    padding: 0;
+    border-radius: 7px;
+    color: $panel-label;
+    border: 1px solid transparent;
+    background: transparent;
+
+    button.SystemMenu-row-icon-btn {
+      padding: 5px 8px 5px 10px;
+      border-radius: 7px 0 0 7px;
+      border: none;
+      background: transparent;
+
+      &:hover {
+        background: color.mix($cream-100, $ink-1000, 10%);
+      }
+    }
+
+    button.SystemMenu-row-text-btn {
+      padding: 5px 10px 5px 6px;
+      border-radius: 0 7px 7px 0;
+      border: none;
+      background: transparent;
+
+      &:hover {
+        background: color.mix($cream-100, $ink-1000, 10%);
+      }
+    }
+
+    &.recording {
+      border-color: color.mix(#c45c4a, $ink-1000, 50%);
+      background: color.mix(#c45c4a, $ink-1000, 14%);
+
+      .SystemMenu-label {
+        color: color.mix($cream-100, #c45c4a, 20%);
+      }
+    }
+
+    &.ready {
+      .SystemMenu-label {
+        color: color.mix($cream-100, $orange-500, 20%);
+      }
+    }
+  }
+
+  .SystemMenu-label {
+    font-size: 0.88em;
+    font-weight: 500;
+    color: $panel-label;
+    letter-spacing: 0.01em;
+  }
+
+  /* Bottom power strip: two icon-only buttons side by side */
+  .SystemMenu-power {
+    margin-top: 2px;
+    padding: 2px 0 0;
+  }
+
+  button.SystemMenu-power-btn {
+    min-height: 34px;
+    min-width: 48px;
+    padding: 6px 12px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+    }
+
+    &.reboot:hover {
+      border-color: color.mix(#e6b84d, $ink-1000, 45%);
+      background: color.mix(#e6b84d, $ink-1000, 14%);
+    }
+
+    &.poweroff:hover {
+      border-color: color.mix(#c45c4a, $ink-1000, 50%);
+      background: color.mix(#c45c4a, $ink-1000, 16%);
+    }
+  }
+
+  /* Confirm step after Restart / Power off */
+  .SystemMenu-confirm {
+    padding: 2px 2px 0;
+    min-width: 168px;
+  }
+
+  .SystemMenu-confirm-title {
+    font-size: 0.95em;
+    font-weight: 700;
+    color: $cream-100;
+    letter-spacing: 0.02em;
+  }
+
+  .SystemMenu-confirm-body {
+    font-size: 0.8em;
+    font-weight: 500;
+    color: color.mix($cream-100, $warm-200, 45%);
+    padding: 0 2px 2px;
+  }
+
+  .SystemMenu-confirm-actions {
+    margin-top: 2px;
+  }
+
+  button.SystemMenu-confirm-cancel,
+  button.SystemMenu-confirm-ok {
+    min-height: 30px;
+    min-width: 72px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: $panel-label;
+
+    label {
+      font-size: 0.88em;
+      font-weight: 600;
+    }
+  }
+
+  button.SystemMenu-confirm-cancel {
+    border-color: color.mix($cream-100, $ink-1000, 14%);
+    background: color.mix($cream-100, $ink-1000, 4%);
+
+    &:hover {
+      border-color: color.mix($cream-100, $ink-1000, 28%);
+      background: color.mix($cream-100, $ink-1000, 8%);
+    }
+  }
+
+  button.SystemMenu-confirm-ok {
+    &.reboot {
+      border-color: color.mix(#e6b84d, $ink-1000, 45%);
+      background: color.mix(#e6b84d, $ink-1000, 14%);
+
+      label {
+        color: color.mix($cream-100, #e6b84d, 35%);
+      }
+
+      &:hover {
+        border-color: color.mix(#e6b84d, $ink-1000, 65%);
+        background: color.mix(#e6b84d, $ink-1000, 24%);
+      }
+    }
+
+    &.poweroff {
+      border-color: color.mix(#c45c4a, $ink-1000, 50%);
+      background: color.mix(#c45c4a, $ink-1000, 16%);
+
+      label {
+        color: color.mix($cream-100, #c45c4a, 30%);
+      }
+
+      &:hover {
+        border-color: color.mix(#c45c4a, $ink-1000, 70%);
+        background: color.mix(#c45c4a, $ink-1000, 28%);
+      }
+    }
   }
 }
 
@@ -546,6 +1004,72 @@ window.RecPanel {
   }
 }
 
+/* Super+L LIVE — color from SSOT ui.color (worker → JSON → poll) */
+.LiveModeIndicator {
+  margin: 0 4px;
+  padding: 2px 8px 2px 3px;
+  border-radius: 6px;
+  animation: none;
+
+  &.state-off {
+    opacity: 0;
+  }
+
+  &.state-on {
+    opacity: 1;
+  }
+
+  /* default / orange */
+  &.state-orange,
+  &.state-on:not(.state-green) {
+    border: 1px solid rgba(255, 140, 66, 0.95);
+    background: rgba(255, 140, 66, 0.28);
+    .LiveModeIndicator-label {
+      color: #ff8c42;
+    }
+  }
+
+  &.state-green {
+    border: 1px solid rgba(80, 220, 140, 0.95);
+    background: rgba(40, 160, 100, 0.28);
+    .LiveModeIndicator-label {
+      color: #5cff9a;
+    }
+  }
+
+  &-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+}
+
+/* Super+M REC mode (under construction) — visible arm only */
+.RecModeIndicator {
+  margin: 0; /* gap = Bar-end spacing only */
+  /* keep right room for "REC" label */
+  padding: 2px 8px 2px 3px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 140, 66, 0.95);
+  background: rgba(255, 140, 66, 0.28);
+  animation: none;
+
+  &.state-off {
+    opacity: 0;
+  }
+
+  &.state-on {
+    opacity: 1;
+  }
+
+  &-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    color: #ff8c42;
+    letter-spacing: 0.08em;
+  }
+}
+
 .DictationIndicator {
   margin: 0 4px;
   padding: 2px 8px;
@@ -631,3 +1155,291 @@ window.RecPanel {
     letter-spacing: 0.08em;
   }
 }
+
+// kodexBot chip — SSOT: $XDG_RUNTIME_DIR/kodexbot_state.json @150ms.
+// OFF (file absent) = widget not rendered at all.
+// Same hitbox/border standard as Clock + LocalLlm (22px, 2px border, radius 6px).
+// BOX tone: active → orange · active+voice → green. MIC color: gray/orange/green/red.
+.KodexbotChip {
+  margin: 0; /* gap = Bar-end spacing only */
+  padding: 1px 6px;
+  min-height: 22px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background: transparent;
+
+  image {
+    color: rgba(160, 160, 160, 0.5); // off: gray 50% (widget hidden anyway)
+  }
+
+  // BOX = the mode (user spec 2026-08-01)
+  &.listening {  // active, commands only
+    border-color: rgba(255, 140, 66, 0.85);
+    background: rgba(255, 140, 66, 0.14);
+  }
+
+  &.dictating {  // verbose dictator mode — typing each word
+    border-color: rgba(123, 201, 111, 0.85);
+    background: rgba(123, 201, 111, 0.14);
+  }
+
+  &.fallback {  // ochre: last action resolved by the LLM fallback (macro)
+    border-color: rgba(204, 119, 34, 0.9);
+    background: rgba(204, 119, 34, 0.16);
+  }
+
+  // MIC tones are baked into icon FILES (mic-{idle,voice,muted,error}.svg) —
+  // GTK does not tint file SVGs via CSS `color`; kept here for reference:
+  // idle=orange voice=green muted=black error=red, off=gray.
+}
+
+/* SystemMenu Cast Section & Square Buttons */
+.SystemMenu-cast-section {
+  padding: 4px 10px;
+  margin: 2px 0;
+
+  .SystemMenu-cast-buttons {
+    margin-top: 4px;
+  }
+}
+
+button.SystemMenu-square-btn {
+  min-width: 44px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 1px solid color.mix($cream-100, $warm-200, 20%);
+  background: transparent;
+
+  &:hover:not(.disabled) {
+    background: color.mix($cream-100, $ink-1000, 6%);
+    border-color: color.mix($orange-500, $ink-1000, 30%);
+  }
+
+  &:active:not(.disabled) {
+    background: color.mix($orange-500, $ink-1000, 14%);
+  }
+
+  &.set.active {
+    border-color: color.mix($orange-500, $ink-1000, 45%);
+    background: color.mix($orange-500, $ink-1000, 10%);
+  }
+
+  &.rec.recording {
+    background: color.mix(#c45c4a, $ink-1000, 22%);
+    border-color: color.mix(#c45c4a, $ink-1000, 65%);
+  }
+
+  &.disabled {
+    opacity: 0.35;
+    border-color: transparent;
+    background: transparent;
+  }
+}
+
+window.CastPopupModal {
+  background: rgba(0, 0, 0, 0.45);
+
+  .CastPopup-card {
+    background: $fill-inactive;
+    border: 1px solid $orange-500;
+    border-radius: 12px;
+    padding: 20px 24px;
+    min-width: 280px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+
+    .CastPopup-title {
+      font-size: 1.1em;
+      font-weight: 700;
+      color: $cream-100;
+    }
+
+    .CastPopup-section-label {
+      font-size: 0.75em;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: color.mix($cream-100, $warm-200, 45%);
+    }
+
+    button.CastPopup-opt {
+      min-height: 32px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid color.mix($cream-100, $warm-200, 25%);
+      background: color.mix($cream-100, $ink-1000, 5%);
+      color: $panel-label;
+      font-weight: 600;
+
+      &:hover {
+        background: color.mix($orange-500, $ink-1000, 16%);
+        border-color: $orange-500;
+      }
+
+      &.active {
+        background: color.mix($orange-500, $ink-1000, 25%);
+        border-color: $orange-500;
+        color: $cream-100;
+      }
+    }
+
+    .CastPopup-sub-header {
+      font-size: 0.72em;
+      font-weight: 700;
+      color: color.mix($cream-100, $orange-500, 40%);
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+
+    button.CastPopup-panel-line {
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 5px;
+      border: 1px solid color.mix($cream-100, $warm-200, 15%);
+      background: color.mix($cream-100, $ink-1000, 4%);
+
+      &:hover {
+        background: color.mix($orange-500, $ink-1000, 18%);
+        border-color: color.mix($orange-500, $cream-100, 50%);
+      }
+
+      .CastPopup-panel-title {
+        font-size: 0.82em;
+        color: $cream-100;
+        font-weight: 500;
+      }
+    }
+
+    button.CastPopup-action-btn {
+      min-height: 32px;
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: 1px solid color.mix($orange-500, $ink-1000, 40%);
+      background: color.mix($orange-500, $ink-1000, 15%);
+      color: $cream-100;
+      font-weight: 700;
+
+      &:hover:not(.disabled) {
+        background: color.mix($orange-500, $ink-1000, 25%);
+        border-color: $orange-500;
+      }
+
+      &.rec.recording {
+        background: color.mix(#c45c4a, $ink-1000, 30%);
+        border-color: #c45c4a;
+        color: #ff6b6b;
+      }
+
+      &.disabled {
+        opacity: 0.4;
+        border-color: transparent;
+        background: transparent;
+      }
+    }
+
+    button.CastPopup-close {
+      margin-top: 4px;
+      min-height: 28px;
+      padding: 4px 16px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: color.mix($cream-100, $ink-1000, 8%);
+      color: color.mix($cream-100, $warm-200, 40%);
+
+      &:hover {
+        background: color.mix($cream-100, $ink-1000, 15%);
+        color: $cream-100;
+      }
+    }
+  }
+}
+
+// Cast [*REC] chip — FSM-driven colors (see cast.ts CastPhase)
+//   armed    gray   target_set
+//   thinking yellow starting | stopping
+//   recording red   live
+//   failed   dark   brief hold then re-arm
+button.CastRecChip {
+  margin: 0; /* gap = Bar-end spacing only */
+  padding: 2px 6px;
+  min-height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(160, 160, 160, 0.55);
+  background: rgba(120, 120, 120, 0.16);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+
+  .CastRecChip-bracket,
+  .CastRecChip-text {
+    font-family: monospace;
+    font-size: 0.82em;
+    font-weight: 800;
+    color: #9a9a9a;
+    letter-spacing: 0.04em;
+  }
+
+  .CastRecChip-dot {
+    margin: 0 1px 0 0;
+    opacity: 0.75;
+  }
+
+  /* target_set — ready to start */
+  &.armed {
+    border-color: rgba(160, 160, 160, 0.7);
+    background: rgba(100, 100, 100, 0.22);
+
+    &:hover {
+      background: rgba(140, 140, 140, 0.32);
+      border-color: rgba(190, 190, 190, 0.85);
+
+      .CastRecChip-bracket,
+      .CastRecChip-text {
+        color: #c8c8c8;
+      }
+    }
+  }
+
+  /* starting | stopping — yellow thinking */
+  &.thinking {
+    border-color: rgba(230, 180, 40, 0.9);
+    background: rgba(210, 160, 30, 0.22);
+
+    .CastRecChip-bracket,
+    .CastRecChip-text {
+      color: #f0c040;
+    }
+
+    .CastRecChip-dot {
+      opacity: 1;
+    }
+  }
+
+  /* recording — live, click stops */
+  &.recording {
+    border-color: rgba(220, 60, 60, 0.85);
+    background: rgba(220, 60, 60, 0.18);
+
+    .CastRecChip-bracket,
+    .CastRecChip-text {
+      color: #ff5555;
+    }
+
+    .CastRecChip-dot {
+      opacity: 1;
+    }
+
+    &:hover {
+      background: rgba(220, 60, 60, 0.35);
+      border-color: rgba(255, 80, 80, 0.95);
+    }
+  }
+
+  &.failed {
+    border-color: rgba(160, 40, 40, 0.8);
+    background: rgba(80, 20, 20, 0.35);
+
+    .CastRecChip-bracket,
+    .CastRecChip-text {
+      color: #cc6666;
+    }
+  }
+}
+

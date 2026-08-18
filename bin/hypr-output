@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# hypr-output — resolve physical panel → live Hyprland connector name
+#
+# DRM names move when GPU probe order changes (kernel 7.1.8: ASUS is HDMI-A-1).
+# Match by EDID model. Fallback: old HDMI-A-2 / HDMI-A-1 map.
+#
+# Usage:
+#   hypr-output portrait|asus|left|bar
+#   hypr-output landscape|aoc|right
+set -euo pipefail
+
+role="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+case "$role" in
+  portrait|asus|left|bar|ags|vertical|side|1|panel-left|panel_left) needle=VA27EHF; fallback=HDMI-A-2 ;;
+  landscape|aoc|right|main|primary|horizontal|0|panel-right|panel_right) needle=G2790G4; fallback=HDMI-A-1 ;;
+  ""|-h|--help)
+    echo "usage: hypr-output portrait|landscape|asus|aoc|left|right" >&2
+    exit 2
+    ;;
+  *)
+    echo "$1"
+    exit 0
+    ;;
+esac
+
+hyprctl monitors -j 2>/dev/null | NEEDLE="$needle" FALLBACK="$fallback" python3 -c '
+import json, os, sys
+needle = os.environ["NEEDLE"].upper()
+fallback = os.environ["FALLBACK"]
+try:
+    mons = json.load(sys.stdin)
+except Exception:
+    print(fallback)
+    raise SystemExit(0)
+for m in mons:
+    blob = " ".join([
+        str(m.get("name") or ""),
+        str(m.get("model") or ""),
+        str(m.get("description") or ""),
+        str(m.get("make") or ""),
+    ]).upper()
+    if needle in blob:
+        print(m.get("name") or fallback)
+        raise SystemExit(0)
+print(fallback)
+'

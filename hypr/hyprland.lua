@@ -1,19 +1,59 @@
-hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x420", scale = 1, transform = 0 })
-hl.monitor({ output = "HDMI-A-2", mode = "preferred", position = "-1080x0", scale = 1, transform = 1 })
+-- Bind by panel description, not DRM connector name.
+-- After kernel 7.1.8 the AMD card is card0; NVIDIA may be absent until DKMS
+-- builds. Connector names then move (ASUS became HDMI-A-1). desc: stays stable.
+local asus = "desc:ASUSTek COMPUTER INC VA27EHF"
+local aoc  = "desc:AOC G2790G4"
+
+hl.monitor({ output = asus, mode = "preferred", position = "-1080x0", scale = 1, transform = 1 })
+hl.monitor({ output = aoc,  mode = "preferred", position = "0x420",   scale = 1, transform = 0 })
+
+-- Workspaces pinned to panels (portrait left / landscape right).
+-- Defaults shown at login: 1 on ASUS, 4 on AOC.
+hl.workspace_rule({ workspace = "1", monitor = asus, default = true,  persistent = true })
+hl.workspace_rule({ workspace = "2", monitor = asus, persistent = true })
+hl.workspace_rule({ workspace = "3", monitor = asus, persistent = true })
+hl.workspace_rule({ workspace = "4", monitor = aoc,  default = true,  persistent = true })
+hl.workspace_rule({ workspace = "5", monitor = aoc,  persistent = true })
+hl.workspace_rule({ workspace = "6", monitor = aoc,  persistent = true })
+
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("LIBVA_DRIVER_NAME", "nvidia")
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
 hl.env("NVD_BACKEND", "direct")
--- NVIDIA (card0) primary render + amdgpu (card1) portrait scanout.
+-- NVIDIA (01:00.0) primary render + amdgpu Renoir (08:00.0) portrait scanout.
+-- Aquamarine splits AQ_DRM_DEVICES on ':'. PCI by-path names contain ':'
+-- (pci-0000:01:00.0) so they abort the compositor (login flash / GDM loop).
+-- Resolve by-path → /dev/dri/cardN here. Fallback is the 2026-08-18 map
+-- (NVIDIA=card1, amdgpu=card0) after kernel 7.1.8.
 -- Without linear blit, Aquamarine fails dmabuf import into the secondary
 -- renderer (EGL_BAD_MATCH) and the panel stays powered with no usable frame.
-hl.env("AQ_DRM_DEVICES", "/dev/dri/card0:/dev/dri/card1")
+local function drm_card(pci, fallback)
+    local link = "/dev/dri/by-path/pci-" .. pci .. "-card"
+    if io and io.popen then
+        local handle = io.popen("readlink -f -- " .. link)
+        if handle then
+            local path = handle:read("*l")
+            handle:close()
+            if path and path:match("^/dev/dri/card%d+$") then
+                return path
+            end
+        end
+    end
+    return fallback
+end
+hl.env("AQ_DRM_DEVICES", drm_card("0000:01:00.0", "/dev/dri/card1") .. ":" .. drm_card("0000:08:00.0", "/dev/dri/card0"))
 hl.env("AQ_FORCE_LINEAR_BLIT", "1")
 
 local terminal    = "kitty"
 local fileManager = "nautilus"
 local browser     = "brave-browser"
+-- Brave PWA: WhatsApp Web (desktop: brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default)
+local whatsapp    = "brave-browser --profile-directory=Default --app-id=hnpfjngllnobngcgfapefoaidbinmjnm"
+-- Brave PWA: YouTube (desktop/app: brave-agimnkijcaahngcdmfeangaknmldooml-Default)
+local youtube     = "brave-browser --profile-directory=Default --app-id=agimnkijcaahngcdmfeangaknmldooml"
+-- Brave PWA: Grok Web (desktop: brave-ggjocahimgaohmigbfhghnlfcnjemagj-Default · grok.com)
+local grokWeb     = "brave-browser --profile-directory=Default --app-id=ggjocahimgaohmigbfhghnlfcnjemagj"
 local menu        = "hyprlauncher"
 local anyrun      = "/home/kodex/.local/bin/anyrun-launch"
 local shot        = "/home/kodex/.local/bin/hypr-screenshot"
@@ -27,6 +67,7 @@ local zoomToggle  = "/bin/bash /home/kodex/.local/bin/hypr-zoom-toggle"
 local kdxShare    = "/home/kodex/.local/bin/kdx-share"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
+local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy --dangerously-skip-permissions --fullscreen"
 local mainMod     = "SUPER"
 local resizeStep  = 40
 
@@ -39,7 +80,7 @@ local hyprlandWallpaperDisabled = 0
 -- and updated. AQ_FORCE_LINEAR_BLIT already covers secondary-scanout import.
 local hardwareCursorsDisabled   = false
 local cursorUseCpuBuffer        = true
-local cursorDefaultMonitor      = "HDMI-A-2"
+local cursorDefaultMonitor      = "desc:ASUSTek COMPUTER INC VA27EHF"
 local duckyPhantomPointer       = "ducky-ducky-one2-sf-rgb-1"
 local wirelessPhantomPointer    = "logitech-wireless-mouse-1"
 
@@ -197,7 +238,33 @@ hl.window_rule({
 hl.window_rule({
     name    = "grok-cli-screen-2",
     match   = { class = "grok-cli" },
-    monitor = "HDMI-A-2",
+    monitor = asus,
+})
+
+hl.window_rule({
+    name    = "agy-cli-screen-2",
+    match   = { class = "agy-cli" },
+    monitor = asus,
+})
+
+-- OBS control surface on right landscape (AOC / ws 6).
+-- no_screen_share: PipeWire output capture of AOC must not recurse OBS UI
+-- into source "right horizontal" (black rect instead of hall-of-mirrors).
+-- Content for that source: workspaces 4–5 while OBS stays on 6.
+hl.window_rule({
+    name             = "obs-control-right",
+    match            = { class = "com.obsproject.Studio" },
+    monitor          = aoc,
+    workspace        = "6 silent",
+    no_screen_share  = true,
+})
+
+-- Project Zomboid: game surface lives on right landscape ws 6.
+hl.window_rule({
+    name      = "project-zomboid-right",
+    match     = { class = "Project Zomboid" },
+    monitor   = aoc,
+    workspace = "6 silent",
 })
 
 -- kdx-share: menu floats; composite on headless kdxShare (class = app-id)
@@ -248,17 +315,31 @@ end
 
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
+hl.bind(mainMod .. " + SHIFT + G", hl.dsp.exec_cmd(grokWeb))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
+hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(whatsapp))
+hl.bind(mainMod .. " + Y", hl.dsp.exec_cmd(youtube))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(anyrun))
 -- Exit = Super+Shift+E (deliberate chord). Super+M = REC mode UI toggle (WIP).
 hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(recMode .. " toggle"))
-hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(liveMode .. " toggle"))
+-- FREE 2026-08-01: Super+L liberada — reservada para una futura versión de kodexBot.
+-- (era: hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(liveMode .. " toggle")))
 -- PAUSED 2026-07-28: real voice workers under work — UI mode toggles only (above).
 -- hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictate .. " toggle"))
 -- hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(voiceLive .. " toggle"))
+-- CUTOVER 2026-08-01: kodexBot (github.com/kodexArg/kodexBot) replaces dictate/voice-live.
+-- Super+D = hard switch (off<->listening).
+-- Super+Shift+D / Super+Ctrl+D = mode toggle (listening orange <-> dictating green).
+-- Super+Ctrl+Shift+D = absolute enter dictating (type at cursor).
+-- KODEXBOT_LLM_URL: default is :8080 (OpenAI-compatible contract); local-llm serves :28000.
+local kodexbot = "env KODEXBOT_LLM_URL=http://127.0.0.1:28000/v1 /srv/dev/Dev/personal/kodexBot/.venv/bin/kodexbot"
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(kodexbot .. " toggle"))
+hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd(kodexbot .. " mode"))
+hl.bind(mainMod .. " + CTRL + D", hl.dsp.exec_cmd(kodexbot .. " mode"))
+hl.bind(mainMod .. " + CTRL + SHIFT + D", hl.dsp.exec_cmd(kodexbot .. " dictating"))
 
 -- Close vs kill (same key family): Super+C polite close · Super+Ctrl+C force kill.
 -- Super+Ctrl+X kept as alias for muscle memory.
@@ -283,6 +364,8 @@ hl.bind("CTRL + Print",        hl.dsp.exec_cmd(shot .. " region"))
 hl.bind("ALT + Print",         hl.dsp.exec_cmd(shot .. " full"))
 hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(shot .. " monitor active"))
 
+-- Disk screencast (mp4). Super+Ctrl+R is kdx-share transmit — do not collide.
+-- ADR 20260806-hypr-record-disk-screencast · skill references/record.md
 hl.bind(mainMod .. " + SHIFT + R",     hl.dsp.exec_cmd(rec .. " toggle region"))
 hl.bind(mainMod .. " + SHIFT + ALT + R", hl.dsp.exec_cmd(rec .. " toggle window"))
 
@@ -332,8 +415,7 @@ hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
 hl.bind(mainMod .. " + mouse:272",  hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273",  hl.dsp.window.resize(), { mouse = true })
--- MMB (274): drag without mod; Super+MMB same (wheel click)
-hl.bind("mouse:274",               hl.dsp.window.drag(),   { mouse = true })
+-- MMB (274): plain click passes through; Super+MMB drags (frees middle-click)
 hl.bind(mainMod .. " + mouse:274", hl.dsp.window.drag(),   { mouse = true })
 
 hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
@@ -355,7 +437,8 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE DISPLAY")
     hl.exec_cmd("systemctl --user start ags-hyprland.service")
     hl.exec_cmd(terminal)
-    hl.exec_cmd("GSK_RENDERER=gl /home/kodex/.cargo/bin/anyrun daemon")
+    -- anyrun-launch sets PATH incl. /usr/games (Steam game .desktop Exec=steam …)
+    hl.exec_cmd("/home/kodex/.local/bin/anyrun-launch daemon")
 end)
 
 -- Dual-GPU escape: wake + soft-hotplug portrait CRTC + re-layout + AGS

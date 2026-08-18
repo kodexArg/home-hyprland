@@ -41,25 +41,50 @@ Do **not** steal **Super+R** (hyprlauncher). New share picker is **Super+Ctrl+R*
 | Bind | Tool | Role |
 |---|---|---|
 | **Super+R** | `hyprlauncher` | App launcher — **keep free of share/record** |
-| Super+Shift+R | `hypr-record toggle region` | Record region → `~/Videos/Screencasts/` |
-| Super+Shift+Alt+R | `hypr-record toggle window` | Record focused window |
-| **Super+Ctrl+R** | **`kdx-share` menu** | **Pick panel(s) to transmit (portal share prep)** |
+| Super+Shift+R | `hypr-record toggle region` | **Disk** record region → `~/Videos/Screencasts/` |
+| Super+Shift+Alt+R | `hypr-record toggle window` | **Disk** record focused window |
+| **Super+Ctrl+R** | **`kdx-share` menu** | **Transmit** panel(s) (OBS / optional cam) — **not** mp4 |
+
+Also: **Super+M** = `kdx-rec-mode` (WIP REC chip, not screencast). **Super+Shift+E** = exit.
+
+Full runbook: **`references/record.md`** · vault `~/Documents/System/hypr-record.md` · ADR `20260806-hypr-record-disk-screencast`.
 
 ---
 
-## 3. Peer features (caffeine · LLM · share · k)
+## 3. Peer features (caffeine · LLM · share · record · k)
 
 | Feature | Entry | SSOT / state | UI |
 |---|---|---|---|
-| **Caffeine** | bar click · `ags request caffeine` | process table + FSM phases | AGS `widget/caffeine.ts` |
+| **Caffeine** | bar click · `ags request caffeine` | process table + FSM phases | AGS `widget/caffeine.ts` (parked UI may still IPC) |
 | **Local LLM** | bar brain click | `~/.config/local-llm/selected-model` + unit | AGS `LocalLlm.tsx` overlay |
+| **RAM track** | passive · `ags request ram-status` | `/proc/meminfo` (MemTotal−MemAvailable) | `ram.ts` FSM + **RamTrack** 3-pip (left of brain) · ADR `20260807` |
+| **Disk record** | Super+Shift+R… · CLI · SystemMenu **Cast** | `$XDG_RUNTIME_DIR/hypr-record.*` | `cast.ts` FSM + **CastRecChip**; RecMenu parked |
 | **kdx-share** | **Super+Ctrl+R** · `kdx-share` | `$XDG_RUNTIME_DIR/kdx-share.state` | GTK4/Adw: surface OBS + opt-in cam `/dev/video10` |
+| **REC mode WIP** | Super+M · `kdx-rec-mode` | `/tmp/kdx_rec_mode.json` | `RecModeIndicator` only |
 | **k** | CLI `k ?` / `k !` | `k-agent.service` + sock | Kitty inject (no desktop shell) |
-| **Dictation** | Super+D | `/tmp/dictate_state.json` | AGS DictationIndicator |
-| **Voice live** | Super+L | `/tmp/voice_live_state.json` | AGS LiveIndicator |
+| **Dictation / kodexBot** | Super+D family | kodexBot state (see live lua) | KodexbotChip |
 | **Zoom** | Super+Ctrl+Z | modeset roomy↔dense | toast via hyprctl |
 | **Monitor heal** | Super+Shift+O · hypridle resume | dual-GPU CRTC + AGS | notify; log `$XDG_RUNTIME_DIR/hypr-monitor-heal.log` |
-| **Record** | Super+Shift+R… | `$XDG_RUNTIME_DIR/hypr-record.*` | (RecMenu parked) |
+
+### 3b. Voice Lane B ↔ this surface (`kdx-voice-live`)
+
+**Same inventory, allowlisted only.** Code: `~/Dev/this-computer/kdx-voice-live/src/kdx_voice_live/actions/{host_catalog,dispatch}.py`.  
+Rules-first (ES) + soft LLM `:28004` on ≤10-word tail. Pure OS cmds **skip paste** (not typed as dictation).
+
+| Voice action | Host target |
+|---|---|
+| `zoom` | `hypr-zoom-toggle` |
+| `heal` | `hypr-monitor-heal manual` |
+| `reveal` | `hypr-reveal-all` |
+| `screenshot` | `hypr-screenshot` window\|region\|full\|monitor\|panel |
+| `record` | `hypr-record` toggle/stop |
+| `share` | `kdx-share` vertical\|horizontal\|both\|stop\|menu |
+| `caffeine` / `bar` | `ags request caffeine*` / `bar-*` |
+| `launch` | kitty · brave · whatsapp · nautilus · anyrun · hyprlauncher · grok |
+| `window` | close · float · maximize · togglesplit (**no** force-kill, **no** exit) |
+| `special` / workspaces / volume / `llm` | hypr special:magic · focus/move ws · wpctl · `local-llm.service` |
+
+**Explicitly out of voice:** session exit, force-kill, free shell, arbitrary `hyprctl dispatch`.
 
 ---
 
@@ -82,7 +107,8 @@ Do **not** steal **Super+R** (hyprlauncher). New share picker is **Super+Ctrl+R*
 | Binary | Purpose |
 |---|---|
 | `hypr-screenshot` | grim/slurp capture |
-| `hypr-record` | wf-recorder session |
+| `hypr-record` | **Disk** screencast (wf-recorder → mp4) — see `references/record.md` |
+| `kdx-rec-mode` | Super+M WIP REC chip + worker |
 | `hypr-zoom-toggle` | portrait scale 1↔1.5 + layer resync |
 | `hypr-monitor-heal` | wake A-1 + soft-hotplug A-2 CRTC + AGS (never DPMS A-2) |
 | `hypr-reveal-all` | Super+A gather windows |
@@ -129,4 +155,18 @@ kdx-share stop | status | inventory
 **Resources (defaults):** single cam 15 fps native · both 12 fps scale 0.5 · NV12/yuv420p.  
 Env: `KDX_SHARE_FPS`, `KDX_SHARE_FPS_BOTH`, `KDX_SHARE_BOTH_SCALE`, `KDX_SHARE_V4L2`.  
 **Not** hypr-record (that writes mp4). Loopback: `v4l2loopback` video_nr=10, udev + modules-load.  
-Log: `$XDG_RUNTIME_DIR/kdx-share.log`. ADR: `20260726-hyprland-super-ctrl-r-kdx-share`.
+Log: `$XDG_RUNTIME_DIR/kdx-share.log`. ADR: `20260726-hyprland-super-ctrl-r-kdx-share`.  
+Disk record: `references/record.md` · ADR `20260806-hypr-record-disk-screencast`.
+
+---
+
+## 8. Disk record — hypr-record (mp4)
+
+```bash
+hypr-record status|inventory|stop
+hypr-record toggle region|window
+hypr-record panel asus|aoc|HDMI-A-2|HDMI-A-1
+```
+
+Physical aliases (2026-08-06): `left`/`asus`/`bar` → HDMI-A-2 · `right`/`aoc` → HDMI-A-1. Brand names still fine.  
+UI: SystemMenu → Cast · bar `CastRecChip` while active. Full detail: `references/record.md`.

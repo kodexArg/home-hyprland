@@ -104,7 +104,9 @@ finish_ok() {
 }
 
 # Resolve human aliases → compositor output name (this host dual-panel map).
-# Layout: HDMI-A-1 AOC landscape left · HDMI-A-2 ASUS portrait right (transform 3).
+# Physical layout (SSOT, same as hypr-record):
+#   LEFT  = HDMI-A-2 ASUS portrait  @ x=-1080  (+ AGS bar)
+#   RIGHT = HDMI-A-1 AOC  landscape @ x=0
 resolve_output() {
   local key
   key="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
@@ -120,11 +122,11 @@ if ms: print(ms[0]["name"]); sys.exit(0)
 sys.exit(1)
 ' 2>>"$LOG"
       ;;
-    left|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-left|panel_left)
-      echo "HDMI-A-1"
+    left|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-left|panel_left)
+      /home/kodex/.local/bin/hypr-output portrait
       ;;
-    right|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-right|panel_right)
-      echo "HDMI-A-2"
+    right|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-right|panel_right)
+      /home/kodex/.local/bin/hypr-output landscape
       ;;
     hdmi-a-1|HDMI-A-1)
       echo "HDMI-A-1"
@@ -182,10 +184,11 @@ print("=== panels (this host) ===")
 for m in ms:
     name = m["name"]
     mid = m.get("id")
-    if name == "HDMI-A-1":
-        role = "left / AOC landscape"
-    elif name == "HDMI-A-2":
-        role = "right / ASUS portrait + AGS bar"
+    # Physical: ASUS HDMI-A-2 LEFT (x negative), AOC HDMI-A-1 RIGHT
+    if name == "HDMI-A-2":
+        role = "LEFT / ASUS portrait + AGS bar"
+    elif name == "HDMI-A-1":
+        role = "RIGHT / AOC landscape"
     else:
         role = "other"
     foc = " FOCUSED" if m.get("focused") else ""
@@ -206,7 +209,7 @@ for m in ms:
             title = (c.get("title") or "")[:60]
             cws = (c.get("workspace") or {}).get("name")
             print(f"    - class={cls!r} title={title!r} ws={cws}")
-print("\nAliases: left|aoc → HDMI-A-1 · right|asus|bar → HDMI-A-2 · active → focused")
+print("\nAliases: left|asus|bar → HDMI-A-2 · right|aoc → HDMI-A-1 · active → focused")
 print("Capture: hypr-screenshot --agent panel left|right|bar|window|full")
 PY
 }

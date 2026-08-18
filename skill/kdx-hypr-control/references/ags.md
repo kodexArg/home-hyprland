@@ -114,8 +114,10 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
   @girs/              # generated types
   icons/              # cream monochrome SVGs (image file=, no icon theme)
   widget/
-    Bar.tsx           # Volume + LocalLlm + Clock chip layout
-    caffeine.ts       # caffeine FSM (SSOT=process table, tick reconcile)
+    Bar.tsx           # Volume + RamTrack + LocalLlm + Clock + SystemMenu …
+    caffeine.ts       # caffeine FSM (SSOT=process table, tick reconcile) — UI parked
+    ram.ts            # RAM track FSM (SSOT=/proc/meminfo, 2s tick)
+    RamTrack.tsx      # 3-pip battery-style usage stack (left of brain)
     bar-mode.ts       # always | temp | hidden + edge poll + peek
     LocalLlm.tsx      # brain menu: GGUF model picker + local-llm.service FSM
 ```
@@ -134,7 +136,8 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
 | `bar-peek` / `peek` | `peekTemp()` | Super_L / Super_R (`non_consuming`) |
 | `bar-mode` | `getBarMode()` | (debug) |
 | `bar-set <mode>` | `setBarMode()` | (scripted) |
-| `caffeine` / `caffeine-toggle` | `toggleCaffeine()` | (bar click) |
+| `caffeine` / `caffeine-toggle` | parked | (was bar click) |
+| `ram-status` / `ram` | `getRamStatus()` | debug snapshot |
 | `capture-toggle` / `capture` | `toggleCapture()` | ⚠️ **no-op** — ver abajo |
 
 Implemented in `app.ts` → `requestHandler`.
@@ -167,9 +170,35 @@ Default first paint: **`always`** mode — the edge poll does not run until you 
 
 | Region | Content |
 |---|---|
-| start | **Volume** first: output icon, −, custom track, + (AstalWp `defaultSpeaker`) |
+| start | **Volume** (output icon, −, track, + via AstalWp `defaultSpeaker`) |
 | center | empty |
-| end | **LiveIndicator** + **DictationIndicator** + **LocalLlm** brain button + **ClockCaffeine** cluster (`%H:%M` + Calendar popover + cup) |
+| end | **KodexbotChip** + **RecModeIndicator** (Super+M WIP) + **CastRecChip** (while `hypr-record` active) + **RamTrack** (3-pip FSM) + **LocalLlm** brain + **Clock** + **SystemMenu** sandwich (extreme right). System menu: **Gabriel-L2TP** · mic mute · **Cast** (`cast.ts` → `hypr-record`) · restart · power off. RecMenu parked. Live/Dictation/caffeine parked or retired. Disk record: `references/record.md` · ADR `20260806-hypr-record-disk-screencast`. RAM: ADR `20260807-ags-ram-track` |
+
+### Status palette (bar chrome — shared)
+
+Recorded in `style.scss` as `$status-*` and aligned with Presentation Orange:
+
+| Token | Hex / value | Use |
+|---|---|---|
+| `$orange-500` | `#ff8c42` | busy / custom (brain thinking, accents) |
+| `$status-gray` | `rgba(160,160,160,0.5)` | off / empty / idle |
+| `$status-green` | `#7bc96f` | ready / low RAM (brain green) |
+| `$status-yellow` | `#e6b84d` | med RAM / loading / reboot warn |
+| `$status-red` | `#c45c4a` | high RAM / failed / ocre-red |
+| `$status-rec` | `#e53935` | live disk REC only |
+
+### RAM track (ADR `20260807-ags-ram-track`)
+
+| Piece | Value |
+|---|---|
+| Files | `widget/ram.ts` (FSM) · `widget/RamTrack.tsx` (UI) |
+| SSOT | `/proc/meminfo` — **used = MemTotal − MemAvailable** |
+| Tick | 2 s reconcile |
+| Placement | end cluster, **immediately left of** LocalLlm brain |
+| Visual | 3 **vertical** bars in a row (16px glyph / 22×22 shell like brain), fill **L→R** via CSS `level-*` + `nth-child` |
+| Phases | `empty` &lt;0.5 · `low` [0.5,4) · `med` [4,8) · `high` ≥8 GiB used · `failed` |
+| Colors | empty gray · low green · med yellow · high red |
+| IPC | `ags request ram-status` |
 
 `CaptureToggle` / `CapturePanel` are written but **commented out in the `end` box
 since 2026-07-17** — both buttons were mocks; the real work is the `Print` binds

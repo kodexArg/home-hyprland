@@ -9,15 +9,21 @@
 |---|---|
 | Super+T | Kitty terminal |
 | Super+G | Grok CLI (kitty class `grok-cli`, forced to HDMI-A-2) |
+| Super+Shift+G | Grok Web (Brave PWA `ggjocahimgaohmigbfhghnlfcnjemagj` · grok.com) |
 | Super+X | Brave browser |
+| Super+W | WhatsApp Web (Brave PWA) |
+| Super+Y | YouTube (Brave PWA `agimnkijcaahngcdmfeangaknmldooml`) |
 | Super+E | Nautilus |
 | Super+R | hyprlauncher (**do not steal** — share is Super+Ctrl+R) |
-| Super+Ctrl+R | `kdx-share menu` — transmit picker (vertical / horizontal / both stack) |
+| Super+Shift+R | `hypr-record toggle region` — **disk** screencast (mp4) |
+| Super+Shift+Alt+R | `hypr-record toggle window` — disk record focused window |
+| Super+Ctrl+R | `kdx-share menu` — **transmit** picker (vertical / horizontal / both stack) — not mp4 |
 | Super+SPACE | anyrun (`~/.local/bin/anyrun-launch`) |
 | Super+C | **Close** window (graceful — app can save/prompt) |
 | Super+Ctrl+C | **Force kill** active window (compositor kills client; no prompt) |
 | Super+Ctrl+X | Force kill (alias of Super+Ctrl+C) |
-| Super+M | Exit (`hyprshutdown` if present, else exit dispatcher) |
+| Super+M | `kdx-rec-mode toggle` — WIP REC mode chip (not exit, not mp4) |
+| Super+Shift+E | Session exit (`hyprshutdown` if present, else exit dispatcher) |
 | Super+V | Toggle float |
 | Super+F | Toggle full panel (maximize / restore) |
 | Super+P | Pseudo (dwindle) |
@@ -46,9 +52,11 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 
 ## Workspaces
 
+**Pinned (2026-08-01):** 1–3 → HDMI-A-2 left · 4–6 → HDMI-A-1 right · defaults **1** and **4** · `persistent`. See `references/this-machine.md`.
+
 | Bind | Action |
 |---|---|
-| Super+1…9,0 | Focus workspace 1–10 |
+| Super+1…9,0 | Focus workspace 1–10 (1–3 left, 4–6 right) |
 | Super+Shift+1…9,0 | Move window to workspace 1–10 |
 | Super+S | Toggle special workspace `magic` (show/hide) |
 | Super+Shift+S | Move window to `special:magic` |
@@ -62,8 +70,7 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 |---|---|
 | Super+LMB (272) | Drag window |
 | Super+RMB (273) | Resize window |
-| MMB (274) | Drag window (no Super) |
-| Super+MMB (274) | Drag window |
+| Super+MMB (274) | Drag window (plain MMB = real middle-click) |
 
 ## Screenshots (grim + slurp)
 
@@ -76,6 +83,17 @@ Temp re-show: cursor top 12px of HDMI-A-2 (transform-aware poll) or Super peek.
 
 Files: `~/Pictures/Screenshots/YYYYMMDD-HHMMSS-<pid>-<rand>.png`.  
 Helper: `~/.local/bin/hypr-screenshot` (`window` \| `region` \| `full` \| `monitor active` \| `panel …`).
+
+## Disk record (wf-recorder → mp4)
+
+| Bind | Action |
+|---|---|
+| Super+Shift+R | `hypr-record toggle region` |
+| Super+Shift+Alt+R | `hypr-record toggle window` |
+
+Files: `~/Videos/Screencasts/`. Helper: `~/.local/bin/hypr-record`.  
+Also: SystemMenu → **Cast** · CLI · voice action `record`.  
+**Not** Super+Ctrl+R (`kdx-share`). Runbook: `references/record.md` · ADR `20260806-hypr-record-disk-screencast`.
 
 ## Media / brightness (locked, repeating where noted)
 
@@ -102,6 +120,7 @@ Helper: `~/.local/bin/hypr-screenshot` (`window` \| `region` \| `full` \| `monit
 | menu | `hyprlauncher` |
 | anyrun | `/home/kodex/.local/bin/anyrun-launch` |
 | grokCli | kitty `--class grok-cli` + `~/.config/kitty/grok.conf` + `~/.local/bin/grok --fullscreen` |
+| grokWeb | Brave PWA app-id `ggjocahimgaohmigbfhghnlfcnjemagj` (Grok Web / grok.com) |
 | agsBin | PATH-prefixed `/usr/local/bin/ags` |
 
 ## Window rules (related)

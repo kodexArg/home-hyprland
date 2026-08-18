@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import style from "./style.scss"
-import Bar, { toggleCapture } from "./widget/Bar"
+import Bar from "./widget/Bar"
 import {
   cycleBarMode,
   getBarMode,
@@ -8,43 +8,60 @@ import {
   setBarMode,
   type BarMode,
 } from "./widget/bar-mode"
-import {
-  getCaffeineStatus,
-  getCaffeineToken,
-  requestCaffeineOff,
-  requestCaffeineOn,
-  toggleCaffeine,
-} from "./widget/caffeine"
+// Caffeine parked (UI off). Restore handlers + import with ClockCaffeine in Bar.tsx.
+// import {
+//   getCaffeineStatus,
+//   getCaffeineToken,
+//   requestCaffeineOff,
+//   requestCaffeineOn,
+//   toggleCaffeine,
+// } from "./widget/caffeine"
+import { toggleRecMenu } from "./widget/RecMenu"
+import { getRamStatus } from "./widget/ram"
+import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
 import GLib from "gi://GLib"
 
-/** Portrait ASUS (Hypr monitor 2 / transform 3). Bar never on HDMI-A-1. */
-const BAR_CONNECTOR = "HDMI-A-2"
+const BAR_MODEL = "VA27EHF"
 
-/** Avoid double-spawn on the same connector. */
 let spawnedFor: string | null = null
 
 function connectorOf(mon: { connector?: string | null }): string {
   return mon.connector ?? ""
 }
 
+function modelOf(mon: { model?: string | null }): string {
+  return mon.model ?? ""
+}
+
+function isBarMonitor(mon: {
+  connector?: string | null
+  model?: string | null
+  description?: string | null
+}): boolean {
+  const model = modelOf(mon).toUpperCase()
+  const desc = (mon.description ?? "").toUpperCase()
+  // HDMI-A-N flips (kernel 7.1.8: ASUS is HDMI-A-1, AOC is HDMI-A-2).
+  // Never treat a connector name as ASUS.
+  return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
+}
+
 function trySpawnBar(reason: string) {
-  // Drop stale handle if the window is gone
   if (spawnedFor && !app.get_window("bar")) {
     spawnedFor = null
   }
 
   for (const mon of app.get_monitors()) {
-    const c = connectorOf(mon)
-    if (c !== BAR_CONNECTOR) continue
+    if (!isBarMonitor(mon)) continue
+    const c = connectorOf(mon) || modelOf(mon) || "asus"
     if (spawnedFor === c && app.get_window("bar")) return
     Bar(mon)
     spawnedFor = c
-    printerr(`ags: bar on ${c} (${reason})`)
+    printerr(`ags: bar on ${c} model=${modelOf(mon)} (${reason})`)
     return
   }
   printerr(
-    `ags: no ${BAR_CONNECTOR} yet (${reason}); monitors=` +
-      app.get_monitors().map((m) => connectorOf(m) || "?").join(","),
+    `ags: no ASUS ${BAR_MODEL} yet (${reason}); monitors=` +
+      app.get_monitors().map((m) => `${connectorOf(m) || "?"}:${modelOf(m) || "?"}`).join(","),
   )
 }
 
@@ -53,16 +70,13 @@ app.start({
   main() {
     trySpawnBar("main")
 
-    // Hotplug / late enumerations — don't leave IPC-up / window-down
     app.connect("notify::monitors", () => trySpawnBar("notify::monitors"))
 
-    // One delayed retry (race after ags-restart)
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
       trySpawnBar("retry-400ms")
       return GLib.SOURCE_REMOVE
     })
   },
-  // Super+B → bar-cycle | Super_L/R (non-consuming) → bar-peek
   requestHandler(argv, res) {
     const cmd = argv[0]
     if (cmd === "bar-cycle" || cmd === "bar") {
@@ -77,7 +91,6 @@ app.start({
       res(getBarMode())
       return
     }
-    // ags request bar-set always|temp|hidden
     if (cmd === "bar-set" && argv[1]) {
       const m = argv[1] as BarMode
       if (m === "always" || m === "temp" || m === "hidden") {
@@ -86,29 +99,53 @@ app.start({
         return
       }
     }
-    if (cmd === "capture-toggle" || cmd === "capture") {
-      res(toggleCapture())
+    // parked caffeine requests — restore with widget/caffeine import above
+    // if (cmd === "caffeine-toggle" || cmd === "caffeine") {
+    //   const snap = toggleCaffeine()
+    //   res(`${getCaffeineToken()} | ${snap}`)
+    //   return
+    // }
+    // if (cmd === "caffeine-status" || cmd === "caffeine-get") {
+    //   const snap = getCaffeineStatus()
+    //   res(`${getCaffeineToken()} | ${snap}`)
+    //   return
+    // }
+    // if (cmd === "caffeine-on") {
+    //   const snap = requestCaffeineOn()
+    //   res(`${getCaffeineToken()} | ${snap}`)
+    //   return
+    // }
+    // if (cmd === "caffeine-off") {
+    //   const snap = requestCaffeineOff()
+    //   res(`${getCaffeineToken()} | ${snap}`)
+    //   return
+    // }
+    if (
+      cmd === "caffeine-toggle" ||
+      cmd === "caffeine" ||
+      cmd === "caffeine-status" ||
+      cmd === "caffeine-get" ||
+      cmd === "caffeine-on" ||
+      cmd === "caffeine-off"
+    ) {
+      res("caffeine: parked (UI/cluster commented in Bar.tsx)")
       return
     }
-    if (cmd === "caffeine-toggle" || cmd === "caffeine") {
-      // Transition first, then report verified snapshot (not pre-toggle desire).
-      const snap = toggleCaffeine()
-      res(`${getCaffeineToken()} | ${snap}`)
+    if (cmd === "rec-menu" || cmd === "rec-toggle") {
+      res(toggleRecMenu())
       return
     }
-    if (cmd === "caffeine-status" || cmd === "caffeine-get") {
-      const snap = getCaffeineStatus() // reconciles first
-      res(`${getCaffeineToken()} | ${snap}`)
+    if (cmd === "ram-status" || cmd === "ram") {
+      res(getRamStatus())
       return
     }
-    if (cmd === "caffeine-on") {
-      const snap = requestCaffeineOn()
-      res(`${getCaffeineToken()} | ${snap}`)
+    if (cmd === "warp-toggle" || cmd === "warp") {
+      toggleWarp()
+      res(`warp: phase=${getWarpPhase()} active=${getWarpActive()}`)
       return
     }
-    if (cmd === "caffeine-off") {
-      const snap = requestCaffeineOff()
-      res(`${getCaffeineToken()} | ${snap}`)
+    if (cmd === "warp-status") {
+      res(`warp: phase=${getWarpPhase()} active=${getWarpActive()}`)
       return
     }
     res(`unknown request: ${argv.join(" ")}`)

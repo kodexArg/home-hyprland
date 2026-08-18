@@ -47,8 +47,21 @@ HEADLESS_W = 1920
 HEADLESS_H = 3000
 HEADLESS_POS = "0x-5000"
 
-OUT_VERTICAL = "HDMI-A-2"
-OUT_HORIZONTAL = "HDMI-A-1"
+def _hypr_output(role: str) -> str:
+    fallback = "HDMI-A-2" if role == "portrait" else "HDMI-A-1"
+    try:
+        out = subprocess.check_output(
+            ["/home/kodex/.local/bin/hypr-output", role],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return out or fallback
+    except (OSError, subprocess.CalledProcessError):
+        return fallback
+
+
+OUT_VERTICAL = _hypr_output("portrait")
+OUT_HORIZONTAL = _hypr_output("landscape")
 
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 STATE_PATH = RUNTIME / "kdx-share.state"
@@ -464,7 +477,7 @@ def start_camera_pipeline(mode: str) -> tuple[int, str, str, int]:
     # Non-tty: wf-recorder may print overwrite prompt then continue on /dev/stdout.
     shell = f"""
 set -e
-wf-recorder -o {output} -r {fps} -x yuv420p -c rawvideo -m rawvideo -D -f /dev/stdout 2>>"{LOG_PATH}" \
+wf-recorder -y -o {output} -r {fps} -x yuv420p -c rawvideo -m rawvideo -D -f /dev/stdout 2>>"{LOG_PATH}" \
 | ffmpeg -hide_banner -loglevel warning \
     -f rawvideo -pix_fmt yuv420p -s {src_w}x{src_h} -r {fps} -i /dev/stdin \
     {vf}-f v4l2 -pix_fmt yuv420p "{V4L2_DEV}" >>"{LOG_PATH}" 2>&1

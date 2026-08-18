@@ -2,18 +2,14 @@ import GLib from "gi://GLib"
 import { createState, createComputed } from "ags"
 import { exec } from "ags/process"
 
-/** Super+B cycles: always → temp → hidden → always */
 export type BarMode = "always" | "temp" | "hidden"
 
 const ORDER: BarMode[] = ["always", "temp", "hidden"]
-/** How long "temp" stays on screen after leave / reveal */
 const TEMP_MS = 2500
-/** Portrait ASUS — same as app.ts bar filter */
-const BAR_MONITOR = "HDMI-A-2"
-/** Logical pixels from monitor top that count as "tope" */
+const BAR_MODEL = "VA27EHF"
 const EDGE_PX = 12
-/** Cursor poll while temp mode is active */
 const POLL_MS = 80
+const MONITOR_GEOMETRY_TTL_MS = 2000
 
 const [mode, setMode] = createState<BarMode>("always")
 const [tempShown, setTempShown] = createState(true)
@@ -30,12 +26,10 @@ function clearTempTimer() {
   }
 }
 
-/** Show bar and schedule auto-hide (unless pointer is holding it). */
 function armHideTimer() {
   clearTempTimer()
   if (overEdge || overBar) return
   tempSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TEMP_MS, () => {
-    // Stale hover must not block a later re-open
     overBar = false
     overEdge = false
     setTempShown(false)
@@ -55,23 +49,30 @@ function syncHover() {
     clearTempTimer()
     setTempShown(true)
   } else {
-    // was holding; restart hide countdown
     if (tempShown.peek()) armHideTimer()
   }
 }
 
-/** True if cursor is on the top edge of the bar monitor (layout coords). */
-function cursorOnBarMonitorTop(): boolean {
-  try {
-    const pos = exec("hyprctl cursorpos").trim() // "x, y"
-    const parts = pos.split(",")
-    if (parts.length < 2) return false
-    const cx = Number.parseInt(parts[0]!.trim(), 10)
-    const cy = Number.parseInt(parts[1]!.trim(), 10)
-    if (Number.isNaN(cx) || Number.isNaN(cy)) return false
+type MonitorGeometry = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
-    const mons = JSON.parse(exec(["hyprctl", "monitors", "-j"])) as Array<{
+let cachedGeometry: MonitorGeometry | null = null
+let cachedGeometryAt = 0
+
+function nowMs(): number {
+  return GLib.get_monotonic_time() / 1000
+}
+
+function readMonitorGeometry(): MonitorGeometry | null {
+  try {
+    const monitors = JSON.parse(exec(["hyprctl", "monitors", "-j"])) as Array<{
       name: string
+      model?: string
+      description?: string
       x: number
       y: number
       width: number
@@ -79,22 +80,83 @@ function cursorOnBarMonitorTop(): boolean {
       transform: number
       scale: number
     }>
-    const mon = mons.find((m) => m.name === BAR_MONITOR)
-    if (!mon) return false
 
-    // hyprctl width/height are physical px; layout size = phys/scale, then transform swap
-    const s = mon.scale > 0 ? mon.scale : 1
-    const physW = mon.width / s
-    const physH = mon.height / s
-    const rot = mon.transform === 1 || mon.transform === 3
-    const lw = rot ? physH : physW
-    const lh = rot ? physW : physH
-    const rx = cx - mon.x
-    const ry = cy - mon.y
-    return rx >= 0 && rx < lw && ry >= 0 && ry < EDGE_PX && ry < lh
+    const monitor = monitors.find((m) => {
+      const model = (m.model || "").toUpperCase()
+      const desc = (m.description || "").toUpperCase()
+      return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
+    })
+    if (!monitor) return null
+
+    const scale = monitor.scale > 0 ? monitor.scale : 1
+    const logicalWidth = monitor.width / scale
+    const logicalHeight = monitor.height / scale
+    const rotated = monitor.transform === 1 || monitor.transform === 3
+
+    return {
+      x: monitor.x,
+      y: monitor.y,
+      width: rotated ? logicalHeight : logicalWidth,
+      height: rotated ? logicalWidth : logicalHeight,
+    }
   } catch {
-    return false
+    return null
   }
+}
+
+function monitorGeometry(): MonitorGeometry | null {
+  const expired = nowMs() - cachedGeometryAt > MONITOR_GEOMETRY_TTL_MS
+
+  if (cachedGeometry === null || expired) {
+    const fresh = readMonitorGeometry()
+
+    if (fresh !== null) {
+      cachedGeometry = fresh
+      cachedGeometryAt = nowMs()
+    }
+  }
+
+  return cachedGeometry
+}
+
+function forgetMonitorGeometry(): void {
+  cachedGeometry = null
+  cachedGeometryAt = 0
+}
+
+function hasUsableArea(geometry: MonitorGeometry): boolean {
+  return geometry.width > 0 && geometry.height > 0
+}
+
+function readCursorPosition(): { x: number; y: number } | null {
+  try {
+    const [rawX, rawY] = exec("hyprctl cursorpos").trim().split(",")
+    if (rawX === undefined || rawY === undefined) return null
+
+    const x = Number.parseInt(rawX.trim(), 10)
+    const y = Number.parseInt(rawY.trim(), 10)
+    if (Number.isNaN(x) || Number.isNaN(y)) return null
+
+    return { x, y }
+  } catch {
+    return null
+  }
+}
+
+function cursorOnBarMonitorTop(): boolean {
+  const geometry = monitorGeometry()
+  if (geometry === null || !hasUsableArea(geometry)) return false
+
+  const cursor = readCursorPosition()
+  if (cursor === null) return false
+
+  const withinMonitor =
+    cursor.x >= geometry.x &&
+    cursor.x < geometry.x + geometry.width &&
+    cursor.y >= geometry.y &&
+    cursor.y < geometry.y + geometry.height
+
+  return withinMonitor && cursor.y - geometry.y < EDGE_PX
 }
 
 function pollEdge() {
@@ -105,7 +167,6 @@ function pollEdge() {
     overEdge = onTop
     syncHover()
   } else if (onTop && !tempShown.peek()) {
-    // edge held but bar still hidden (e.g. race after timer) → force show
     setTempShown(true)
     clearTempTimer()
   }
@@ -125,16 +186,11 @@ function stopEdgePoll() {
   overEdge = false
 }
 
-/** Bar chrome: pointer entered/left the bar itself. */
 export function setOverBar(v: boolean) {
   overBar = v
   syncHover()
 }
 
-/**
- * Peek the bar while in temp mode (auto-hide).
- * Used by Super_L/R (non-consuming) and any external `ags request bar-peek`.
- */
 export function peekTemp(): string {
   if (mode.peek() !== "temp") return getBarMode()
   showTemp()
@@ -147,6 +203,7 @@ export function setBarMode(next: BarMode) {
   overBar = false
   setMode(next)
   if (next === "temp") {
+    forgetMonitorGeometry()
     startEdgePoll()
     showTemp()
   } else {
@@ -167,16 +224,11 @@ export function getBarMode(): BarMode {
   return mode.peek()
 }
 
-/** Reactive mode for CSS class: Bar mode-always | mode-temp | mode-hidden */
 export const barModeClass = createComputed(() => `Bar mode-${mode()}`)
 
-/** Reactive visibility from mode + temp timer / hover / Super peek */
 export const barVisible = createComputed(() => {
   const m = mode()
   if (m === "always") return true
   if (m === "hidden") return false
   return tempShown()
 })
-
-// First paint: always visible (no edge poll until Super+B → temp)
-

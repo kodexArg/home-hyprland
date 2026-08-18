@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# kdx-live-mode — Super+L LIVE: SSOT + spawn/kill Scripts/live.py
+set -euo pipefail
+
+STATE="${KDX_LIVE_MODE_STATE:-/tmp/kdx_live_mode.json}"
+FLAG="${KDX_LIVE_MODE_FLAG:-/tmp/kdx_live_mode}"
+PID_FILE="${KDX_LIVE_MODE_PID:-/tmp/kdx_live_mode.pid}"
+LOG="${KDX_LIVE_MODE_LOG:-/tmp/kdx_live_mode.worker.log}"
+ROOT="${KDX_HOME_VOICE:-/home/kodex/Dev/this-computer/kdx-home-voice}"
+WORKER="${ROOT}/Scripts/live.py"
+# Prefer host stack that already has faster-whisper + CUDA pip libs
+VENV_PY="${KDX_HOME_VOICE_PYTHON:-}"
+if [[ -z "$VENV_PY" ]]; then
+  for c in \
+    "${ROOT}/.venv/bin/python" \
+    "/home/kodex/Services/voice-dictation/.venv/bin/python" \
+    "/home/kodex/Dev/this-computer/kdx-voice-live/.venv/bin/python"
+  do
+    if [[ -x "$c" ]]; then VENV_PY="$c"; break; fi
+  done
+fi
+VENV_PY="${VENV_PY:-python3}"
+
+is_on() {
+  [[ -f "$STATE" ]] || return 1
+  grep -qE '"on"[[:space:]]*:[[:space:]]*true' "$STATE" 2>/dev/null
+}
+
+worker_alive() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start_worker() {
+  if worker_alive; then return 0; fi
+  if [[ ! -f "$WORKER" ]]; then
+    echo "kdx-live-mode: missing worker $WORKER" >&2
+    return 1
+  fi
+  # arm SSOT before spawn so chip appears immediately
+  printf '%s\n' '{"on":true,"phase":"arming","detail":"starting","ui":{"color":"orange"}}' >"$STATE"
+  printf 'on\n' >"$FLAG"
+  nohup "$VENV_PY" "$WORKER" >>"$LOG" 2>&1 &
+  echo $! >"$PID_FILE"
+  echo "kdx-live-mode: python=$VENV_PY pid=$(cat "$PID_FILE")" >&2
+}
+
+stop_worker() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "${pid:-}" ]]; then
+      # flip SSOT first so app loop exits cleanly
+      printf '%s\n' '{"on":false,"phase":"off","detail":"","ui":{"color":"orange"}}' >"$STATE"
+      rm -f "$FLAG"
+      kill -INT "$pid" 2>/dev/null || true
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.2
+      done
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+  fi
+  printf '%s\n' '{"on":false,"phase":"off","detail":"","ui":{"color":"orange"}}' >"$STATE"
+  rm -f "$FLAG"
+}
+
+write_state_on() {
+  printf '%s\n' '{"on":true,"phase":"arming","detail":"live mode armed","ui":{"color":"orange"}}' >"$STATE"
+  printf 'on\n' >"$FLAG"
+}
+
+cmd="${1:-toggle}"
+case "$cmd" in
+  toggle)
+    if is_on && worker_alive; then
+      stop_worker
+    elif is_on && ! worker_alive; then
+      # stale SSOT
+      stop_worker
+      start_worker
+    else
+      start_worker
+    fi
+    ;;
+  on | start | arm)
+    start_worker
+    ;;
+  off | stop | disarm)
+    stop_worker
+    ;;
+  status)
+    if [[ -f "$STATE" ]]; then cat "$STATE"; else echo '{"on":false,"phase":"off"}'; fi
+    if worker_alive; then
+      echo "worker: pid=$(cat "$PID_FILE") alive py=$VENV_PY" >&2
+    else
+      echo "worker: stopped py=$VENV_PY" >&2
+    fi
+    exit 0
+    ;;
+  *)
+    echo "usage: kdx-live-mode toggle|on|off|status" >&2
+    exit 2
+    ;;
+esac
+
+if worker_alive; then
+  echo "live-mode: on worker=$(cat "$PID_FILE")"
+else
+  echo "live-mode: off"
+fi

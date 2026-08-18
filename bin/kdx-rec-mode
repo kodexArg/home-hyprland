@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# kdx-rec-mode — Super+M REC mode: chip SSOT + spawn/kill Scripts/rec.py
+set -euo pipefail
+
+STATE="${KDX_REC_MODE_STATE:-/tmp/kdx_rec_mode.json}"
+FLAG="${KDX_REC_MODE_FLAG:-/tmp/kdx_rec_mode}"
+PID_FILE="${KDX_REC_MODE_PID:-/tmp/kdx_rec_mode.pid}"
+LOG="${KDX_REC_MODE_LOG:-/tmp/kdx_rec_mode.worker.log}"
+ROOT="${KDX_HOME_VOICE:-/home/kodex/Dev/this-computer/kdx-home-voice}"
+WORKER="${ROOT}/Scripts/rec.py"
+
+is_on() {
+  [[ -f "$STATE" ]] || return 1
+  grep -qE '"on"[[:space:]]*:[[:space:]]*true' "$STATE" 2>/dev/null
+}
+
+worker_alive() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start_worker() {
+  if worker_alive; then return 0; fi
+  if [[ ! -x "$WORKER" && ! -f "$WORKER" ]]; then
+    echo "kdx-rec-mode: missing worker $WORKER" >&2
+    return 1
+  fi
+  chmod +x "$WORKER" 2>/dev/null || true
+  # uv script shebang; detach fully
+  nohup "$WORKER" >>"$LOG" 2>&1 &
+  echo $! >"$PID_FILE"
+}
+
+stop_worker() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "${pid:-}" ]]; then
+      kill -INT "$pid" 2>/dev/null || true
+      # brief wait then hard kill
+      for _ in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+  fi
+}
+
+write_state() {
+  local on="$1"
+  if [[ "$on" == "1" ]]; then
+    printf '%s\n' '{"on":true,"phase":"on","detail":"rec mode armed"}' >"$STATE"
+    printf 'on\n' >"$FLAG"
+  else
+    printf '%s\n' '{"on":false,"phase":"off","detail":""}' >"$STATE"
+    rm -f "$FLAG"
+  fi
+}
+
+cmd="${1:-toggle}"
+case "$cmd" in
+  toggle)
+    if is_on; then write_state 0; stop_worker
+    else write_state 1; start_worker
+    fi
+    ;;
+  on | start | arm)
+    write_state 1
+    start_worker
+    ;;
+  off | stop | disarm)
+    write_state 0
+    stop_worker
+    ;;
+  status)
+    if is_on; then
+      cat "$STATE" 2>/dev/null || echo '{"on":true,"phase":"on"}'
+    else
+      if [[ -f "$STATE" ]]; then cat "$STATE"; else echo '{"on":false,"phase":"off","detail":""}'; fi
+    fi
+    if worker_alive; then
+      echo "worker: pid=$(cat "$PID_FILE") alive" >&2
+    else
+      echo "worker: stopped" >&2
+    fi
+    exit 0
+    ;;
+  *)
+    echo "usage: kdx-rec-mode toggle|on|off|status" >&2
+    exit 2
+    ;;
+esac
+
+if is_on; then
+  echo "rec-mode: on worker=$(worker_alive && cat "$PID_FILE" || echo fail)"
+else
+  echo "rec-mode: off"
+fi

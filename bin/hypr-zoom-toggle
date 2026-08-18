@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Toggle HDMI-A-2 (portrait ASUS) scale 1.5 ↔ 1.0.
+# Toggle HDMI-A-2 (portrait ASUS) scale 1.0 (default/roomy) ↔ 1.5 (dense).
+#
+# Default session layout is roomy (scale 1) in hyprland.lua.
+# Super+Ctrl+Z flips to dense 1.5 and back.
 #
 # FSM (same contract as AGS caffeine):
 #   SSOT reality = hyprctl monitors (scale + x of HDMI-A-2)
@@ -11,8 +14,8 @@
 # Bind: Super+Ctrl+Z → /bin/bash this script
 set -euo pipefail
 
-PORTRAIT=HDMI-A-2
-LANDSCAPE=HDMI-A-1
+PORTRAIT="$(/home/kodex/.local/bin/hypr-output portrait)"
+LANDSCAPE="$(/home/kodex/.local/bin/hypr-output landscape)"
 TRANSFORM=1
 # NVIDIA + dual HDMI: need real settle between modesets
 GAP_SEC=0.55

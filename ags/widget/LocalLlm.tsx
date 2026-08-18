@@ -1,18 +1,3 @@
-/**
- * Local LLM menu — brain icon + model list (each row = button) + OFF.
- *
- * FSM (one model at a time on 8 GB):
- *
- *   idle ──click model──► unload(from) + load(to) queued
- *           │               red on `from` until unit dead
- *           │               amber on `to` until API ready (not merely unit active)
- *           └── /v1/models OK ──► idle, amber→on (orange)
- *
- *   load timeout = 2 × densenet budget on this 8 GB box (see LOAD_*)
- *   timeout / failed → stop unit, paint failed, idle
- *
- * Service: local-llm.service · selected: ~/.config/local-llm/selected-model
- */
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import GLib from "gi://GLib"
@@ -24,45 +9,35 @@ import { barVisible, setOverBar } from "./bar-mode"
 
 const HOME = GLib.get_home_dir()
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
-/** Glyph-only state colors (border stays for live/open; load does not rim-highlight). */
-const ICON_BRAIN_IDLE = `${ICON_DIR}/brain.svg` // cream
-const ICON_BRAIN_LOAD = `${ICON_DIR}/brain-load.svg` // amber
-const ICON_BRAIN_ON = `${ICON_DIR}/brain-on.svg` // orange
-const ICON_BRAIN_UNLOAD = `${ICON_DIR}/brain-unload.svg` // red
+const ICON_BRAIN = `${ICON_DIR}/brain.svg` // monochrome (currentColor) — state via CSS color
 const GGUF_DIR = `${HOME}/Services/local-llm/models/gguf`
 const CONFIG_FILE = `${HOME}/.config/local-llm/selected-model`
 const SERVICE = "local-llm.service"
 const API_MODELS = "http://127.0.0.1:28000/v1/models"
+// Color SSOT v1 (clients paint busy/feedback; AGS owns readiness green/gray):
+//   $XDG_RUNTIME_DIR/local-llm-color.json
+//     {v:1, busy:N, feedback:null|"unknown", feedback_until:epoch|null}
+// Priority: busy>0 → orange · feedback unknown (timed) → red · else readiness.
+// Legacy: local-llm-thinking presence = busy (orange).
+const COLOR_FILE = `${GLib.get_user_runtime_dir()}/local-llm-color.json`
+const THINKING_FILE = `${GLib.get_user_runtime_dir()}/local-llm-thinking`
 const PANEL_GAP = 4
 const TICK_MS = 400
 
-/**
- * Load budget on RTX 2060 SUPER 8 GB (this host):
- *   densenet 9B Q4 ≈ 16–20 s to API-ready (verified).
- *   GLM-9B / headroom → budget 45 s.
- * Timeout = 2 × budget = 90 s (user: “duplicá eso”).
- *
- * Hybrid MoE (~21 GB file, n_gpu_layers=28) is NOT a pure 8 GB load — thrash
- * risk. Qwen3.6-35B lives in models/gguf-archive/ (not scanned). Same 90 s
- * kill-switch if a hybrid reappears in gguf/.
- */
 const LOAD_BUDGET_SEC = 45
-const LOAD_TIMEOUT_SEC = LOAD_BUDGET_SEC * 2 // 90
+const LOAD_TIMEOUT_SEC = LOAD_BUDGET_SEC * 2
 const UNLOAD_TIMEOUT_SEC = 30
-/** Live + used VRAM under this → brain amber (headroom). ≥ → orange (tight on 8 GB). */
-const VRAM_YELLOW_UNDER_MIB = 7 * 1024 // 7168
+const VRAM_YELLOW_UNDER_MIB = 7 * 1024
 
 const VENDOR_RE =
   /^(THUDM|Qwen|deepseek-ai|meta-llama|mistralai|google|microsoft|XiaomiMiMo|BAAI|unsloth|bartowski|TheBloke)[_/]/i
 
 type SvcState = "stopped" | "starting" | "running" | "stopping" | "failed"
 
-/** Global transition. `from` = unloading (red). `to` = target (amber). */
 type Tx = {
   phase: "idle" | "unload" | "load"
   from: string | null
   to: string | null
-  /** monotonic seconds when phase entered (GLib.get_monotonic_time / 1e6) */
   since: number
 }
 
@@ -70,13 +45,11 @@ const IDLE: Tx = { phase: "idle", from: null, to: null, since: 0 }
 
 const [menuOpen, setMenuOpen] = createState(false)
 const [tx, setTx] = createState<Tx>(IDLE)
-/** Model believed ready (API answered /v1/models). */
 const [liveModel, setLiveModel] = createState("")
 const [svcSnap, setSvcSnap] = createState<SvcState>("stopped")
 const [selectedSnap, setSelectedSnap] = createState(readSelected())
 const [apiReady, setApiReady] = createState(false)
 const [lastFail, setLastFail] = createState("")
-/** GPU 0 used MiB from nvidia-smi; null if probe failed. */
 const [vramUsedMib, setVramUsedMib] = createState<number | null>(null)
 
 let tickSource: number | null = null
@@ -126,9 +99,7 @@ function readSelected(): string {
   try {
     const [ok, raw] = Gio.File.new_for_path(CONFIG_FILE).load_contents(null)
     if (ok) return new TextDecoder().decode(raw).trim()
-  } catch {
-    /* missing */
-  }
+  } catch {}
   return ""
 }
 
@@ -137,9 +108,7 @@ function writeSelected(name: string) {
     Gio.File.new_for_path(`${HOME}/.config/local-llm`).make_directory_with_parents(
       null,
     )
-  } catch {
-    /* exists */
-  }
+  } catch {}
   Gio.File.new_for_path(CONFIG_FILE).replace_contents(
     new TextEncoder().encode(name),
     null,
@@ -182,7 +151,6 @@ function probeSvc(): SvcState {
   }
 }
 
-/** True only when OpenAI surface answers — weights are in memory. */
 function probeApiReady(): boolean {
   try {
     const proc = Gio.Subprocess.new(
@@ -198,7 +166,6 @@ function probeApiReady(): boolean {
   }
 }
 
-/** Used VRAM MiB on GPU 0 (RTX 2060 SUPER). null on failure. */
 function probeVramUsedMib(): number | null {
   try {
     const proc = Gio.Subprocess.new(
@@ -224,7 +191,6 @@ function formatVram(used: number | null): string {
   return `VRAM ${(used / 1024).toFixed(1)}/8.0 GiB`
 }
 
-/** Ready + used < 7 GiB → yellow headroom signal (else orange when tight). */
 function vramHeadroomYellow(): boolean {
   const u = vramUsedMib()
   return u !== null && u < VRAM_YELLOW_UNDER_MIB
@@ -265,13 +231,11 @@ function failLoad(reason: string, model: string | null) {
   setLastFail(reason)
   setLiveModel("")
   setApiReady(false)
-  // Hard stop — hybrid loads can ignore polite SIGTERM while mmap thrashing.
   if (!ctlInFlight) ctl("kill")
   execAsync(["systemctl", "--user", "stop", SERVICE]).catch(() => undefined)
   setTx(IDLE)
 }
 
-/** VRAM poll cadence: faster while live/transitioning, slow when off. */
 let vramTick = 0
 
 function ensureTick() {
@@ -293,12 +257,10 @@ function ensureTick() {
           setApiReady(false)
         }
       } else if (s === "running" && !ready) {
-        // Unit up, weights still loading (external start) — do not paint "on".
         if (liveModel.peek()) setLiveModel("")
       }
     }
 
-    // nvidia-smi ~ every 2s when busy/live, ~8s when off
     vramTick++
     const needFast =
       busy ||
@@ -306,7 +268,7 @@ function ensureTick() {
       svcSnap.peek() === "running" ||
       svcSnap.peek() === "starting" ||
       tx.peek().phase !== "idle"
-    const every = needFast ? 5 : 20 // * TICK_MS 400 → 2s / 8s
+    const every = needFast ? 5 : 20
     if (vramTick >= every) {
       vramTick = 0
       setVramUsedMib(probeVramUsedMib())
@@ -315,10 +277,6 @@ function ensureTick() {
   })
 }
 
-/**
- * Advance unload→load→idle. Returns true if still in a transition.
- * "Loaded" = API ready, not systemd active alone.
- */
 function tickFsm(): boolean {
   const t = tx.peek()
   const s = probeSvc()
@@ -331,7 +289,6 @@ function tickFsm(): boolean {
     if (elapsed > UNLOAD_TIMEOUT_SEC) {
       printerr(`local-llm: unload timeout ${UNLOAD_TIMEOUT_SEC}s — SIGKILL`)
       ctl("kill")
-      // next tick will see stopped
       return true
     }
     if (s === "stopped" || s === "failed") {
@@ -362,7 +319,6 @@ function tickFsm(): boolean {
       return false
     }
 
-    // Process up ≠ ready. Wait for OpenAI surface.
     if (s === "running" || s === "starting") {
       const ready = probeApiReady()
       setApiReady(ready)
@@ -372,11 +328,9 @@ function tickFsm(): boolean {
         setTx(IDLE)
         return false
       }
-      // amber: still mapping weights / CUDA init
       return true
     }
 
-    // stopped early in start race — keep waiting until timeout
     return true
   }
 
@@ -393,7 +347,6 @@ function onPickModel(id: string) {
   const live =
     liveModel.peek() || (ready ? readSelected() : "")
 
-  // Already live with this model
   if (ready && live === id) return
 
   writeSelected(id)
@@ -428,7 +381,6 @@ function onPowerOff() {
   ensureTick()
 }
 
-/** Visual class for a model id */
 function rowTone(
   id: string,
 ): "unload" | "load" | "on" | "failed" | "idle" {
@@ -445,7 +397,6 @@ function rowTone(
     liveModel() === id
   )
     return "on"
-  // unit up, not API-ready yet
   if (
     t.phase === "idle" &&
     (svcSnap() === "starting" || svcSnap() === "running") &&
@@ -456,10 +407,6 @@ function rowTone(
   return "idle"
 }
 
-/**
- * Coarse UI phase for status chrome (menu header + tooltip).
- * Prefer verb phrases over cryptic unload/load glyphs.
- */
 type UiPhase =
   | "off"
   | "ready"
@@ -519,7 +466,6 @@ function statusLine(): string {
 
 function statusClass(): string {
   const p = uiPhase()
-  // Ready with headroom uses amber (same as loading), not orange.
   if (p === "ready")
     return vramHeadroomYellow()
       ? "LocalLlm-status loading"
@@ -533,10 +479,6 @@ function statusClass(): string {
 ensureTick()
 setVramUsedMib(probeVramUsedMib())
 
-/**
- * Full-monitor click catcher under the menu (GSK needs non-zero alpha to hit-test).
- * Closes the menu on any press outside the panel itself.
- */
 function LocalLlmClickaway(gdkmonitor: Gdk.Monitor) {
   const { TOP, RIGHT, LEFT, BOTTOM } = Astal.WindowAnchor
   const visible = createComputed(() => menuOpen() && barVisible())
@@ -555,7 +497,7 @@ function LocalLlmClickaway(gdkmonitor: Gdk.Monitor) {
       application={app}
       $={(self: Gtk.Window) => {
         const click = new Gtk.GestureClick()
-        click.set_button(0) // any mouse button
+        click.set_button(0)
         click.connect("pressed", () => setMenuOpen(false))
         self.add_controller(click)
       }}
@@ -569,7 +511,6 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
   const { TOP, RIGHT } = Astal.WindowAnchor
   const panelVisible = createComputed(() => menuOpen() && barVisible())
 
-  // Under the menu (TOP < OVERLAY). Side-effect construct — app-owned window.
   LocalLlmClickaway(gdkmonitor)
 
   const modelsFp = createPoll(listChatModels().join("\n"), 5000, () =>
@@ -582,7 +523,6 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
       .filter(Boolean),
   )
 
-  // re-render countdown while loading
   const clock = createPoll(0, 1000, () => Math.floor(nowSec()))
 
   const status = createComputed(() => {
@@ -755,50 +695,87 @@ export default function LocalLlm({
 }) {
   LocalLlmPanel(gdkmonitor)
 
-  /** idle | load | on | unload — drives glyph color + chip chrome (on only). */
-  const tone = createComputed(() => {
+  // Client color SSOT (v1 busy + feedback). Poll 200 ms for snappier orange.
+  // Priority: busy>0 → orange · feedback unknown (timed, idle) → red · else readiness.
+  type BrainTone = "off" | "ready" | "thinking" | "red"
+  type Overlay = { kind: "busy" | "unknown" | null }
+  const overlay = createPoll({ kind: null } as Overlay, 200, () => {
+    try {
+      const f = Gio.File.new_for_path(COLOR_FILE)
+      if (f.query_exists(null)) {
+        const [ok, bytes] = f.load_contents(null)
+        if (ok) {
+          const d = JSON.parse(new TextDecoder().decode(bytes)) as {
+            v?: number
+            busy?: number
+            feedback?: string | null
+            feedback_until?: number | null
+            tone?: string
+            until?: number | null
+          }
+          const busy = Number(d.busy ?? 0)
+          if (busy > 0) return { kind: "busy" as const }
+          // v1 feedback
+          if (
+            d.feedback === "unknown" &&
+            d.feedback_until != null &&
+            Date.now() / 1000 < Number(d.feedback_until)
+          )
+            return { kind: "unknown" as const }
+          // compat tone/until (older writers)
+          if (d.tone === "orange") return { kind: "busy" as const }
+          if (
+            d.tone === "red" &&
+            (d.until == null || Date.now() / 1000 < Number(d.until))
+          )
+            return { kind: "unknown" as const }
+        }
+      }
+      // legacy thinking file = busy
+      if (Gio.File.new_for_path(THINKING_FILE).query_exists(null))
+        return { kind: "busy" as const }
+      return { kind: null as const }
+    } catch {
+      if (Gio.File.new_for_path(THINKING_FILE).query_exists(null))
+        return { kind: "busy" as const }
+      return { kind: null as const }
+    }
+  })
+
+  const tone = createComputed((): BrainTone => {
     void tx()
     void svcSnap()
     void apiReady()
-    void lastFail()
-    void vramUsedMib()
-    const t = tx()
-    if (t.phase === "unload") return "unload"
-    if (t.phase === "load" || (svcSnap() === "running" && !apiReady()))
-      return "load"
-    if (svcSnap() === "running" && apiReady()) {
-      // Live + used VRAM < 7 GiB → amber glyph (headroom). ≥7 → orange (tight).
-      return vramHeadroomYellow() ? "load" : "on"
-    }
-    if (lastFail() || svcSnap() === "failed") return "unload"
-    return "idle"
+    void overlay()
+    const o = overlay()
+    if (o.kind === "busy") return "thinking"
+    if (o.kind === "unknown") return "red"
+    if (svcSnap() === "running" && apiReady()) return "ready"
+    return "off"
   })
 
   const cls = createComputed(() => {
     void tone()
     void menuOpen()
-    const t = tone()
-    const open = menuOpen()
-    const parts = ["LocalLlm"]
-    // Chip border/fill only for live (on) and open menu — never for load:
-    // yellow rim looked like "already loaded"; amber is glyph-only.
-    if (t === "on") parts.push("on")
-    if (t === "unload") parts.push("unload")
-    if (open) parts.push("open")
+    const parts = ["LocalLlm", tone()]
+    if (menuOpen()) parts.push("open")
     return parts.join(" ")
   })
 
+  // Baked-color icon variants: GTK does not tint file SVGs via CSS `color`
+  // (currentColor resolves to black), so the state is carried by the file.
   const iconFile = createComputed(() => {
-    switch (tone()) {
-      case "load":
-        return ICON_BRAIN_LOAD
-      case "on":
-        return ICON_BRAIN_ON
-      case "unload":
-        return ICON_BRAIN_UNLOAD
-      default:
-        return ICON_BRAIN_IDLE
-    }
+    void tone()
+    const t = tone()
+    const file =
+      t === "red"
+        ? "red"
+        : t === "thinking"
+          ? "orange"
+          : t === "ready"
+            ? "green"
+            : "gray"
+    return `${ICON_DIR}/brain-${file}.svg`
   })
 
   const tipClock = createPoll(0, 1000, () => Math.floor(nowSec()))
@@ -810,8 +787,17 @@ export default function LocalLlm({
     void apiReady()
     void lastFail()
     void vramUsedMib()
+    void overlay()
     void tipClock()
-    return `${statusLine()} — click for menu · outside/Esc closes`
+    const base = statusLine()
+    const o = overlay()
+    const extra =
+      o.kind === "unknown"
+        ? " · UNKNOWN (red)"
+        : o.kind === "busy"
+          ? " · BUSY (orange)"
+          : ""
+    return `${base}${extra} — click for menu · outside/Esc closes`
   })
 
   return (

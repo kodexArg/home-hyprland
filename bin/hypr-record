@@ -42,9 +42,14 @@ DIR="${XDG_VIDEOS_DIR:-$HOME/Videos}/Screencasts"
 log() { printf '%s %s\n' "$(date -Iseconds)" "$*" >>"$LOG" 2>/dev/null || true; }
 
 AUDIO_MODE="${HYPR_REC_AUDIO:-system}"
-FRAMERATE="${HYPR_REC_FPS:-}"
+# Cap FPS: unthrottled VFR reports insane MB rate and can brick finalize.
+FRAMERATE="${HYPR_REC_FPS:-30}"
 CODEC="${HYPR_REC_CODEC:-}"
 AGENT="${HYPR_REC_AGENT:-0}"
+# Damage-only (wf-recorder default) often yields 1 frame + hang on stop when
+# the target output is static (typical on idle AOC / non-focused monitor).
+# Default OFF → pass -D for continuous frames. Set HYPR_REC_DAMAGE=1 to opt in.
+DAMAGE_ONLY="${HYPR_REC_DAMAGE:-0}"
 
 # ── option parse ────────────────────────────────────────────────────────────
 ARGS=()
@@ -58,6 +63,8 @@ while [[ $# -gt 0 ]]; do
     --framerate=*)    FRAMERATE="${1#*=}"; shift ;;
     --codec)          CODEC="${2:-}"; shift 2 ;;
     --codec=*)        CODEC="${1#*=}"; shift ;;
+    --damage)         DAMAGE_ONLY=1; shift ;;
+    --no-damage|-D)   DAMAGE_ONLY=0; shift ;;
     -h|--help|help)
       ARGS=(help); shift
       while [[ $# -gt 0 ]]; do ARGS+=("$1"); shift; done
@@ -81,9 +88,17 @@ arg2="${2:-}"
 notify() {
   local msg="$1"
   local icon="${2:-5}"  # 5=Ok 3=Error 0=Warning
-  hyprctl notify "$icon" 8750 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
   if command -v notify-send >/dev/null 2>&1; then
     notify-send -a hypr-record -i media-record "Screen record" "$msg" 2>/dev/null || true
+  else
+    hyprctl notify "$icon" 8750 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
+  fi
+}
+
+copy_to_clipboard() {
+  local target="$1"
+  if command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$target" | wl-copy >/dev/null 2>&1 || true
   fi
 }
 
@@ -120,7 +135,10 @@ label_for_mode() {
   esac
 }
 
-# Same dual-panel map as hypr-screenshot.
+# Physical layout on this host (SSOT):
+#   LEFT  = HDMI-A-2 ASUS portrait  @ x=-1080  (+ AGS bar)
+#   RIGHT = HDMI-A-1 AOC  landscape @ x=0
+# Prefer brand/connector names; left/right follow *physical* side.
 resolve_output() {
   local key
   key="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
@@ -136,11 +154,11 @@ if ms: print(ms[0]["name"]); sys.exit(0)
 sys.exit(1)
 ' 2>>"$LOG"
       ;;
-    left|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-left|panel_left)
-      echo "HDMI-A-1"
+    left|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-left|panel_left)
+      /home/kodex/.local/bin/hypr-output portrait
       ;;
-    right|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-right|panel_right)
-      echo "HDMI-A-2"
+    right|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-right|panel_right)
+      /home/kodex/.local/bin/hypr-output landscape
       ;;
     hdmi-a-1|HDMI-A-1) echo "HDMI-A-1" ;;
     hdmi-a-2|HDMI-A-2) echo "HDMI-A-2" ;;
@@ -222,10 +240,11 @@ print("\n=== panels (this host) ===")
 for m in ms:
     name = m["name"]
     mid = m.get("id")
-    if name == "HDMI-A-1":
-        role = "left / AOC landscape"
-    elif name == "HDMI-A-2":
-        role = "right / ASUS portrait + AGS bar"
+    # Physical: ASUS HDMI-A-2 LEFT (x negative), AOC HDMI-A-1 RIGHT
+    if name == "HDMI-A-2":
+        role = "LEFT / ASUS portrait + AGS bar"
+    elif name == "HDMI-A-1":
+        role = "RIGHT / AOC landscape"
     else:
         role = "other"
     foc = " FOCUSED" if m.get("focused") else ""
@@ -240,8 +259,8 @@ for m in ms:
             cls = c.get("class") or "?"
             title = (c.get("title") or "")[:60]
             print(f"    - class={cls!r} title={title!r}")
-print("\nAliases: left|aoc → HDMI-A-1 · right|asus|bar → HDMI-A-2")
-print("Record:  hypr-record region|window|panel left|toggle region|stop")
+print("\nAliases: left|asus|bar → HDMI-A-2 · right|aoc → HDMI-A-1")
+print("Record:  hypr-record region|window|panel left|panel aoc|toggle region|stop")
 PY
 }
 
@@ -284,11 +303,17 @@ build_cmd() {
   # sets WF_CMD array: wf-recorder … -f file
   local file="$1"
   WF_CMD=(wf-recorder -f "$file" -y)
+  # Continuous frames unless caller opted into damage-only.
+  # Without this, idle outputs (esp. AOC / non-focused) record 1 frame and
+  # hang on SIGINT → unplayable mp4 (duration=N/A).
+  if [[ "$DAMAGE_ONLY" != "1" ]]; then
+    WF_CMD+=(-D)
+  fi
   local a
   while IFS= read -r a; do
     [[ -n "$a" ]] && WF_CMD+=("$a")
   done < <(audio_args)
-  if [[ -n "$FRAMERATE" ]]; then
+  if [[ -n "$FRAMERATE" && "$FRAMERATE" != "0" ]]; then
     WF_CMD+=(-r "$FRAMERATE")
   fi
   if [[ -n "$CODEC" ]]; then
@@ -296,10 +321,36 @@ build_cmd() {
   fi
 }
 
+# Return 0 if ffprobe reports a positive duration (playable container).
+file_has_duration() {
+  local f="$1" d
+  [[ -f "$f" ]] || return 1
+  d="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" 2>/dev/null || true)"
+  [[ -n "$d" && "$d" != "N/A" ]] || return 1
+  python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) > 0.05 else 1)" "$d" 2>/dev/null
+}
+
+# Last-resort remux when SIGINT left a broken moov (rare with -D + CFR).
+try_repair_mp4() {
+  local f="$1" tmp
+  command -v ffmpeg >/dev/null 2>&1 || return 1
+  file_has_duration "$f" && return 0
+  tmp="${f%.mp4}.repair-$$.mp4"
+  log "repair: attempting remux $f"
+  if ffmpeg -y -err_detect ignore_err -i "$f" -c copy -movflags +faststart "$tmp" >>"$LOG" 2>&1 \
+    && file_has_duration "$tmp"; then
+    mv -f "$tmp" "$f"
+    log "repair: ok $f"
+    return 0
+  fi
+  rm -f "$tmp"
+  log "repair: failed $f"
+  return 1
+}
+
 stop_recording() {
   if ! is_recording; then
     log "stop: not recording"
-    notify "SCREEN RECORD: not active" 0
     echo "not recording" >&2
     return 1
   fi
@@ -307,12 +358,12 @@ stop_recording() {
   pid="$(cat "$PIDFILE")"
   IFS='|' read -r mode_s file started <<<"$(read_state)"
   log "stop: INT pid=$pid file=${file:-?} mode=${mode_s:-?}"
-  notify "STOPPING RECORD…" 0
+  clear_state
   # SIGINT = clean finalize (same as Ctrl+C in wf-recorder)
   kill -INT "$pid" 2>>"$LOG" || true
-  # Wait for encoder to flush (up to ~15s)
+  # Wait for encoder to flush (up to ~8s — with -D+CFR this is usually <1s)
   local i=0
-  while kill -0 "$pid" 2>/dev/null && [[ $i -lt 150 ]]; do
+  while kill -0 "$pid" 2>/dev/null && [[ $i -lt 80 ]]; do
     sleep 0.1
     i=$((i + 1))
   done
@@ -324,17 +375,23 @@ stop_recording() {
   fi
   clear_state
   if [[ -n "${file:-}" && -f "$file" ]]; then
+    try_repair_mp4 "$file" || true
     local sz
     sz="$(wc -c <"$file" | tr -d ' ')"
-    log "stop: saved $file ($sz bytes)"
-    notify "$(label_for_mode "${mode_s:-region}"): $(basename "$file") (${sz} B)"
-    if [[ "$AGENT" == "1" ]]; then
-      printf '%s\n' "$file"
+    if file_has_duration "$file"; then
+      log "stop: saved $file ($sz bytes)"
+      copy_to_clipboard "$file"
+      notify "$(label_for_mode "${mode_s:-region}"): $(basename "$file") (${sz} B) — path copied"
+      if [[ "$AGENT" == "1" ]]; then
+        printf '%s\n' "$file"
+      fi
+      return 0
     fi
-    return 0
+    log "stop: unplayable $file ($sz bytes) — duration missing"
+    notify "$(label_for_mode "${mode_s:-region}"): FAILED unplayable file" 3
+    return 1
   fi
   log "stop: file missing ${file:-}"
-  notify "SCREEN RECORD: stopped (file missing?)" 3
   return 1
 }
 
@@ -358,12 +415,14 @@ maybe_detach_start() {
     export HYPR_REC_FPS="${FRAMERATE:-}"
     export HYPR_REC_CODEC="${CODEC:-}"
     export HYPR_REC_AGENT="$AGENT"
+    export HYPR_REC_DAMAGE="$DAMAGE_ONLY"
     if command -v setsid >/dev/null 2>&1; then
       setsid -f env HYPR_REC_DETACHED=1 \
         HYPR_REC_AUDIO="$AUDIO_MODE" \
         HYPR_REC_FPS="${FRAMERATE:-}" \
         HYPR_REC_CODEC="${CODEC:-}" \
         HYPR_REC_AGENT="$AGENT" \
+        HYPR_REC_DAMAGE="$DAMAGE_ONLY" \
         "$0" "$@" </dev/null >>"$LOG" 2>&1
     else
       nohup env HYPR_REC_DETACHED=1 \
@@ -371,6 +430,7 @@ maybe_detach_start() {
         HYPR_REC_FPS="${FRAMERATE:-}" \
         HYPR_REC_CODEC="${CODEC:-}" \
         HYPR_REC_AGENT="$AGENT" \
+        HYPR_REC_DAMAGE="$DAMAGE_ONLY" \
         "$0" "$@" </dev/null >>"$LOG" 2>&1 &
     fi
     exit 0
@@ -383,14 +443,12 @@ start_recording() {
   shift
 
   if ! command -v wf-recorder >/dev/null 2>&1; then
-    notify "SCREEN RECORD: wf-recorder not installed" 3
     echo "wf-recorder missing (apt install wf-recorder)" >&2
     exit 1
   fi
 
   if is_recording; then
     log "start refused: already recording"
-    notify "SCREEN RECORD: already active (hypr-record stop)" 0
     echo "already recording — hypr-record stop | toggle" >&2
     exit 1
   fi
@@ -412,7 +470,6 @@ start_recording() {
   sleep 0.35
   if ! kill -0 "$wpid" 2>/dev/null; then
     log "wf-recorder exited immediately"
-    notify "$(label_for_mode "$kind"): failed (see log)" 3
     wait "$wpid" 2>/dev/null || true
     exit 1
   fi
@@ -432,10 +489,10 @@ start_recording() {
       local sz
       sz="$(wc -c <"$file" | tr -d ' ')"
       log "recorder exit rc=$rc file=$file sz=$sz"
-      notify "$(label_for_mode "$kind"): $(basename "$file") (${sz} B)"
+      copy_to_clipboard "$file"
+      notify "$(label_for_mode "$kind"): $(basename "$file") (${sz} B) — path copied"
     else
       log "recorder exit rc=$rc no file"
-      notify "$(label_for_mode "$kind"): ended (no file)" 3
     fi
   else
     log "recorder reaped after stop rc=$rc"
@@ -451,7 +508,7 @@ do_start_mode() {
       maybe_detach_start window
       local geom
       if ! geom="$(active_window_geom)"; then
-        notify "APP WINDOW RECORD: no focused window" 3
+        log "no focused window"
         exit 1
       fi
       log "window geom=$geom"
@@ -463,17 +520,17 @@ do_start_mode() {
       local geom
       geom="$(slurp 2>>"$LOG")" || {
         log "slurp cancelled"
-        notify "AREA RECORD: cancelled" 0
         exit 0
       }
       log "region geom=$geom"
+      # No pre-roll sleep: caller arms via Cast [*REC] click (or CLI intentional).
       start_recording region -g "$geom"
       ;;
     full|all|desktop)
       maybe_detach_start full
       local geom
       if ! geom="$(full_layout_geom)"; then
-        notify "FULL SCREEN RECORD: no monitors" 3
+        log "no monitors"
         exit 1
       fi
       log "full geom=$geom"
@@ -483,7 +540,7 @@ do_start_mode() {
       local target out
       target="${a2:-active}"
       if ! out="$(resolve_output "$target")"; then
-        notify "PANEL RECORD: unknown target '$target'" 3
+        log "unknown panel target '$target'"
         echo "unknown panel/output: $target (try: inventory)" >&2
         exit 2
       fi
@@ -493,11 +550,21 @@ do_start_mode() {
       ;;
     left|right|aoc|asus|bar|landscape|portrait|main|HDMI-A-1|HDMI-A-2|hdmi-a-1|hdmi-a-2)
       if ! out="$(resolve_output "$m")"; then
-        notify "PANEL RECORD: unknown '$m'" 3
+        log "unknown output '$m'"
         exit 2
       fi
       maybe_detach_start "$m"
       start_recording panel -o "$out"
+      ;;
+    geom|geometry)
+      maybe_detach_start geom "$a2"
+      local geom="$a2"
+      if [[ -z "$geom" ]]; then
+        log "no geometry specified"
+        exit 1
+      fi
+      log "geom geom=$geom"
+      start_recording window -g "$geom"
       ;;
     *)
       echo "usage: hypr-record window|region|full|panel <alias>|toggle|stop|status" >&2
@@ -533,9 +600,13 @@ Audio (default: system / sink.monitor):
   --no-audio          silent
 
 Other:
-  --framerate N       constant FPS
+  --framerate N       constant FPS (default 30)
   --codec NAME        ffmpeg encoder (libx264, h264_nvenc, …)
+  --no-damage / -D    continuous frames (default — reliable on idle panels)
+  --damage            damage-only (smaller files; can brick AOC/idle outputs)
   --agent             no setsid (CLI)
+
+Env: HYPR_REC_AUDIO · HYPR_REC_FPS · HYPR_REC_CODEC · HYPR_REC_DAMAGE=1 · HYPR_REC_AGENT=1
 
 Files: ~/Videos/Screencasts/
 Log:   $XDG_RUNTIME_DIR/hypr-record.log

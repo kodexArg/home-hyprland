@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec "/home/kodex/Dev/this-computer/kdx-voice-live/.venv/bin/kdx-voice-live" "$@"
