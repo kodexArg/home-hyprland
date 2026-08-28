@@ -1,0 +1,9 @@
+# Catalog stamp for /k-hyprland. Bump when you refresh references from repo or wiki.
+catalog_date=2026-08-28
+repo_head=a70a800
+hyprland_tag=v0.56.2
+ags_tag=3.1.0
+os=debian-sid-forky
+# Portrait-left is the remembered layout (left ASUS 90°). Live lua may be both-landscape.
+layout_remembered=portrait-left
+layout_live_in_repo=both-landscape
