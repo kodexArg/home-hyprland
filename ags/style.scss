@@ -79,6 +79,36 @@ window.Bar {
     }
   }
 
+  .WsPeek {
+    margin: 0;
+    padding: 0;
+  }
+
+  button.WsRect {
+    margin: 0;
+    padding: 0;
+    min-width: 12px;
+    min-height: 20px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.42);
+    background: rgba(8, 7, 6, 0.55);
+
+    &.rot {
+      min-width: 20px;
+      min-height: 12px;
+    }
+
+    &.active {
+      border-color: rgba(0, 0, 0, 0.62);
+      background: rgba(6, 5, 4, 0.72);
+    }
+
+    &:hover {
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+      background: rgba(12, 11, 9, 0.7);
+    }
+  }
+
   .Volume {
     margin: 0;
     min-width: 0;
@@ -134,7 +164,7 @@ window.Bar {
 
   /* Memory track — right of brain (same wide gap). KISS 5×3:
      rows top→bottom: VRAM (8 GiB) · RAM · SWAP
-     label ≈ white · cells L→R by used/total
+     label ≈ white · cells L→R warn-ahead (floor → 0, redAt < 100% → red)
      cell gap 1px · row gap 2px · cell 6px · H ≈ Clock 1.5rem
      4 color bands, first two green: b0–b1 green · b2 yellow · b3 orange · b4 red */
   .RamTrack {

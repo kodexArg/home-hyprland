@@ -8,6 +8,7 @@ import { barModeClass, barVisible, setOverBar } from "./bar-mode"
 import LocalLlm from "./LocalLlm"
 import RamTrack from "./RamTrack"
 import SystemMenu from "./SystemMenu"
+import WorkspacePeek from "./WorkspacePeek"
 // import RecMenu from "./RecMenu" // parked — REC lamp menu WIP, re-enable later
 import DictationIndicator from "./DictationIndicator"
 import LiveIndicator from "./LiveIndicator"
@@ -382,7 +383,9 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
         <box $type="start" spacing={8} class="Bar-start">
           <Volume />
         </box>
-        <box $type="center" />
+        <box $type="center">
+          <WorkspacePeek />
+        </box>
         {/* spacing=10: equal gap brain · track · clock · sandwich (and chips) */}
         <box $type="end" spacing={10} class="Bar-end">
           {/* legacy voice indicators retired 2026-08-01 — kodexBot cutover */}
