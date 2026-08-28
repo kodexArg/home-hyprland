@@ -11,6 +11,7 @@
 | Super+G | Grok CLI (kitty class `grok-cli`, forced to HDMI-A-2) |
 | Super+Shift+G | Grok Web (Brave PWA `ggjocahimgaohmigbfhghnlfcnjemagj` · grok.com) |
 | Super+X | Brave browser |
+| Super+H | Deepseek Harness (`dsh-web-session`: start `dsh-web.service`, Chromium F11 on `127.0.0.1:3080`, stop unit on close) |
 | Super+W | WhatsApp Web (Brave PWA) |
 | Super+Y | YouTube (Brave PWA `agimnkijcaahngcdmfeangaknmldooml`) |
 | Super+E | Nautilus |
@@ -121,6 +122,7 @@ Also: SystemMenu → **Cast** · CLI · voice action `record`.
 | anyrun | `/home/kodex/.local/bin/anyrun-launch` |
 | grokCli | kitty `--class grok-cli` + `~/.config/kitty/grok.conf` + `~/.local/bin/grok --fullscreen` |
 | grokWeb | Brave PWA app-id `ggjocahimgaohmigbfhghnlfcnjemagj` (Grok Web / grok.com) |
+| dshWeb | `/home/kodex/.local/bin/dsh-web-session` (Deepseek Harness · Super+H) |
 | agsBin | PATH-prefixed `/usr/local/bin/ags` |
 
 ## Window rules (related)

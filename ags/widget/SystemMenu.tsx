@@ -21,10 +21,12 @@ import {
 } from "./warp"
 
 import {
+  castMic,
   castPopupOpen,
   castTargetLabel,
   fetchHyprlandPanels,
   HyprWindowPanel,
+  setCastMic,
   setCastPopupOpen,
   setCastTarget,
 } from "./cast"
@@ -466,6 +468,33 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
                 onClicked={() => pickTarget("screen-full")}
               >
                 <label label="All" />
+              </button>
+            </box>
+          </box>
+
+          {/* Audio: mic mixed into the mp4 (desktop stays). Default ON. */}
+          <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
+            <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
+              <image file={ICON_MIC} pixelSize={14} />
+              <label class="CastPopup-section-label" label="Audio" />
+            </box>
+            <box spacing={6} halign={Gtk.Align.CENTER}>
+              <button
+                class={createComputed(() =>
+                  castMic() ? "CastPopup-opt active" : "CastPopup-opt",
+                )}
+                tooltipText={createComputed(() =>
+                  castMic()
+                    ? "Voice ON — Brio + desktop mixed into the mp4. Click to drop the mic."
+                    : "Voice OFF — desktop audio only. Click to add Brio.",
+                )}
+                onClicked={() => setCastMic(!castMic.peek())}
+              >
+                <label
+                  label={createComputed(() =>
+                    castMic() ? "Mic ON (voice + desktop)" : "Mic OFF (desktop only)",
+                  )}
+                />
               </button>
             </box>
           </box>

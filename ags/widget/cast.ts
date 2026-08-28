@@ -58,6 +58,8 @@ const [windowGeom, setWindowGeom] = createState<string | null>(null)
 const [windowTitle, setWindowTitle] = createState<string>("")
 const [lastError, setLastError] = createState("")
 export const [castPopupOpen, setCastPopupOpen] = createState<boolean>(false)
+/** Include Brio (or default source) mixed with desktop audio. Cast default ON. */
+export const [castMic, setCastMic] = createState<boolean>(true)
 
 export const castPhase = phase
 export const castTarget = target
@@ -297,13 +299,13 @@ export const castTip = createComputed(() => {
     case "starting":
       return "Starting recorder…"
     case "recording":
-      return "Recording… click [*REC] to stop, copy path & open VLC"
+      return `Recording${castMic() ? " (voice + desktop)" : " (desktop audio)"}… click [*REC] to stop, copy path & open VLC`
     case "stopping":
       return "Finalizing… saving, copy path, open VLC"
     case "failed":
       return `Cast error: ${lastError() || "unknown"}`
     case "target_set":
-      return `Armed: ${castTargetLabel()} — click [*REC] to start`
+      return `Armed: ${castTargetLabel()} — ${castMic() ? "voice + desktop" : "desktop only"} — click [*REC] to start`
     default:
       if (!t) return "No target — SystemMenu → Cast to select"
       return `Target: ${castTargetLabel()}`
@@ -411,13 +413,17 @@ function targetArgs(): string[] | null {
   }
 }
 
+function audioArgs(): string[] {
+  return [castMic.peek() ? "--both" : "--system-audio"]
+}
+
 /** Immediate start — no artificial delay (REC click is the commit). */
 export function launchRecord(args: string[]): void {
   setCastPopupOpen(false)
   enterPhase("starting")
   try {
     Gio.Subprocess.new(
-      [HYPR_RECORD, ...args],
+      [HYPR_RECORD, ...audioArgs(), ...args],
       Gio.SubprocessFlags.STDERR_SILENCE,
     )
   } catch (e) {

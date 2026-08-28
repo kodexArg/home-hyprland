@@ -6,12 +6,16 @@
  *   + 5 cells fill L→R by used/total
  * cell gap 1px · row gap 2px · cell 6px
  * Color bands (first two green): b0–b1 green · b2 yellow · b3 orange · b4 red
+ * Fill: 0 cells below floor; red (5) at redAt < 100% — see SCALE_* in ram.ts.
  * Logic: ./ram.ts only. This file is pure projection.
  */
 import { Gtk } from "ags/gtk4"
 import { createComputed } from "ags"
 import {
   CELLS_PER_ROW,
+  SCALE_RAM,
+  SCALE_SWAP,
+  SCALE_VRAM,
   startRamTrack,
   trackRamAvailGiB,
   trackRamCells,
@@ -91,10 +95,10 @@ export default function RamTrack() {
     const st = trackSwapTotalGiB()
     const sc = trackSwapCells()
     return (
-      `VRAM ${vu.toFixed(2)} / ${vt.toFixed(2)} GiB · ${vc}/${CELLS_PER_ROW}\n` +
-      `RAM  ${ru.toFixed(2)} / ${rt.toFixed(2)} GiB · avail ${ra.toFixed(2)} · ${rc}/${CELLS_PER_ROW}\n` +
-      `SWAP ${su.toFixed(2)} / ${st.toFixed(2)} GiB · ${sc}/${CELLS_PER_ROW}\n` +
-      `rows VRAM · RAM · SWAP · cells L→R · b0–1 green`
+      `VRAM ${vu.toFixed(2)} / ${vt.toFixed(2)} GiB · ${vc}/${CELLS_PER_ROW} · empty <${Math.round(SCALE_VRAM.floor * 100)}% · red ≥${Math.round(SCALE_VRAM.redAt * 100)}%\n` +
+      `RAM  ${ru.toFixed(2)} / ${rt.toFixed(2)} GiB · avail ${ra.toFixed(2)} · ${rc}/${CELLS_PER_ROW} · empty <${Math.round(SCALE_RAM.floor * 100)}% · red ≥${Math.round(SCALE_RAM.redAt * 100)}%\n` +
+      `SWAP ${su.toFixed(2)} / ${st.toFixed(2)} GiB · ${sc}/${CELLS_PER_ROW} · empty <${Math.round(SCALE_SWAP.floor * 100)}% · red ≥${Math.round(SCALE_SWAP.redAt * 100)}%\n` +
+      `rows VRAM · RAM · SWAP · 0 gray → red warning before full`
     )
   })
 

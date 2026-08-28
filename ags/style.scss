@@ -90,7 +90,7 @@ window.Bar {
     min-width: 12px;
     min-height: 20px;
     border-radius: 2px;
-    border: 1px solid rgba(0, 0, 0, 0.42);
+    border: none;
     background: rgba(8, 7, 6, 0.55);
 
     &.rot {
@@ -98,14 +98,22 @@ window.Bar {
       min-height: 12px;
     }
 
-    &.active {
-      border-color: rgba(0, 0, 0, 0.62);
-      background: rgba(6, 5, 4, 0.72);
+    &.occupied {
+      background: rgba(14, 13, 11, 0.78);
     }
 
     &:hover {
-      border-color: color.mix($orange-500, $ink-1000, 28%);
       background: rgba(12, 11, 9, 0.7);
+    }
+  }
+
+  .WsRect-under {
+    min-height: 2px;
+    border-radius: 1px;
+    background: transparent;
+
+    &.on {
+      background: $orange-500;
     }
   }
 

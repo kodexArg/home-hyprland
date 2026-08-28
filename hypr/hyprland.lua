@@ -4,8 +4,10 @@
 local asus = "desc:ASUSTek COMPUTER INC VA27EHF"
 local aoc  = "desc:AOC G2790G4"
 
-hl.monitor({ output = asus, mode = "preferred", position = "-1080x0", scale = 1, transform = 1 })
-hl.monitor({ output = aoc,  mode = "preferred", position = "0x420",   scale = 1, transform = 0 })
+-- Both landscape, ASUS left of AOC. Mixed portrait/landscape saved as
+-- git 1c209aa — restore transform 1 / -1080x0 / 0x420 when going back.
+hl.monitor({ output = asus, mode = "preferred", position = "-1920x0", scale = 1, transform = 0 })
+hl.monitor({ output = aoc,  mode = "preferred", position = "0x0",     scale = 1, transform = 0 })
 
 -- Workspaces pinned to panels (portrait left / landscape right).
 -- Defaults shown at login: 1 on ASUS, 4 on AOC.
@@ -54,6 +56,7 @@ local whatsapp    = "brave-browser --profile-directory=Default --app-id=hnpfjngl
 local youtube     = "brave-browser --profile-directory=Default --app-id=agimnkijcaahngcdmfeangaknmldooml"
 -- Brave PWA: Grok Web (desktop: brave-ggjocahimgaohmigbfhghnlfcnjemagj-Default · grok.com)
 local grokWeb     = "brave-browser --profile-directory=Default --app-id=ggjocahimgaohmigbfhghnlfcnjemagj"
+local dshWeb      = "/home/kodex/.local/bin/dsh-web-session"
 local menu        = "hyprlauncher"
 local anyrun      = "/home/kodex/.local/bin/anyrun-launch"
 local shot        = "/home/kodex/.local/bin/hypr-screenshot"
@@ -317,6 +320,7 @@ hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
 hl.bind(mainMod .. " + SHIFT + G", hl.dsp.exec_cmd(grokWeb))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
+hl.bind(mainMod .. " + H", hl.dsp.exec_cmd(dshWeb))
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(whatsapp))
 hl.bind(mainMod .. " + Y", hl.dsp.exec_cmd(youtube))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))

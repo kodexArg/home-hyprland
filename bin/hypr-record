@@ -14,11 +14,12 @@
 #   --no-audio          no sound
 #   --mic               default Pulse/PipeWire source (mic)
 #   --system-audio      default sink.monitor (desktop audio)  [default]
+#   --both              mix mic + desktop (null-sink + 2 loopbacks)
 #   --framerate N       hard CFR (wf-recorder -r)
 #   --agent             no setsid; useful for CLI/scripts
 #
 # Env:
-#   HYPR_REC_AUDIO=0|mic|system   (default system)
+#   HYPR_REC_AUDIO=0|mic|system|both   (default system)
 #   HYPR_REC_FPS=N
 #   HYPR_REC_CODEC=…              e.g. libx264 / h264_nvenc
 #   HYPR_REC_AGENT=1              same as --agent
@@ -37,7 +38,9 @@ export PATH="/home/kodex/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 LOG="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.log"
 PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.pid"
 STATEFILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.state"
+AUDIOFILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.audio"
 DIR="${XDG_VIDEOS_DIR:-$HOME/Videos}/Screencasts"
+MIX_SINK="hypr-rec-mix"
 
 log() { printf '%s %s\n' "$(date -Iseconds)" "$*" >>"$LOG" 2>/dev/null || true; }
 
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --no-audio)       AUDIO_MODE=0; shift ;;
     --mic)            AUDIO_MODE=mic; shift ;;
     --system-audio|--desktop-audio) AUDIO_MODE=system; shift ;;
+    --both|--mic-and-system|--mix) AUDIO_MODE=both; shift ;;
     --framerate)      FRAMERATE="${2:-}"; shift 2 ;;
     --framerate=*)    FRAMERATE="${1#*=}"; shift ;;
     --codec)          CODEC="${2:-}"; shift 2 ;;
@@ -264,13 +268,157 @@ print("Record:  hypr-record region|window|panel left|panel aoc|toggle region|sto
 PY
 }
 
+audio_kv() {
+  local key="$1"
+  [[ -f "$AUDIOFILE" ]] || return 0
+  awk -F= -v k="$key" '$1==k {print substr($0, index($0,"=")+1); exit}' "$AUDIOFILE"
+}
+
+# Prefer Brio (host habit, same as AGS mic.ts); else Pulse default source.
+resolve_mic_source() {
+  local name
+  name="$(pactl list short sources 2>/dev/null | awk '{print $2}' | grep -v '\.monitor$' | grep -i brio | head -1 || true)"
+  if [[ -n "${name:-}" ]]; then
+    printf '%s\n' "$name"
+    return 0
+  fi
+  pactl get-default-source 2>/dev/null || true
+}
+
+wait_source() {
+  local want="$1" i=0
+  while [[ $i -lt 40 ]]; do
+    if pactl list short sources 2>/dev/null | awk '{print $2}' | grep -qx "$want"; then
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 0.05
+  done
+  return 1
+}
+
+unload_mix_modules() {
+  local id
+  # Loopbacks that target the mix sink, then the null sink itself.
+  while read -r id; do
+    [[ -n "${id:-}" ]] || continue
+    pactl unload-module "$id" >/dev/null 2>>"$LOG" || true
+  done < <(pactl list short modules 2>/dev/null | awk -F'\t' '$2=="module-loopback" && $3 ~ /hypr-rec-mix/ {print $1}')
+  while read -r id; do
+    [[ -n "${id:-}" ]] || continue
+    pactl unload-module "$id" >/dev/null 2>>"$LOG" || true
+  done < <(pactl list short modules 2>/dev/null | awk -F'\t' '$2=="module-null-sink" && $3 ~ /hypr-rec-mix/ {print $1}')
+}
+
+cleanup_audio() {
+  local src mute sink
+  src="$(audio_kv src)"
+  mute="$(audio_kv mute)"
+  sink="$(audio_kv sink)"
+  unload_mix_modules
+  if [[ -n "${src:-}" && "${mute:-}" == "yes" ]]; then
+    pactl set-source-mute "$src" 1 >/dev/null 2>>"$LOG" || true
+    log "audio: restored mute on $src"
+  fi
+  if [[ -n "${sink:-}" ]]; then
+    local now
+    now="$(pactl get-default-sink 2>/dev/null || true)"
+    if [[ -n "$now" && "$now" != "$sink" ]]; then
+      pactl set-default-sink "$sink" >/dev/null 2>>"$LOG" || true
+      log "audio: restored default sink $sink"
+    fi
+  fi
+  rm -f "$AUDIOFILE"
+}
+
+# Unmute mic for the session (restore on cleanup). Mix: mic + sink.monitor → hypr-rec-mix.
+prepare_audio() {
+  cleanup_audio
+  case "$AUDIO_MODE" in
+    0|no|false|off|none) return 0 ;;
+  esac
+
+  local src orig_mute orig_sink
+  src="$(resolve_mic_source)"
+  orig_sink="$(pactl get-default-sink 2>/dev/null || true)"
+  orig_mute="no"
+  if [[ -n "${src:-}" ]]; then
+    if pactl get-source-mute "$src" 2>/dev/null | grep -qi 'yes'; then
+      orig_mute="yes"
+    fi
+  fi
+
+  {
+    printf 'mode=%s\n' "$AUDIO_MODE"
+    printf 'src=%s\n' "${src:-}"
+    printf 'mute=%s\n' "$orig_mute"
+    printf 'sink=%s\n' "${orig_sink:-}"
+  } >"$AUDIOFILE"
+
+  case "$AUDIO_MODE" in
+    both|mix|all)
+      unload_mix_modules
+      if [[ -z "${src:-}" || -z "${orig_sink:-}" ]]; then
+        log "audio: mix missing src/sink (src=${src:-?} sink=${orig_sink:-?}) → fallback mic"
+        AUDIO_MODE=mic
+      else
+        local mid_null mid_mic mid_sys
+        if ! mid_null="$(pactl load-module module-null-sink sink_name="$MIX_SINK" sink_properties=device.description=hypr-rec-mix 2>>"$LOG")"; then
+          log "audio: null-sink failed → fallback mic"
+          AUDIO_MODE=mic
+        else
+          # New sink must not steal the session default (speakers / HDMI).
+          pactl set-default-sink "$orig_sink" >/dev/null 2>>"$LOG" || true
+          mid_mic="$(pactl load-module module-loopback source="$src" sink="$MIX_SINK" latency_msec=30 2>>"$LOG" || true)"
+          mid_sys="$(pactl load-module module-loopback source="${orig_sink}.monitor" sink="$MIX_SINK" latency_msec=30 2>>"$LOG" || true)"
+          printf 'modules=%s,%s,%s\n' "${mid_null:-}" "${mid_mic:-}" "${mid_sys:-}" >>"$AUDIOFILE"
+          if [[ -z "${mid_mic:-}" || -z "${mid_sys:-}" ]]; then
+            log "audio: loopback failed mic=${mid_mic:-?} sys=${mid_sys:-?} → fallback mic"
+            unload_mix_modules
+            AUDIO_MODE=mic
+          elif ! wait_source "${MIX_SINK}.monitor"; then
+            log "audio: mix monitor never appeared → fallback mic"
+            unload_mix_modules
+            AUDIO_MODE=mic
+          else
+            log "audio: mix ready src=$src sink=${orig_sink}.monitor → ${MIX_SINK}.monitor (mods ${mid_null:-?} ${mid_mic:-?} ${mid_sys:-?})"
+          fi
+        fi
+      fi
+      ;;
+  esac
+
+  case "$AUDIO_MODE" in
+    mic|source|default|both|mix|all)
+      if [[ -n "${src:-}" && "$orig_mute" == "yes" ]]; then
+        pactl set-source-mute "$src" 0 >/dev/null 2>>"$LOG" || true
+        log "audio: unmuted $src for recording"
+      fi
+      ;;
+  esac
+}
+
 audio_args() {
   case "$AUDIO_MODE" in
     0|no|false|off|none)
       return 0
       ;;
     mic|source|default)
-      printf '%s\n' "-a"
+      local src
+      src="$(resolve_mic_source)"
+      if [[ -n "${src:-}" ]]; then
+        printf '%s\n' "-a${src}"
+      else
+        printf '%s\n' "-a"
+      fi
+      ;;
+    both|mix|all)
+      if pactl list short sources 2>/dev/null | awk '{print $2}' | grep -qx "${MIX_SINK}.monitor"; then
+        printf '%s\n' "-a${MIX_SINK}.monitor"
+      else
+        log "audio: mix monitor missing at encode; using default -a"
+        printf '%s\n' "-a"
+      fi
       ;;
     system|desktop|monitor|sink)
       local sink mon
@@ -373,6 +521,7 @@ stop_recording() {
     sleep 0.3
     kill -KILL "$pid" 2>>"$LOG" || true
   fi
+  cleanup_audio
   clear_state
   if [[ -n "${file:-}" && -f "$file" ]]; then
     try_repair_mp4 "$file" || true
@@ -457,6 +606,7 @@ start_recording() {
   local file
   file="$DIR/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM.mp4"
 
+  prepare_audio
   build_cmd "$file"
   # append geometry/output args from caller
   WF_CMD+=("$@")
@@ -471,6 +621,7 @@ start_recording() {
   if ! kill -0 "$wpid" 2>/dev/null; then
     log "wf-recorder exited immediately"
     wait "$wpid" 2>/dev/null || true
+    cleanup_audio
     exit 1
   fi
 
@@ -482,6 +633,7 @@ start_recording() {
   # Reap + notify on natural exit (rare: killed externally without our stop)
   wait "$wpid" 2>/dev/null || true
   local rc=$?
+  cleanup_audio
   # If stop_recording already cleared state, skip double notify
   if [[ -f "$PIDFILE" ]] && [[ "$(cat "$PIDFILE" 2>/dev/null)" == "$wpid" ]]; then
     clear_state
@@ -596,7 +748,8 @@ Modes:
 
 Audio (default: system / sink.monitor):
   --system-audio      desktop audio
-  --mic               default capture source
+  --mic               default capture source (Brio if present)
+  --both              mix mic + desktop (Cast default)
   --no-audio          silent
 
 Other:

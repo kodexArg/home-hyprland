@@ -23,6 +23,7 @@ Do **not** steal **Super+R** (hyprlauncher). New share picker is **Super+Ctrl+R*
 │   Super+Ctrl+R     → kdx-share                                   │
 │   Super+Shift+O    → hypr-monitor-heal  (post-blank dual-GPU)    │
 │   Super+D / Super+L→ dictate / voice-live                        │
+│   Super+H          → Deepseek Harness (dsh-web-session)          │
 │   Super+A          → hypr-reveal-all                             │
 │   Super+R          → hyprlauncher       (reserved)               │
 │   Super+SPACE      → anyrun                                      │
@@ -166,6 +167,7 @@ Disk record: `references/record.md` · ADR `20260806-hypr-record-disk-screencast
 hypr-record status|inventory|stop
 hypr-record toggle region|window
 hypr-record panel asus|aoc|HDMI-A-2|HDMI-A-1
+hypr-record --both panel asus     # Cast default: Brio + desktop mix
 ```
 
 Physical aliases (2026-08-06): `left`/`asus`/`bar` → HDMI-A-2 · `right`/`aoc` → HDMI-A-1. Brand names still fine.  

@@ -116,8 +116,8 @@ Scouted **2026-07-16**. Machine: **ags 3.1.0** @ `/usr/local/bin/ags`. Upstream 
   widget/
     Bar.tsx           # Volume + RamTrack + LocalLlm + Clock + SystemMenu …
     caffeine.ts       # caffeine FSM (SSOT=process table, tick reconcile) — UI parked
-    ram.ts            # RAM track FSM (SSOT=/proc/meminfo, 2s tick)
-    RamTrack.tsx      # 3-pip battery-style usage stack (left of brain)
+    ram.ts            # RAM track FSM (SSOT=meminfo+nvidia-smi, 2s tick, warn-ahead)
+    RamTrack.tsx      # 5×3 VRAM/RAM/SWAP (left of brain)
     bar-mode.ts       # always | temp | hidden + edge poll + peek
     LocalLlm.tsx      # brain menu: GGUF model picker + local-llm.service FSM
 ```
@@ -192,12 +192,13 @@ Recorded in `style.scss` as `$status-*` and aligned with Presentation Orange:
 | Piece | Value |
 |---|---|
 | Files | `widget/ram.ts` (FSM) · `widget/RamTrack.tsx` (UI) |
-| SSOT | `/proc/meminfo` — **used = MemTotal − MemAvailable** |
+| SSOT | VRAM `nvidia-smi` · RAM **MemTotal − MemAvailable** · Swap **SwapTotal − SwapFree** |
 | Tick | 2 s reconcile |
 | Placement | end cluster, **immediately left of** LocalLlm brain |
-| Visual | 3 **vertical** bars in a row (16px glyph / 22×22 shell like brain), fill **L→R** via CSS `level-*` + `nth-child` |
-| Phases | `empty` &lt;0.5 · `low` [0.5,4) · `med` [4,8) · `high` ≥8 GiB used · `failed` |
-| Colors | empty gray · low green · med yellow · high red |
+| Visual | 5×3 grid, rows VRAM · RAM · SWAP, fill **L→R** |
+| Scale | **warn-ahead** (not linear 0–100%). `used/total < floor` → 0 cells; `≥ redAt` → red (5th cell) with headroom left |
+| Floors / red | VRAM 8% / 70% · RAM 32% / 55% · SWAP 4% / 35% |
+| Colors | empty gray · b0–b1 green · b2 yellow · b3 orange · b4 red |
 | IPC | `ags request ram-status` |
 
 `CaptureToggle` / `CapturePanel` are written but **commented out in the `end` box

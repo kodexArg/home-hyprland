@@ -32,7 +32,7 @@ hypr-record toggle window
 hypr-record region|window|full
 hypr-record panel asus|aoc|bar|HDMI-A-2|HDMI-A-1
 hypr-record stop
-hypr-record --no-audio|--mic|--system-audio region
+hypr-record --no-audio|--mic|--system-audio|--both region
 hypr-record --agent status         # scripts/agents: no setsid
 ```
 
@@ -42,8 +42,11 @@ hypr-record --agent status         # scripts/agents: no setsid
 | State | `$XDG_RUNTIME_DIR/hypr-record.{pid,state,log}` |
 | Engine | `wf-recorder` (+ PipeWire/Pulse audio optional) |
 | Default audio | system (`sink.monitor`) |
+| Cast audio | **`--both`** (Brio + desktop mix) unless Mic toggle OFF |
 
-Env: `HYPR_REC_AUDIO` · `HYPR_REC_FPS` (default 30) · `HYPR_REC_CODEC` · `HYPR_REC_AGENT` · `HYPR_REC_DAMAGE=1` (opt-in; default continuous `-D`).
+Env: `HYPR_REC_AUDIO=0|mic|system|both` · `HYPR_REC_FPS` (default 30) · `HYPR_REC_CODEC` · `HYPR_REC_AGENT` · `HYPR_REC_DAMAGE=1` (opt-in; default continuous `-D`).
+
+**Voice mix (`--both`):** wf-recorder takes one `-a` device. Mix = PipeWire null sink `hypr-rec-mix` + loopback(mic) + loopback(sink.monitor). Unmutes Brio for the session, restores mute/default sink on stop. State: `$XDG_RUNTIME_DIR/hypr-record.audio`.
 
 **Idle AOC pitfall (fixed 2026-08-06):** damage-only capture on a quiet HDMI-A-1 often yields 1 frame + hang on stop → unplayable mp4. Default is now `-D` + CFR 30.
 
@@ -66,7 +69,7 @@ Left/right follow **physical** side (fixed 2026-08-06). Brand aliases still pref
 
 | UI | File | Live? |
 |---|---|---|
-| SystemMenu **Cast** row | `widget/SystemMenu.tsx` + `cast.ts` | ✅ drives `hypr-record` |
+| SystemMenu **Cast** row | `widget/SystemMenu.tsx` + `cast.ts` | ✅ drives `hypr-record` (Mic toggle → `--both`) |
 | `CastRecChip` | `CastRecChip.tsx` | ✅ stop while recording |
 | `RecModeIndicator` | Super+M chip | ✅ WIP mode only |
 | `RecMenu` | `RecMenu.tsx` | ❌ parked (not mounted in `Bar.tsx`) |

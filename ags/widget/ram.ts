@@ -6,8 +6,11 @@
  *   RAM   MemTotal − MemAvailable                (/proc/meminfo)
  *   Swap  SwapTotal − SwapFree                   (/proc/meminfo)
  *
- * Fill: cellsLit = ceil(used/total * 5), clamped 0..5.
- * Color (per lit cell index — 4 bands, first two green):
+ * Fill is warn-ahead, not linear 0–100%:
+ *   used/total < floor → 0 cells (idle compositor / residual swap stay empty)
+ *   used/total ≥ redAt → 5 cells (red) with headroom still left
+ *   between: 1..4
+ * Color (per lit cell index):
  *   0–1 green · 2 yellow · 3 orange · 4 red
  *
  * Contract: caffeine template (external SSOT · derived UI · tick reconcile · IPC).
@@ -25,6 +28,18 @@ export const CELLS_PER_ROW = 5
 
 /** Fallback when nvidia-smi total is missing (RTX 2060 OC). */
 const VRAM_TOTAL_FALLBACK_GIB = 8
+
+/** used/total floor → 0 cells; redAt → 5th (red) cell. Both < 1 so red is a warning. */
+export type WarnScale = { floor: number; redAt: number }
+
+/** VRAM 8 GiB: compositor ~0.3 stays empty; red at 70% (~5.6 GiB, 2.4 left). */
+export const SCALE_VRAM: WarnScale = { floor: 0.08, redAt: 0.7 }
+
+/** RAM ~15 GiB: idle Hypr ~4.0–4.5 GiB stays empty; red at 55% (~8.3 GiB used, ~6.7 avail). */
+export const SCALE_RAM: WarnScale = { floor: 0.32, redAt: 0.55 }
+
+/** Swap 8 GiB: <~320 MiB empty; red at 35% (~2.8 GiB) — paging already hurts. */
+export const SCALE_SWAP: WarnScale = { floor: 0.04, redAt: 0.35 }
 
 const [vramUsedGiB, setVramUsedGiB] = createState(0)
 const [vramTotalGiB, setVramTotalGiB] = createState(VRAM_TOTAL_FALLBACK_GIB)
@@ -50,11 +65,24 @@ function nowSec(): number {
   return GLib.get_monotonic_time() / 1_000_000
 }
 
-/** How many of 5 cells are lit for used/total. */
-export function cellsFromRatio(used: number, total: number): number {
+/**
+ * How many of 5 cells are lit for used/total on a warn-ahead scale.
+ * Tiny usage (below floor) is 0 — never light green from ceil(epsilon).
+ */
+export function cellsFromRatio(
+  used: number,
+  total: number,
+  scale: WarnScale,
+): number {
   if (!(total > 0) || !(used > 0) || !Number.isFinite(used) || !Number.isFinite(total))
     return 0
-  return Math.min(CELLS_PER_ROW, Math.ceil((used / total) * CELLS_PER_ROW))
+  const r = used / total
+  if (r < scale.floor) return 0
+  if (r >= scale.redAt) return CELLS_PER_ROW
+  const span = scale.redAt - scale.floor
+  if (!(span > 0)) return CELLS_PER_ROW
+  const t = (r - scale.floor) / span // (0, 1)
+  return 1 + Math.floor(t * (CELLS_PER_ROW - 1))
 }
 
 export type MemSnap = {
@@ -148,24 +176,30 @@ function reconcile(): void {
   setRamUsedGiB(ramU)
   setRamAvailGiB(ramA)
   setRamTotalGiB(ramT)
-  setRamCells(cellsFromRatio(ramU, ramT))
+  setRamCells(cellsFromRatio(ramU, ramT, SCALE_RAM))
 
   setSwapUsedGiB(swapU)
   setSwapTotalGiB(swapT)
-  setSwapCells(cellsFromRatio(swapU, swapT))
+  setSwapCells(cellsFromRatio(swapU, swapT, SCALE_SWAP))
 
   const vram = readVramGiB()
   if (vram) {
     setVramUsedGiB(vram.used)
     setVramTotalGiB(vram.total)
-    setVramCells(cellsFromRatio(vram.used, vram.total))
+    setVramCells(cellsFromRatio(vram.used, vram.total, SCALE_VRAM))
     setLastError("")
     setOk(true)
   } else {
     // Keep last VRAM numbers; still show RAM/Swap. Mark soft error.
     setLastError("nvidia-smi vram failed")
     setOk(true) // mem path ok
-    setVramCells(cellsFromRatio(vramUsedGiB(), vramTotalGiB() || VRAM_TOTAL_FALLBACK_GIB))
+    setVramCells(
+      cellsFromRatio(
+        vramUsedGiB(),
+        vramTotalGiB() || VRAM_TOTAL_FALLBACK_GIB,
+        SCALE_VRAM,
+      ),
+    )
   }
 }
 
