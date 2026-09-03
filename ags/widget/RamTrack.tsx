@@ -24,6 +24,8 @@ import {
   trackSwapCells,
   trackSwapTotalGiB,
   trackSwapUsedGiB,
+  trackZswapPoolGiB,
+  trackZswappedGiB,
   trackVramCells,
   trackVramTotalGiB,
   trackVramUsedGiB,
@@ -94,11 +96,21 @@ export default function RamTrack() {
     const su = trackSwapUsedGiB()
     const st = trackSwapTotalGiB()
     const sc = trackSwapCells()
+    const zp = trackZswapPoolGiB()
+    const zs = trackZswappedGiB()
+    const vf = Math.max(0, vt - vu)
+    const sf = Math.max(0, st - su)
+    const zline =
+      zp > 0 || zs > 0
+        ? `zswap pool ${zp.toFixed(2)} GiB · ${zs.toFixed(2)} uncompressed (still in SwapUsed)\n`
+        : `zswap on · pool empty (new pages compress here; disk swap still counts)\n`
     return (
-      `VRAM ${vu.toFixed(2)} / ${vt.toFixed(2)} GiB · ${vc}/${CELLS_PER_ROW} · empty <${Math.round(SCALE_VRAM.floor * 100)}% · red ≥${Math.round(SCALE_VRAM.redAt * 100)}%\n` +
-      `RAM  ${ru.toFixed(2)} / ${rt.toFixed(2)} GiB · avail ${ra.toFixed(2)} · ${rc}/${CELLS_PER_ROW} · empty <${Math.round(SCALE_RAM.floor * 100)}% · red ≥${Math.round(SCALE_RAM.redAt * 100)}%\n` +
-      `SWAP ${su.toFixed(2)} / ${st.toFixed(2)} GiB · ${sc}/${CELLS_PER_ROW} · empty <${Math.round(SCALE_SWAP.floor * 100)}% · red ≥${Math.round(SCALE_SWAP.redAt * 100)}%\n` +
-      `rows VRAM · RAM · SWAP · 0 gray → red warning before full`
+      `VRAM  ${vu.toFixed(2)} / ${vt.toFixed(2)} GiB · free ${vf.toFixed(2)} · ${vc}/${CELLS_PER_ROW}\n` +
+      `RAM   ${ru.toFixed(2)} / ${rt.toFixed(2)} GiB · free ${ra.toFixed(2)} · ${rc}/${CELLS_PER_ROW}\n` +
+      `SWAP  ${su.toFixed(2)} / ${st.toFixed(2)} GiB · free ${sf.toFixed(2)} · ${sc}/${CELLS_PER_ROW}\n` +
+      zline +
+      `0 cells = 0 GiB used · 5th cell (red) = warning before full\n` +
+      `red warning: VRAM ≥${Math.round(SCALE_VRAM.redAt * 100)}% · RAM ≥${Math.round(SCALE_RAM.redAt * 100)}% · SWAP ≥${Math.round(SCALE_SWAP.redAt * 100)}%`
     )
   })
 

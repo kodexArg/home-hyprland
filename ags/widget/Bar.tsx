@@ -15,6 +15,7 @@ import LiveIndicator from "./LiveIndicator"
 import KodexbotChip from "./KodexbotChip"
 import RecModeIndicator from "./RecModeIndicator"
 import CastRecChip from "./CastRecChip"
+import MicIndicator from "./MicIndicator"
 // import LiveModeIndicator from "./LiveModeIndicator" // Super+L liberada 2026-08-01
 // Caffeine + ClockCluster parked (UI hidden). Restore with widget/caffeine.ts + block below.
 // import {
@@ -396,8 +397,11 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           <RecModeIndicator />
           <CastRecChip />
           {/* <RecMenu gdkmonitor={gdkmonitor} /> parked — REC lamp WIP */}
-          {/* brain · memory track · clock · sandwich — equal Bar-end spacing */}
-          <LocalLlm gdkmonitor={gdkmonitor} />
+          {/* mic indicator + brain clustered tightly (spacing=2) */}
+          <box spacing={2} class="BrainCluster" valign={Gtk.Align.CENTER}>
+            <MicIndicator />
+            <LocalLlm gdkmonitor={gdkmonitor} />
+          </box>
           <RamTrack />
           {/* <ClockCaffeine /> parked — clock+cup cluster; see ClockCaffeine above */}
           <Clock />

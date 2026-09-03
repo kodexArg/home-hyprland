@@ -5,6 +5,8 @@
  *   VRAM  nvidia-smi memory.used / memory.total  (2060 OC ≈ 8 GiB)
  *   RAM   MemTotal − MemAvailable                (/proc/meminfo)
  *   Swap  SwapTotal − SwapFree                   (/proc/meminfo)
+ *         Zswap / Zswapped are tooltip-only (compressed pool vs
+ *         uncompressed pages sitting in zswap; still counted in SwapUsed)
  *
  * Fill is warn-ahead, not linear 0–100%:
  *   used/total < floor → 0 cells (idle compositor / residual swap stay empty)
@@ -32,14 +34,14 @@ const VRAM_TOTAL_FALLBACK_GIB = 8
 /** used/total floor → 0 cells; redAt → 5th (red) cell. Both < 1 so red is a warning. */
 export type WarnScale = { floor: number; redAt: number }
 
-/** VRAM 8 GiB: compositor ~0.3 stays empty; red at 70% (~5.6 GiB, 2.4 left). */
-export const SCALE_VRAM: WarnScale = { floor: 0.08, redAt: 0.7 }
+/** VRAM 8 GiB: red at 70% (~5.6 GiB, 2.4 left). */
+export const SCALE_VRAM: WarnScale = { floor: 0, redAt: 0.7 }
 
-/** RAM ~15 GiB: idle Hypr ~4.0–4.5 GiB stays empty; red at 55% (~8.3 GiB used, ~6.7 avail). */
-export const SCALE_RAM: WarnScale = { floor: 0.32, redAt: 0.55 }
+/** RAM ~15 GiB: 4 GB (~27%) lights 2 green cells; red at 88% (~13.2 used, ~1.8 avail before OOM). */
+export const SCALE_RAM: WarnScale = { floor: 0, redAt: 0.88 }
 
-/** Swap 8 GiB: <~320 MiB empty; red at 35% (~2.8 GiB) — paging already hurts. */
-export const SCALE_SWAP: WarnScale = { floor: 0.04, redAt: 0.35 }
+/** Swap 8 GiB: 0 when empty; red at 35% (~2.8 GiB) — paging already hurts. */
+export const SCALE_SWAP: WarnScale = { floor: 0, redAt: 0.35 }
 
 const [vramUsedGiB, setVramUsedGiB] = createState(0)
 const [vramTotalGiB, setVramTotalGiB] = createState(VRAM_TOTAL_FALLBACK_GIB)
@@ -53,6 +55,8 @@ const [ramCells, setRamCells] = createState(0)
 const [swapUsedGiB, setSwapUsedGiB] = createState(0)
 const [swapTotalGiB, setSwapTotalGiB] = createState(0)
 const [swapCells, setSwapCells] = createState(0)
+const [zswapPoolGiB, setZswapPoolGiB] = createState(0)
+const [zswappedGiB, setZswappedGiB] = createState(0)
 
 const [lastError, setLastError] = createState("")
 const [ok, setOk] = createState(true)
@@ -91,6 +95,10 @@ export type MemSnap = {
   ramUsedB: number
   swapTotalB: number
   swapUsedB: number
+  /** Compressed zswap pool in RAM (0 if unused / old kernel). */
+  zswapPoolB: number
+  /** Uncompressed size of pages stored in zswap. */
+  zswappedB: number
 }
 
 export function readMeminfo(): MemSnap | null {
@@ -102,6 +110,8 @@ export function readMeminfo(): MemSnap | null {
     let memAvailKb = 0
     let swapTotalKb = 0
     let swapFreeKb = 0
+    let zswapKb = 0
+    let zswappedKb = 0
     for (const line of text.split("\n")) {
       if (line.startsWith("MemTotal:")) memTotalKb = parseInt(line.split(/\s+/)[1], 10)
       else if (line.startsWith("MemAvailable:"))
@@ -110,6 +120,9 @@ export function readMeminfo(): MemSnap | null {
         swapTotalKb = parseInt(line.split(/\s+/)[1], 10)
       else if (line.startsWith("SwapFree:"))
         swapFreeKb = parseInt(line.split(/\s+/)[1], 10)
+      else if (line.startsWith("Zswap:")) zswapKb = parseInt(line.split(/\s+/)[1], 10)
+      else if (line.startsWith("Zswapped:"))
+        zswappedKb = parseInt(line.split(/\s+/)[1], 10)
     }
     if (!Number.isFinite(memTotalKb) || memTotalKb <= 0) return null
     if (!Number.isFinite(memAvailKb) || memAvailKb < 0) return null
@@ -125,6 +138,8 @@ export function readMeminfo(): MemSnap | null {
       ramUsedB: Math.max(0, ramTotalB - ramAvailB),
       swapTotalB,
       swapUsedB: Math.max(0, swapTotalB - swapFreeB),
+      zswapPoolB: Number.isFinite(zswapKb) && zswapKb > 0 ? zswapKb * 1024 : 0,
+      zswappedB: Number.isFinite(zswappedKb) && zswappedKb > 0 ? zswappedKb * 1024 : 0,
     }
   } catch {
     return null
@@ -181,6 +196,8 @@ function reconcile(): void {
   setSwapUsedGiB(swapU)
   setSwapTotalGiB(swapT)
   setSwapCells(cellsFromRatio(swapU, swapT, SCALE_SWAP))
+  setZswapPoolGiB(mem.zswapPoolB / GIB)
+  setZswappedGiB(mem.zswappedB / GIB)
 
   const vram = readVramGiB()
   if (vram) {
@@ -227,6 +244,7 @@ export function getRamStatus(): string {
     `vram=${vramUsedGiB().toFixed(2)}/${vramTotalGiB().toFixed(2)} cells=${vramCells()} ` +
     `ram=${ramUsedGiB().toFixed(2)}/${ramTotalGiB().toFixed(2)} avail=${ramAvailGiB().toFixed(2)} cells=${ramCells()} ` +
     `swap=${swapUsedGiB().toFixed(2)}/${swapTotalGiB().toFixed(2)} cells=${swapCells()} ` +
+    `zswap=${zswapPoolGiB().toFixed(2)} zswapped=${zswappedGiB().toFixed(2)} ` +
     `ok=${ok()}${errPart} age_s=${age}`
   )
 }
@@ -242,4 +260,6 @@ export const trackRamCells = ramCells
 export const trackSwapUsedGiB = swapUsedGiB
 export const trackSwapTotalGiB = swapTotalGiB
 export const trackSwapCells = swapCells
+export const trackZswapPoolGiB = zswapPoolGiB
+export const trackZswappedGiB = zswappedGiB
 export const trackOk = ok

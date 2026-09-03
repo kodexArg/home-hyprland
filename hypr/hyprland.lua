@@ -70,7 +70,7 @@ local zoomToggle  = "/bin/bash /home/kodex/.local/bin/hypr-zoom-toggle"
 local kdxShare    = "/home/kodex/.local/bin/kdx-share"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
-local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy --dangerously-skip-permissions --fullscreen"
+local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy --dangerously-skip-permissions"
 local mainMod     = "SUPER"
 local resizeStep  = 40
 
@@ -83,7 +83,7 @@ local hyprlandWallpaperDisabled = 0
 -- and updated. AQ_FORCE_LINEAR_BLIT already covers secondary-scanout import.
 local hardwareCursorsDisabled   = false
 local cursorUseCpuBuffer        = true
-local cursorDefaultMonitor      = "desc:ASUSTek COMPUTER INC VA27EHF"
+local cursorDefaultMonitor      = aoc
 local duckyPhantomPointer       = "ducky-ducky-one2-sf-rgb-1"
 local wirelessPhantomPointer    = "logitech-wireless-mouse-1"
 
@@ -186,6 +186,18 @@ hl.device({ name = duckyPhantomPointer, enabled = false })
 -- Unifying receiver still enumerates a pointer even without a live mouse.
 hl.device({ name = wirelessPhantomPointer, enabled = false })
 
+local function windowHasTag(w, tag)
+    if w == nil or w.tags == nil then
+        return false
+    end
+    for _, t in ipairs(w.tags) do
+        if t == tag or t == tag .. "*" then
+            return true
+        end
+    end
+    return false
+end
+
 hl.window_rule({
     name            = "desync-fullscreen-states",
     match           = { class = ".*" },
@@ -195,6 +207,9 @@ hl.window_rule({
 local confiningFs = false
 hl.on("window.fullscreen", function(w)
     if confiningFs or w == nil then
+        return
+    end
+    if windowHasTag(w, "true-fs") then
         return
     end
     local internal = w.fullscreen or 0
@@ -241,13 +256,13 @@ hl.window_rule({
 hl.window_rule({
     name    = "grok-cli-screen-2",
     match   = { class = "grok-cli" },
-    monitor = asus,
+    monitor = aoc,
 })
 
 hl.window_rule({
     name    = "agy-cli-screen-2",
     match   = { class = "agy-cli" },
-    monitor = asus,
+    monitor = aoc,
 })
 
 -- OBS control surface on right landscape (AOC / ws 6).
@@ -268,6 +283,14 @@ hl.window_rule({
     match     = { class = "Project Zomboid" },
     monitor   = aoc,
     workspace = "6 silent",
+})
+
+-- Super+K tags the active window; this rule confines the pointer while tagged.
+local pointerConfineTag = "pointer-confine"
+hl.window_rule({
+    name             = "tag-confine-pointer",
+    match            = { tag = ".*" .. pointerConfineTag .. ".*" },
+    confine_pointer  = true,
 })
 
 -- kdx-share: menu floats; composite on headless kdxShare (class = app-id)
@@ -316,9 +339,51 @@ local function revealAllWindows()
     hl.dispatch(hl.dsp.focus({ workspace = targetId }))
 end
 
+local function togglePointerConfine()
+    local w = hl.get_active_window()
+    if w == nil then
+        return
+    end
+    local on = windowHasTag(w, pointerConfineTag)
+    if on then
+        hl.dispatch(hl.dsp.window.tag({ tag = "-" .. pointerConfineTag, window = w }))
+        pcall(function()
+            hl.notification.create({ text = "mouse libre", timeout = 1500, icon = "ok" })
+        end)
+    else
+        hl.dispatch(hl.dsp.window.tag({ tag = "+" .. pointerConfineTag, window = w }))
+        pcall(function()
+            hl.notification.create({ text = "mouse atrapado", timeout = 1500, icon = "ok" })
+        end)
+    end
+end
+
+local function toggleTrueFullscreen()
+    local w = hl.get_active_window()
+    if w == nil then
+        return
+    end
+    local isTrueFs = (w.fullscreen == 2) or windowHasTag(w, "true-fs")
+    if isTrueFs then
+        hl.dispatch(hl.dsp.window.tag({ tag = "-true-fs", window = w }))
+        hl.dispatch(hl.dsp.window.fullscreen_state({ internal = 0, client = 0, action = "set", window = w }))
+        hl.dispatch(hl.dsp.window.fullscreen({ mode = "fullscreen", action = "unset", window = w }))
+        pcall(function()
+            hl.notification.create({ text = "Fullscreen desactivado", timeout = 1500, icon = "ok" })
+        end)
+    else
+        hl.dispatch(hl.dsp.window.tag({ tag = "+true-fs", window = w }))
+        hl.dispatch(hl.dsp.window.fullscreen({ mode = "fullscreen", action = "set", window = w }))
+        pcall(function()
+            hl.notification.create({ text = "True Fullscreen", timeout = 1500, icon = "ok" })
+        end)
+    end
+end
+
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
 hl.bind(mainMod .. " + SHIFT + G", hl.dsp.exec_cmd(grokWeb))
+hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(agyCli))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
 hl.bind(mainMod .. " + H", hl.dsp.exec_cmd(dshWeb))
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd(whatsapp))
@@ -329,6 +394,7 @@ hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(anyrun))
 -- Exit = Super+Shift+E (deliberate chord). Super+M = REC mode UI toggle (WIP).
 hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(recMode .. " toggle"))
+
 -- FREE 2026-08-01: Super+L liberada — reservada para una futura versión de kodexBot.
 -- (era: hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(liveMode .. " toggle")))
 -- PAUSED 2026-07-28: real voice workers under work — UI mode toggles only (above).
@@ -355,6 +421,8 @@ hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + Q", hl.dsp.layout("togglesplit"))
 hl.bind(mainMod .. " + A", revealAllWindows)
 hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" }))
+hl.bind(mainMod .. " + SHIFT + F", toggleTrueFullscreen)
+hl.bind(mainMod .. " + K", togglePointerConfine)
 hl.bind(mainMod .. " + CTRL + Z", hl.dsp.exec_cmd(zoomToggle))
 -- Super+R = hyprlauncher (keep). Super+Ctrl+R = kdx-share transmit picker.
 hl.bind(mainMod .. " + CTRL + R", hl.dsp.exec_cmd(kdxShare .. " menu"))

@@ -21,6 +21,7 @@ import { getRamStatus } from "./widget/ram"
 import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
 import GLib from "gi://GLib"
 
+// Left panel = ASUS VA27EHF (HDMI-A-2 / portrait/landscape).
 const BAR_MODEL = "VA27EHF"
 
 let spawnedFor: string | null = null
@@ -40,8 +41,7 @@ function isBarMonitor(mon: {
 }): boolean {
   const model = modelOf(mon).toUpperCase()
   const desc = (mon.description ?? "").toUpperCase()
-  // HDMI-A-N flips (kernel 7.1.8: ASUS is HDMI-A-1, AOC is HDMI-A-2).
-  // Never treat a connector name as ASUS.
+  // HDMI-A-N flips; bind by panel model, not connector.
   return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
 }
 
@@ -60,7 +60,7 @@ function trySpawnBar(reason: string) {
     return
   }
   printerr(
-    `ags: no ASUS ${BAR_MODEL} yet (${reason}); monitors=` +
+    `ags: no bar panel ${BAR_MODEL} yet (${reason}); monitors=` +
       app.get_monitors().map((m) => `${connectorOf(m) || "?"}:${modelOf(m) || "?"}`).join(","),
   )
 }

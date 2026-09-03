@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""
+kdx-mic-activity: Balanced real-time microphone voice/audio activity monitor for AGS.
+Reads raw PCM from parec (8000Hz mono, low latency 40ms).
+Calibrated to an intermediate threshold: stable during ambient stillness,
+triggers cleanly and responsively on intentional speech.
+"""
+import sys
+import subprocess
+import struct
+import math
+import time
+import os
+import signal
+
+CHUNK_MS = 40  # 40ms chunks
+RATE = 8000
+BYTES_PER_SAMPLE = 2
+CHUNK_SAMPLES = int(RATE * CHUNK_MS / 1000)  # 320 samples
+CHUNK_BYTES = CHUNK_SAMPLES * BYTES_PER_SAMPLE  # 640 bytes
+
+def cleanup(*args):
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, cleanup)
+signal.signal(signal.SIGTERM, cleanup)
+
+def resolve_source():
+    try:
+        out = subprocess.check_output(["pactl", "list", "short", "sources"], text=True, stderr=subprocess.DEVNULL)
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                name = parts[1]
+                if name and not name.endswith(".monitor") and "brio" in name.lower():
+                    return name
+    except Exception:
+        pass
+    return None
+
+def main():
+    while True:
+        proc = None
+        try:
+            src = resolve_source()
+            cmd = ['parec', f'--rate={RATE}', '--channels=1', '--format=s16le', '--latency=50']
+            if src:
+                cmd.extend(['-d', src])
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL
+            )
+            
+            noise_floor = 265.0
+            hangover_chunks = 0
+            MAX_HANGOVER = 5  # ~200ms speech hold envelope
+            last_state = -1
+            
+            while True:
+                raw = proc.stdout.read(CHUNK_BYTES)
+                if not raw or len(raw) < CHUNK_BYTES:
+                    break
+                
+                samples = struct.unpack(f'<{CHUNK_SAMPLES}h', raw)
+                max_val = max(abs(s) for s in samples)
+                sum_sq = sum(s * s for s in samples)
+                rms = math.sqrt(sum_sq / CHUNK_SAMPLES)
+                
+                # Balanced intermediate calibration:
+                # 1. RMS threshold: floor + 30.0 (min 295.0)
+                # 2. Peak threshold: floor + 80.0 (min 350.0)
+                rms_thresh = max(295.0, noise_floor + 30.0)
+                peak_thresh = max(350.0, noise_floor + 80.0)
+                
+                is_sound = (rms > rms_thresh) or (max_val > peak_thresh)
+                
+                if is_sound:
+                    hangover_chunks = MAX_HANGOVER
+                elif hangover_chunks > 0:
+                    hangover_chunks -= 1
+                else:
+                    # Adapt background noise floor during silence (ignore digital zero)
+                    if rms > 50.0:
+                        noise_floor = 0.96 * noise_floor + 0.04 * rms
+                
+                active = (is_sound or hangover_chunks > 0)
+                state_val = 1 if active else 0
+                
+                if state_val != last_state:
+                    last_state = state_val
+                    sys.stdout.write(f"{state_val}\n")
+                    sys.stdout.flush()
+                    
+        except Exception:
+            time.sleep(1)
+        finally:
+            if proc:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+if __name__ == "__main__":
+    main()

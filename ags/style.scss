@@ -259,6 +259,62 @@ window.Bar {
     }
   }
 
+  /* Brain cluster (mic + brain grouped closely) */
+  .BrainCluster {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+  }
+
+  /* Mic Indicator FSM — permanent icon next to brain (same 22×22 hitbox standard) */
+  .MicIndicator {
+    margin: 0; /* gap = Bar-end spacing only */
+    min-height: 22px;
+    min-width: 22px;
+    padding: 0 2px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+    }
+
+    image {
+      color: $status-gray;
+    }
+
+    &.muted image {
+      color: $status-gray;
+    }
+
+    &.idle image,
+    &.unmuted image {
+      color: $status-gray;
+    }
+
+    &.voice image,
+    &.hearing image,
+    &.live image {
+      color: $status-green;
+    }
+
+    &.busy image {
+      color: $orange-500;
+    }
+
+    &.recording image,
+    &.error image {
+      color: $status-red;
+    }
+  }
+
   /* REC lamp — same hitbox as LocalLlm brain (16px glyph in 22×22 button) */
   .Rec {
     margin: 0 1px;

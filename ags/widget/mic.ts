@@ -1,25 +1,35 @@
 /**
- * Default capture mute — SSOT = Pulse/PipeWire via pactl.
+ * Default capture mute & voice activity monitor.
  *
- * Why not AstalWp defaultMicrophone alone:
- * WirePlumber often leaves default.audio.source unset (wpctl @DEFAULT_AUDIO_SOURCE@
- * → id -1). AstalWp then exposes a stub endpoint (id=0, mute stuck true, name null)
- * and set_mute is a no-op. pactl still has a working Default Source.
- *
+ * SSOT = Pulse/PipeWire via pactl & parec audio stream.
  * Prefer Brio when present (host habit); else @DEFAULT_SOURCE@.
  */
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createState } from "ags"
 
-const TICK_MS = 2000
+const TICK_MS = 500
 const REPROBE_MS = 100
+const ACTIVITY_BIN =
+  GLib.find_program_in_path("kdx-mic-activity") ??
+  `${GLib.get_home_dir()}/.local/bin/kdx-mic-activity`
+
+export type MicTone =
+  | "muted"      // Deshabilitado: oscuro como celda de VRAM
+  | "unmuted"    // Habilitado en reposo: gris del cerebro (#9a9a9a, 0.55)
+  | "voice"      // Escuchando sonido: verde claro (#7bc96f)
+  | "busy"       // Naranja (#ff8c42)
+  | "recording"  // Rojo (#e53935)
+  | "error"      // Rojo (#c45c4a)
 
 const [micMuted, setMicMuted] = createState(true)
 const [micName, setMicName] = createState("Microphone")
+const [micHearing, setMicHearing] = createState(false)
 
 let tickSource: number | null = null
 let started = false
+let subscribeProc: Gio.Subprocess | null = null
+let activityProc: Gio.Subprocess | null = null
 
 function runSync(argv: string[]): string {
   try {
@@ -78,8 +88,12 @@ export function probeMicDescription(source?: string): string {
 
 function snap(): void {
   const src = resolveSourceName()
-  setMicMuted(probeMicMuted(src))
+  const muted = probeMicMuted(src)
+  setMicMuted(muted)
   setMicName(probeMicDescription(src))
+  if (muted && micHearing.peek()) {
+    setMicHearing(false)
+  }
 }
 
 function ensureTick(): void {
@@ -90,11 +104,87 @@ function ensureTick(): void {
   })
 }
 
+function startSubscribe(): void {
+  if (subscribeProc !== null) return
+  try {
+    subscribeProc = Gio.Subprocess.new(
+      ["pactl", "subscribe"],
+      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    const pipe = subscribeProc.get_stdout_pipe()
+    if (!pipe) return
+    const dis = Gio.DataInputStream.new(pipe)
+    const readNext = () => {
+      dis.read_line_async(GLib.PRIORITY_DEFAULT, null, (_src, res) => {
+        try {
+          const [line] = dis.read_line_finish_utf8(res)
+          if (line !== null) {
+            if (line.includes("source") || line.includes("server")) {
+              snap()
+            }
+            readNext()
+          } else {
+            subscribeProc = null
+          }
+        } catch {
+          subscribeProc = null
+        }
+      })
+    }
+    readNext()
+  } catch (e) {
+    printerr(`mic: pactl subscribe failed: ${e}`)
+  }
+}
+
+function startActivityMonitor(): void {
+  if (activityProc !== null) return
+  try {
+    activityProc = Gio.Subprocess.new(
+      [ACTIVITY_BIN],
+      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    const pipe = activityProc.get_stdout_pipe()
+    if (!pipe) return
+    const dis = Gio.DataInputStream.new(pipe)
+    const readNext = () => {
+      dis.read_line_async(GLib.PRIORITY_DEFAULT, null, (_src, res) => {
+        try {
+          const [line] = dis.read_line_finish_utf8(res)
+          if (line !== null) {
+            const trimmed = line.trim()
+            if (!micMuted.peek()) {
+              setMicHearing(trimmed === "1")
+            } else {
+              setMicHearing(false)
+            }
+            readNext()
+          } else {
+            activityProc = null
+            // Respawn after 1 second if killed
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+              startActivityMonitor()
+              return GLib.SOURCE_REMOVE
+            })
+          }
+        } catch {
+          activityProc = null
+        }
+      })
+    }
+    readNext()
+  } catch (e) {
+    printerr(`mic: activity monitor failed: ${e}`)
+  }
+}
+
 export function startMicWatch(): void {
   if (started) return
   started = true
   snap()
   ensureTick()
+  startSubscribe()
+  startActivityMonitor()
 }
 
 /** Force re-read (menu open / after external mute). */
@@ -115,11 +205,13 @@ export function toggleMicMute(): void {
     return
   }
   // Optimistic flip, then re-probe after PipeWire applies
-  setMicMuted(!micMuted.peek())
+  const next = !micMuted.peek()
+  setMicMuted(next)
+  if (next) setMicHearing(false)
   GLib.timeout_add(GLib.PRIORITY_DEFAULT, REPROBE_MS, () => {
     snap()
     return GLib.SOURCE_REMOVE
   })
 }
 
-export { micMuted, micName }
+export { micMuted, micName, micHearing }
