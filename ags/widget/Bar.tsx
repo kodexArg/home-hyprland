@@ -10,7 +10,7 @@ import RamTrack from "./RamTrack"
 import SystemMenu from "./SystemMenu"
 import WorkspacePeek from "./WorkspacePeek"
 // import RecMenu from "./RecMenu" // parked — REC lamp menu WIP, re-enable later
-import DictationIndicator from "./DictationIndicator"
+import DictatorIndicator from "./DictatorIndicator"
 import LiveIndicator from "./LiveIndicator"
 import KodexbotChip from "./KodexbotChip"
 import RecModeIndicator from "./RecModeIndicator"
@@ -400,7 +400,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           {/* mic indicator + dictator indicator + brain clustered tightly (spacing=2) */}
           <box spacing={2} class="BrainCluster" valign={Gtk.Align.CENTER}>
             <MicIndicator />
-            <DictationIndicator />
+            <DictatorIndicator />
             <LocalLlm gdkmonitor={gdkmonitor} />
           </box>
           <RamTrack />

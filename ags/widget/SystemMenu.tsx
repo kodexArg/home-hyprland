@@ -162,41 +162,6 @@ function MenuRow({
   )
 }
 
-function MicRow() {
-  // SSOT = pactl (see widget/mic.ts). AstalWp defaultMicrophone is often a
-  // stub when WirePlumber has no live default.audio.source.
-  startMicWatch()
-
-  const iconFile = createComputed(() =>
-    micMuted() ? ICON_MIC_MUTED : ICON_MIC,
-  )
-
-  const label = createComputed(() =>
-    micMuted() ? "Unmute mic" : "Mute mic",
-  )
-
-  const tip = createComputed(() => {
-    const name = micName()
-    return micMuted()
-      ? `${name} muted — click to unmute`
-      : `${name} live — click to mute`
-  })
-
-  const rowClass = createComputed(() =>
-    micMuted() ? "SystemMenu-row muted" : "SystemMenu-row",
-  )
-
-  return (
-    <MenuRow
-      iconFile={iconFile}
-      label={label}
-      tip={tip}
-      rowClass={rowClass}
-      onClicked={() => toggleMicMute()}
-    />
-  )
-}
-
 /** Gabriel-L2TP — cream when up, grey when down; click toggles via nmcli. */
 function VpnRow() {
   const iconFile = createComputed(() =>
@@ -577,14 +542,13 @@ function MenuList() {
         class="SystemMenu-status"
         label="SYSTEM"
         xalign={0}
-        tooltipText={`${L2TP_CONN} · WARP · Mic · Cast · Restart · Power off · outside/Esc closes`}
+        tooltipText={`${L2TP_CONN} · WARP · Cast · Restart · Power off · outside/Esc closes`}
       />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 
       <VpnRow />
       <WarpRow />
-      <MicRow />
       <CastRow />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
