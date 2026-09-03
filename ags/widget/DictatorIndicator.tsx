@@ -11,19 +11,21 @@ const DICTATOR_BIN =
   GLib.find_program_in_path("dictate") ??
   `${GLib.get_home_dir()}/.local/bin/kdx-dictator`
 
-export type DictatorTone = "muted" | "direct" | "ai" | "error"
+export type DictatorTone = "muted" | "idle" | "working" | "busy" | "error"
 
 /**
- * 3-State Dictation FSM (user spec):
- * - deshabilitado (OFF) -> gris oscuro (#a0a0a0, 0.20 opacity) -> dictate-bubble-dark.svg
- * - transcripción directa (STREAM) -> gris claro (#9a9a9a, 0.55 opacity) -> dictate-bubble-gray.svg
- * - transcripción interpretada con AI (LLM) -> naranja (#ff8c42, 1.0 opacity) -> dictate-bubble-orange.svg
- * - error -> rojo -> dictate-bubble-red.svg
+ * FSM Dictado (especificación del usuario):
+ * - deshabilitado -> gris oscuro (#a0a0a0, 0.20 opacity) -> dictate-bubble-dark.svg
+ * - habilitado (en espera / standby) -> gris claro (#9a9a9a, 0.55 opacity) -> dictate-bubble-gray.svg
+ * - faster-whisper trabajando / transcribiendo -> verde claro (#7bc96f, 1.0 opacity) -> dictate-bubble-green.svg
+ * - cambiando de modo / transición -> naranja (#ff8c42, 1.0 opacity) -> dictate-bubble-orange.svg
+ * - error -> rojo (#e53935, 1.0 opacity) -> dictate-bubble-red.svg
  */
 const ICONS: Record<DictatorTone, string> = {
   muted: `${ICON_DIR}/dictate-bubble-dark.svg`,
-  direct: `${ICON_DIR}/dictate-bubble-gray.svg`,
-  ai: `${ICON_DIR}/dictate-bubble-orange.svg`,
+  idle: `${ICON_DIR}/dictate-bubble-gray.svg`,
+  working: `${ICON_DIR}/dictate-bubble-green.svg`,
+  busy: `${ICON_DIR}/dictate-bubble-orange.svg`,
   error: `${ICON_DIR}/dictate-bubble-red.svg`,
 }
 
@@ -68,7 +70,7 @@ function snap(): void {
 function startWatching(): void {
   if (timerId !== null) return
   snap()
-  timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+  timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, () => {
     snap()
     return GLib.SOURCE_CONTINUE
   })
@@ -80,7 +82,7 @@ export function toggleDictation(): void {
       [DICTATOR_BIN, "toggle"],
       Gio.SubprocessFlags.STDERR_SILENCE,
     )
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => {
       snap()
       return GLib.SOURCE_REMOVE
     })
@@ -92,10 +94,12 @@ export function toggleDictation(): void {
 export default function DictatorIndicator() {
   startWatching()
 
-  // 3-State FSM Tone resolution:
-  // 1. Deshabilitado / OFF -> muted (gris oscuro)
-  // 2. Transcripción directa (sin AI) -> direct (gris claro)
-  // 3. Transcripción con AI (refinado con LLM) -> ai (naranja)
+  // Mapeo FSM exacto:
+  // 1. Deshabilitado -> gris oscuro
+  // 2. Error -> rojo
+  // 3. Faster-whisper trabajando (stt / transcribiendo / paste) -> verde
+  // 4. Cambiando de modo / stopping / arming -> naranja
+  // 5. Habilitado (standby / escuchando) -> gris claro
   const tone = createComputed((): DictatorTone => {
     const p = dictatorPhase()
     const m = dictatorMode()
@@ -106,10 +110,13 @@ export default function DictatorIndicator() {
     if (p === "err") {
       return "error"
     }
-    if (m === "ai") {
-      return "ai"
+    if (p === "stt" || p === "paste" || p === "ok") {
+      return "working"
     }
-    return "direct"
+    if (p === "stopping" || p === "busy" || p === "arming") {
+      return "busy"
+    }
+    return "idle"
   })
 
   const iconFile = createComputed(() => {
@@ -121,15 +128,18 @@ export default function DictatorIndicator() {
     const p = dictatorPhase()
     const t = tone()
     if (t === "muted") {
-      return "💬 Dictado: Deshabilitado (clic o Super+D: Iniciar Transcripción Directa)"
+      return "💬 Dictado continuo — Deshabilitado (clic o Super+D para habilitar)"
     }
-    if (t === "direct") {
-      return `💬 Dictado Directo: 🎙️ Escuchando... (transcripción rápida sin IA; clic o Super+D: Cambiar a Modo IA)`
+    if (t === "idle") {
+      return "💬 Dictado continuo — 🎙️ Habilitado (escuchando... siempre streamea al cursor)"
     }
-    if (t === "ai") {
-      return `💬 Dictado con IA: ✨ Escuchando... (transcribe y cura con LLM local; clic o Super+D: Deshabilitar)`
+    if (t === "working") {
+      return "💬 Dictado — 🟢 Whisper trabajando (transcribiendo / escribiendo al cursor)"
     }
-    return `💬 Dictado: ⚠️ Error en /tmp/dictate.log`
+    if (t === "busy") {
+      return `💬 Dictado — ⚡ Cambiando de modo / procesando (${p.toUpperCase()})...`
+    }
+    return "💬 Dictado — ⚠️ Error en /tmp/dictate.log"
   })
 
   const cls = createComputed(() => {

@@ -769,7 +769,7 @@ export default function LocalLlm({
     const t = tone()
     if (t === "red") return `${ICON_DIR}/brain-red.svg`
     if (t === "thinking") return `${ICON_DIR}/brain-orange.svg`
-    if (t === "ready") return `${ICON_DIR}/brain-gray.svg`
+    if (t === "ready") return `${ICON_DIR}/brain-green.svg`
     return `${ICON_DIR}/brain-dark.svg`
   })
 
