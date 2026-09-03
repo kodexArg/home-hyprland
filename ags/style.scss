@@ -176,7 +176,7 @@ window.Bar {
      cell gap 1px · row gap 2px · cell 6px · H ≈ Clock 1.5rem
      4 color bands, first two green: b0–b1 green · b2 yellow · b3 orange · b4 red */
   .RamTrack {
-    margin: 0; /* gap = Bar-end spacing only */
+    margin: 0 5px 0 0; /* gap to Clock: 10px spacing + 5px = 15px (1.5x) */
     padding: 0;
     border: none;
     background: transparent;
