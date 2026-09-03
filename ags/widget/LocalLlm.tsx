@@ -767,15 +767,10 @@ export default function LocalLlm({
   const iconFile = createComputed(() => {
     void tone()
     const t = tone()
-    const file =
-      t === "red"
-        ? "red"
-        : t === "thinking"
-          ? "orange"
-          : t === "ready"
-            ? "green"
-            : "gray"
-    return `${ICON_DIR}/brain-${file}.svg`
+    if (t === "red") return `${ICON_DIR}/brain-red.svg`
+    if (t === "thinking") return `${ICON_DIR}/brain-orange.svg`
+    if (t === "ready") return `${ICON_DIR}/brain-gray.svg`
+    return `${ICON_DIR}/brain-dark.svg`
   })
 
   const tipClock = createPoll(0, 1000, () => Math.floor(nowSec()))
