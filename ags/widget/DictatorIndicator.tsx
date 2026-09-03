@@ -13,12 +13,20 @@ const DICTATOR_BIN =
 
 export type DictatorTone = "muted" | "idle" | "active" | "busy" | "error"
 
+/**
+ * Universal Speech-to-Text / Dictation Icon (Speech bubble with transcribed text lines, tail pointing toward mic):
+ * - muted: dark faint (#a0a0a0, 0.20 opacity) -> dictate-bubble-dark.svg
+ * - idle / armed: brain gray (#9a9a9a, 0.55 opacity) -> dictate-bubble-gray.svg
+ * - active / typing: light green (#7bc96f, 1.0 opacity) -> dictate-bubble-green.svg
+ * - busy / refine: orange (#ff8c42, 1.0 opacity) -> dictate-bubble-orange.svg
+ * - error: red (#e53935, 1.0 opacity) -> dictate-bubble-red.svg
+ */
 const ICONS: Record<DictatorTone, string> = {
-  muted: `${ICON_DIR}/speaker-man-dark.svg`,
-  idle: `${ICON_DIR}/speaker-man-gray.svg`,
-  active: `${ICON_DIR}/speaker-man-green.svg`,
-  busy: `${ICON_DIR}/speaker-man-orange.svg`,
-  error: `${ICON_DIR}/speaker-man-red.svg`,
+  muted: `${ICON_DIR}/dictate-bubble-dark.svg`,
+  idle: `${ICON_DIR}/dictate-bubble-gray.svg`,
+  active: `${ICON_DIR}/dictate-bubble-green.svg`,
+  busy: `${ICON_DIR}/dictate-bubble-orange.svg`,
+  error: `${ICON_DIR}/dictate-bubble-red.svg`,
 }
 
 export function toggleDictation(): void {
@@ -69,13 +77,14 @@ function readDictatorState(): DictatorState {
   // Tone resolution:
   // - "idle": Muted total (dark)
   // - "arming" / "rec": Active standby (brain gray)
-  // - "stt" / "refine" / "paste" / "ok": Processing/writing (green or orange)
+  // - "stt" / "paste" / "ok": Processing/writing (green)
+  // - "refine" / "stopping" / "busy": Refining/interpreting (orange)
   // - "err": Error (red)
   if (phase === "idle" || !phase) {
     return {
       phase: "idle",
       tone: "muted",
-      tooltip: "🗣️ Dictado continuo — Deshabilitado (clic para activar)",
+      tooltip: "💬 Dictado continuo — Deshabilitado (clic o Super+D para activar)",
       detail,
     }
   }
@@ -84,7 +93,7 @@ function readDictatorState(): DictatorState {
     return {
       phase,
       tone: "idle", // Brain gray
-      tooltip: "🗣️ Dictado continuo — 🎙️ Escuchando... (3s silencio transcribe al cursor; clic para detener)",
+      tooltip: "💬 Dictado continuo — 🎙️ Escuchando... (3s de silencio transcribe al cursor)",
       detail,
     }
   }
@@ -93,7 +102,7 @@ function readDictatorState(): DictatorState {
     return {
       phase,
       tone: "active", // Light green
-      tooltip: `🗣️ Dictado — 🟢 Transcribiendo / Escribiendo en ventana activa (${phase.toUpperCase()})`,
+      tooltip: `💬 Dictado — 🟢 Transcribiendo y escribiendo en ventana activa...`,
       detail,
     }
   }
@@ -102,7 +111,7 @@ function readDictatorState(): DictatorState {
     return {
       phase,
       tone: "busy", // Orange
-      tooltip: `🗣️ Dictado — ⚡ Refinando con LLM local (${phase.toUpperCase()})...`,
+      tooltip: `💬 Dictado — ⚡ Refinando texto con LLM local...`,
       detail,
     }
   }
@@ -111,7 +120,7 @@ function readDictatorState(): DictatorState {
     return {
       phase: "err",
       tone: "error",
-      tooltip: `🗣️ Dictado — ⚠️ Error en /tmp/dictate.log`,
+      tooltip: `💬 Dictado — ⚠️ Error en /tmp/dictate.log`,
       detail,
     }
   }
@@ -119,7 +128,7 @@ function readDictatorState(): DictatorState {
   return {
     phase,
     tone: "idle",
-    tooltip: `🗣️ Dictado — ${phase}`,
+    tooltip: `💬 Dictado — ${phase}`,
     detail,
   }
 }
@@ -129,7 +138,7 @@ export default function DictatorIndicator() {
     {
       phase: "idle",
       tone: "muted" as DictatorTone,
-      tooltip: "🗣️ Dictado continuo — Deshabilitado (clic para activar)",
+      tooltip: "💬 Dictado continuo — Deshabilitado (clic o Super+D para activar)",
       detail: "",
     },
     150,

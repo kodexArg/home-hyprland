@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg height="16px" viewBox="0 0 16 16" width="16px" xmlns="http://www.w3.org/2000/svg">
+  <g fill="#9a9a9a" fill-opacity="0.55">
+    <!-- Voice bars (equalizer/sound wave) on left -->
+    <rect x="1.0" y="6.0" width="1.5" height="4.0" rx="0.75"/>
+    <rect x="3.5" y="3.5" width="1.5" height="9.0" rx="0.75"/>
+    <rect x="6.0" y="5.0" width="1.5" height="6.0" rx="0.75"/>
+    
+    <!-- Arrow / transition to text -->
+    <!-- Text typing lines on right -->
+    <rect x="9.0" y="3.5" width="6.0" height="1.8" rx="0.6"/>
+    <rect x="9.0" y="7.0" width="6.0" height="1.8" rx="0.6"/>
+    <rect x="9.0" y="10.5" width="4.0" height="1.8" rx="0.6"/>
+  </g>
+</svg>
