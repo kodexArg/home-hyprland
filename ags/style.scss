@@ -156,6 +156,56 @@ window.Bar {
     }
   }
 
+  .GameVolume {
+    margin: 0 0 0 4px;
+    min-width: 0;
+
+    &-steam,
+    &-output,
+    &-mute,
+    &-step {
+      min-height: 20px;
+      margin: 0;
+      padding: 0 2px;
+      border-width: 1px;
+    }
+
+    &-steam,
+    &-output,
+    &-mute {
+      min-width: 20px;
+      padding: 0 1px;
+    }
+
+    &-step {
+      min-width: 16px;
+      padding: 0 1px;
+      font-size: 0.95em;
+    }
+
+    &-track {
+      min-width: 100px;
+      min-height: 14px;
+      margin: 0 1px;
+      border-radius: 5px;
+      border: 2px solid $ink-600;
+      background-color: $ink-600;
+    }
+
+    &-fill {
+      min-height: 14px;
+      background: $status-yellow;
+      border-radius: 3px;
+    }
+
+    &.muted {
+      .GameVolume-fill {
+        background: $status-gray;
+        opacity: 0.45;
+      }
+    }
+  }
+
   /* Extreme-right sandwich — system menu (mic · restart · power off).
      Hitbox stays 22×22; glyph is 20px (1.25×) warm-grey via menu.svg. */
   .SystemMenu {

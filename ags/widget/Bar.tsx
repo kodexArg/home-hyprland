@@ -16,6 +16,7 @@ import KodexbotChip from "./KodexbotChip"
 import RecModeIndicator from "./RecModeIndicator"
 import CastRecChip from "./CastRecChip"
 import MicIndicator from "./MicIndicator"
+import GameVolume from "./GameVolume"
 // import LiveModeIndicator from "./LiveModeIndicator" // Super+L liberada 2026-08-01
 // Caffeine + ClockCluster parked (UI hidden). Restore with widget/caffeine.ts + block below.
 // import {
@@ -383,6 +384,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
       <centerbox cssName="centerbox">
         <box $type="start" spacing={8} class="Bar-start">
           <Volume />
+          <GameVolume />
         </box>
         <box $type="center">
           <WorkspacePeek />

@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# hypr-warp-toggle: Orquestador ordenado de WARP y DNS integrado con Hyprland / AGS / notify-send
+set -euo pipefail
+
+# Evitar ejecuciones concurrentes / dobles pulsaciones
+LOCKFILE="/tmp/hypr-warp-toggle.lock"
+exec 200>"$LOCKFILE"
+flock -n 200 || {
+    echo "hypr-warp-toggle: ya se encuentra una instancia en ejecución." >&2
+    exit 0
+}
+
+# 1. Determinar estado de conexión real de Cloudflare WARP
+is_warp_connected() {
+    if ! systemctl is-active --quiet warp-svc; then
+        return 1
+    fi
+    local status
+    status=$(warp-cli --accept-tos status 2>/dev/null || true)
+    if echo "$status" | grep -q "Connected" && ! echo "$status" | grep -q "Disconnected"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+if is_warp_connected; then
+    # ==========================================
+    # Secuencia para DESACTIVAR:
+    # ==========================================
+    # 1) Desconectar túnel limpiamente
+    warp-cli --accept-tos disconnect 2>/dev/null || true
+
+    # 2) Detener servicio warp-svc
+    sudo systemctl stop warp-svc
+
+    # 3) Restaurar inmediatamente el enlace simbólico hacia systemd-resolved
+    sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+    # 4) Reiniciar systemd-resolved para purgar la IP 127.0.2.2 de su memoria global
+    sudo systemctl restart systemd-resolved
+
+    # 5) Vaciar caches locales
+    resolvectl flush-caches 2>/dev/null || true
+
+    # 6) Notificación en Hyprland
+    notify-send -u normal -t 3500 -i network-wireless-disconnected "Cloudflare WARP" "DESACTIVADO\nDNS restaurado a systemd-resolved nativo"
+else
+    # ==========================================
+    # Secuencia para ACTIVAR:
+    # ==========================================
+    # 1) Iniciar el servicio warp-svc si está inactivo
+    if ! systemctl is-active --quiet warp-svc; then
+        sudo systemctl start warp-svc
+    fi
+
+    # 2) Esperar activamente a que el daemon abra el socket IPC (máx 3s)
+    ready=0
+    for _ in {1..30}; do
+        if warp-cli --accept-tos status &>/dev/null; then
+            ready=1
+            break
+        fi
+        sleep 0.1
+    done
+
+    if [ "$ready" -eq 0 ]; then
+        notify-send -u critical -t 4000 -i dialog-error "Cloudflare WARP" "ERROR\nEl servicio warp-svc no respondió a tiempo."
+        exit 1
+    fi
+
+    # 3) Conectar el cliente con aceptación explícita de TOS
+    warp-cli --accept-tos connect
+
+    # 4) Esperar confirmación de conexión (máx 3s)
+    connected=0
+    for _ in {1..30}; do
+        status=$(warp-cli --accept-tos status 2>/dev/null || true)
+        if echo "$status" | grep -q "Connected" && ! echo "$status" | grep -q "Disconnected"; then
+            connected=1
+            break
+        fi
+        sleep 0.1
+    done
+
+    # 5) Notificación en Hyprland
+    if [ "$connected" -eq 1 ]; then
+        notify-send -u normal -t 3500 -i network-vpn "Cloudflare WARP" "ACTIVADO\nTráfico y DNS enrutados vía WARP"
+    else
+        notify-send -u normal -t 3500 -i network-vpn "Cloudflare WARP" "CONECTANDO...\nEstableciendo túnel con Cloudflare"
+    fi
+fi

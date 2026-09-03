@@ -71,6 +71,7 @@ local kdxShare    = "/home/kodex/.local/bin/kdx-share"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
 local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy --dangerously-skip-permissions"
+local warpToggle  = "/home/kodex/.local/bin/hypr-warp-toggle"
 local mainMod     = "SUPER"
 local resizeStep  = 40
 
@@ -415,6 +416,8 @@ hl.bind(mainMod .. " + K", togglePointerConfine)
 hl.bind(mainMod .. " + CTRL + Z", hl.dsp.exec_cmd(zoomToggle))
 -- Super+R = hyprlauncher (keep). Super+Ctrl+R = kdx-share transmit picker.
 hl.bind(mainMod .. " + CTRL + R", hl.dsp.exec_cmd(kdxShare .. " menu"))
+-- Cloudflare WARP + DNS toggle ordenado
+hl.bind(mainMod .. " + ALT + W",  hl.dsp.exec_cmd(warpToggle))
 
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(agsBin .. " request bar-cycle"))
 hl.bind("Super_L", hl.dsp.exec_cmd(agsBin .. " request bar-peek"), { non_consuming = true })
@@ -497,7 +500,7 @@ hl.on("hyprland.start", function()
     -- and never returns — bar lives only on portrait HDMI-A-2.
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE DISPLAY")
     hl.exec_cmd("systemctl --user start ags-hyprland.service")
-    hl.exec_cmd(terminal)
+    hl.exec_cmd(agyCli)
     -- anyrun-launch sets PATH incl. /usr/games (Steam game .desktop Exec=steam …)
     hl.exec_cmd("/home/kodex/.local/bin/anyrun-launch daemon")
 end)

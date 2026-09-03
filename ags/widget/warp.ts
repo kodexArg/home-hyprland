@@ -181,7 +181,7 @@ export function startWarpWatch(): void {
   ensureTick()
 }
 
-/** Toggle from UI reality, not from a cached bool. */
+/** Toggle via hypr-warp-toggle (SSOT orchestrator). */
 export function toggleWarp(): void {
   startWarpWatch()
   const live = probeWarpActive()
@@ -189,40 +189,35 @@ export function toggleWarp(): void {
   const p = phase.peek()
 
   if (p === "connecting" || p === "disconnecting" || ctlInFlight) return
+  ctlInFlight = true
 
-  if (live || p === "connected") {
-    setLastError("")
-    enter("disconnecting")
-    runWarpCli("disconnect", (ok, err) => {
-      if (!ok) {
-        if (probeWarpActive()) {
-          setLastError(err || "warp-cli disconnect failed")
-          enter("failed")
-        } else {
-          setLastError("")
-          enter("disconnected")
+  setLastError("")
+  enter(live || p === "connected" ? "disconnecting" : "connecting")
+
+  try {
+    const proc = Gio.Subprocess.new(
+      ["/home/kodex/.local/bin/hypr-warp-toggle"],
+      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+    )
+    proc.communicate_utf8_async(null, null, (_p, res) => {
+      ctlInFlight = false
+      try {
+        const [, , stderr] = proc.communicate_utf8_finish(res)
+        const ok = proc.get_successful()
+        const err = (stderr ?? "").trim()
+        if (!ok) {
+          setLastError(err || "hypr-warp-toggle failed")
         }
+      } catch (e) {
+        setLastError(String(e))
       }
       reconcile()
     })
-    return
+  } catch (e) {
+    ctlInFlight = false
+    setLastError(String(e))
+    enter("failed")
   }
-
-  // disconnected / failed -> connect
-  setLastError("")
-  enter("connecting")
-  runWarpCli("connect", (ok, err) => {
-    if (!ok) {
-      if (probeWarpActive()) {
-        setLastError("")
-        enter("connected")
-      } else {
-        setLastError(err || "warp-cli connect failed")
-        enter("failed")
-      }
-    }
-    reconcile()
-  })
 }
 
 export function getWarpPhase(): WarpPhase {
