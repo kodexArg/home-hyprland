@@ -397,19 +397,8 @@ hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(recMode .. " toggle"))
 
 -- FREE 2026-08-01: Super+L liberada — reservada para una futura versión de kodexBot.
 -- (era: hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(liveMode .. " toggle")))
--- PAUSED 2026-07-28: real voice workers under work — UI mode toggles only (above).
--- hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictate .. " toggle"))
--- hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(voiceLive .. " toggle"))
--- CUTOVER 2026-08-01: kodexBot (github.com/kodexArg/kodexBot) replaces dictate/voice-live.
--- Super+D = hard switch (off<->listening).
--- Super+Shift+D / Super+Ctrl+D = mode toggle (listening orange <-> dictating green).
--- Super+Ctrl+Shift+D = absolute enter dictating (type at cursor).
--- KODEXBOT_LLM_URL: default is :8080 (OpenAI-compatible contract); local-llm serves :28000.
-local kodexbot = "env KODEXBOT_LLM_URL=http://127.0.0.1:28000/v1 /srv/dev/Dev/personal/kodexBot/.venv/bin/kodexbot"
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(kodexbot .. " toggle"))
-hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd(kodexbot .. " mode"))
-hl.bind(mainMod .. " + CTRL + D", hl.dsp.exec_cmd(kodexbot .. " mode"))
-hl.bind(mainMod .. " + CTRL + SHIFT + D", hl.dsp.exec_cmd(kodexbot .. " dictating"))
+local dictator = "/home/kodex/.local/bin/kdx-dictator"
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictator .. " toggle"))
 
 -- Close vs kill (same key family): Super+C polite close · Super+Ctrl+C force kill.
 -- Super+Ctrl+X kept as alias for muscle memory.

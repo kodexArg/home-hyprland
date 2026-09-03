@@ -32,6 +32,7 @@
 | Super+K | Toggle pointer confine on the focused window (`confine_pointer` Wayland) |
 | Super+P | Pseudo (dwindle) |
 | Super+Q | togglesplit (dwindle; needs `preserve_split`) |
+| Super+D | `kdx-dictator toggle` — continuous voice dictation (speech-to-text at cursor) |
 
 ## AGS bar
 

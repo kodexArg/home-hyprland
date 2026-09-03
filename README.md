@@ -18,7 +18,14 @@ A permanent, classic 1940s-style broadcast microphone widget in the bar with a d
 * **Hearing Voice / Audio**: Lights up and flickers in real-time in **light green** (`#7bc96f`, matching active RAM).
 * **Engine (`bin/kdx-mic-activity`)**: Runs a lightweight PCM stream via `parec` (40 ms chunks, 0.0% CPU) with adaptive dynamic noise floor tracking and natural speech envelope hold (~200 ms).
 
-### 🧠 2. Local LLM Brain Controller
+### 🗣️ 2. Speaker-Man Voice Dictation FSM (`kdx-dictator`)
+Positioned immediately to the right of the microphone (facing left toward the mic):
+* **Muted / Inactive (default)**: Dark faint silhouette.
+* **Armed / Listening**: Turns **brain-gray** on single-click or `Super + D`, starting continuous dictation.
+* **Transcribing & Typing**: Turns **light green** while transcribing via `faster-whisper` (GPU/CPU) and typing directly at the focused window cursor. 3s silence triggers auto-commit.
+* **Engine (`bin/kdx-dictator`)**: Self-contained CLI and daemon with `/tmp/dictate_state.json` SSOT.
+
+### 🧠 3. Local LLM Brain Controller
 Integrated local AI model selector positioned right beside the microphone (clustered tightly with 2 px spacing):
 * Scans local GGUF models (`~/Services/local-llm/models/gguf`).
 * FSM lifecycle manager: `unload` (red) $\rightarrow$ `load` (amber) $\rightarrow$ `ready` (green).
@@ -171,6 +178,7 @@ ratbagctl <device_name> button 5 action set macro KEY_LEFTMETA
 | `Super + 1..0` | Switch to Workspace 1–10 |
 | `Super + Shift + 1..0` | Move focused window to Workspace 1–10 |
 | `Super + Ctrl + Arrows` | Resize window by 40 px |
+| `Super + D` | **Toggle Continuous Voice Dictation** (`kdx-dictator`) |
 
 ### Screen Capture & Recording
 | Shortcut | Action |

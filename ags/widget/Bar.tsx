@@ -397,9 +397,10 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           <RecModeIndicator />
           <CastRecChip />
           {/* <RecMenu gdkmonitor={gdkmonitor} /> parked — REC lamp WIP */}
-          {/* mic indicator + brain clustered tightly (spacing=2) */}
+          {/* mic indicator + dictator indicator + brain clustered tightly (spacing=2) */}
           <box spacing={2} class="BrainCluster" valign={Gtk.Align.CENTER}>
             <MicIndicator />
+            <DictationIndicator />
             <LocalLlm gdkmonitor={gdkmonitor} />
           </box>
           <RamTrack />

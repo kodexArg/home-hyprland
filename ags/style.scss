@@ -315,6 +315,50 @@ window.Bar {
     }
   }
 
+  /* Dictator Indicator FSM — permanent speaker-man icon next to mic (22×22 hitbox standard) */
+  .DictatorIndicator {
+    margin: 0;
+    min-height: 22px;
+    min-width: 22px;
+    padding: 0 2px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+
+    &:hover {
+      background: color.mix($cream-100, $ink-1000, 6%);
+      border-color: color.mix($orange-500, $ink-1000, 28%);
+    }
+
+    &:active {
+      background: color.mix($orange-500, $ink-1000, 12%);
+    }
+
+    image {
+      color: $status-gray;
+    }
+
+    &.muted image {
+      color: $status-gray;
+    }
+
+    &.idle image {
+      color: $status-gray;
+    }
+
+    &.active image {
+      color: $status-green;
+    }
+
+    &.busy image {
+      color: $orange-500;
+    }
+
+    &.error image {
+      color: $status-red;
+    }
+  }
+
   /* REC lamp — same hitbox as LocalLlm brain (16px glyph in 22×22 button) */
   .Rec {
     margin: 0 1px;
