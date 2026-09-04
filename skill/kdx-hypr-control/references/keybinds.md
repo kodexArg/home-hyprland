@@ -8,7 +8,7 @@
 | Bind | Action |
 |---|---|
 | Super+T | Kitty terminal |
-| Super+G | Grok CLI (kitty class `grok-cli`, forced to HDMI-A-2) |
+| Super+G | Grok Bot (`grok-bot` desktop app) |
 | Super+Shift+G | Grok Web (Brave PWA `ggjocahimgaohmigbfhghnlfcnjemagj` · grok.com) |
 | Super+N | AGY CLI (Antigravity CLI, kitty class `agy-cli`, forced to right monitor) |
 | Super+X | Brave browser |
@@ -124,6 +124,7 @@ Also: SystemMenu → **Cast** · CLI · voice action `record`.
 | browser | `brave-browser` |
 | menu | `hyprlauncher` |
 | anyrun | `/home/kodex/.local/bin/anyrun-launch` |
+| grokBot | `grok-bot` desktop app |
 | grokCli | kitty `--class grok-cli` + `~/.config/kitty/grok.conf` + `~/.local/bin/grok --fullscreen` |
 | grokWeb | Brave PWA app-id `ggjocahimgaohmigbfhghnlfcnjemagj` (Grok Web / grok.com) |
 | dshWeb | `/home/kodex/.local/bin/dsh-web-session` (Deepseek Harness · Super+H) |

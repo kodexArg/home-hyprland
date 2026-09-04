@@ -69,6 +69,7 @@ local liveMode    = "/home/kodex/.local/bin/kdx-live-mode"
 local zoomToggle  = "/bin/bash /home/kodex/.local/bin/hypr-zoom-toggle"
 local kdxShare    = "/home/kodex/.local/bin/kdx-share"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
+local grokBot     = "grok-bot"
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
 local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy --dangerously-skip-permissions"
 local warpToggle  = "/home/kodex/.local/bin/hypr-warp-toggle"
@@ -382,7 +383,7 @@ local function toggleTrueFullscreen()
 end
 
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
-hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokCli))
+hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokBot))
 hl.bind(mainMod .. " + SHIFT + G", hl.dsp.exec_cmd(grokWeb))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(agyCli))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
