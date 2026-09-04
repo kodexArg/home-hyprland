@@ -382,8 +382,18 @@ local function toggleTrueFullscreen()
     end
 end
 
+local function openOrFocusGrokBot()
+    for _, w in ipairs(hl.get_windows()) do
+        if w.class and string.lower(w.class) == "grok-bot" then
+            hl.dispatch(hl.dsp.focus({ window = w }))
+            return
+        end
+    end
+    hl.dispatch(hl.dsp.exec_cmd(grokBot))
+end
+
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
-hl.bind(mainMod .. " + G", hl.dsp.exec_cmd(grokBot))
+hl.bind(mainMod .. " + G", openOrFocusGrokBot)
 hl.bind(mainMod .. " + SHIFT + G", hl.dsp.exec_cmd(grokWeb))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd(agyCli))
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
