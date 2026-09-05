@@ -177,18 +177,16 @@ export const [hasGameStream, setHasGameStream] = createState(false)
 export const [gameTitle, setGameTitle] = createState("Steam Game")
 export const [gameVolume, setGameVolumeState] = createState(1.0)
 export const [gameMuted, setGameMuted] = createState(false)
-export const [gameOutputMode, setGameOutputMode] = createState<GameOutputMode>("headphones")
 
 let trackedStreams: AstalWp.Stream[] = []
 const connectedSignalIds = new Map<AstalWp.Stream, number[]>()
 
-function computeOutputMode(stream: AstalWp.Stream | null): GameOutputMode {
-  if (!stream) return "headphones"
-  if (stream.mute) return "mute"
-  const wp = AstalWp.get_default()
-  const ep = stream.target_endpoint ?? wp?.defaultSpeaker
-  if (ep && endpointIsHeadphones(ep)) return "headphones"
-  return "speakers"
+export function ensureGameStreamsFollowDefault() {
+  for (const s of trackedStreams) {
+    try {
+      s.set_target_endpoint(null)
+    } catch (_) {}
+  }
 }
 
 function clearSignalHandlers() {
@@ -226,18 +224,19 @@ export function syncGameStreams() {
     trackedStreams = newStreams
 
     for (const s of trackedStreams) {
+      try {
+        // En tándem con la salida del sistema: liberar cualquier endpoint fijo
+        s.set_target_endpoint(null)
+      } catch (_) {}
+
       const ids: number[] = []
       const volId = s.connect("notify::volume", () => {
         setGameVolumeState(s.volume)
       })
       const muteId = s.connect("notify::mute", () => {
         setGameMuted(s.mute)
-        setGameOutputMode(computeOutputMode(s))
       })
-      const targetId = s.connect("notify::target-endpoint", () => {
-        setGameOutputMode(computeOutputMode(s))
-      })
-      ids.push(volId, muteId, targetId)
+      ids.push(volId, muteId)
       connectedSignalIds.set(s, ids)
     }
   }
@@ -248,7 +247,6 @@ export function syncGameStreams() {
     setGameTitle(matches.length > 1 ? `${primary.title} (+${matches.length - 1})` : primary.title)
     setGameVolumeState(primary.stream.volume)
     setGameMuted(primary.stream.mute)
-    setGameOutputMode(computeOutputMode(primary.stream))
   } else {
     setHasGameStream(false)
   }
@@ -278,61 +276,6 @@ export function toggleGameMute() {
       s.set_mute(next)
     } catch (_) {}
   }
-  setGameOutputMode(computeOutputMode(trackedStreams[0] ?? null))
-}
-
-export function cycleGameOutputMode() {
-  const wp = AstalWp.get_default()
-  if (!wp) return
-
-  const current = gameOutputMode.peek()
-  const hp = findHeadphoneSink(wp)
-  const sp = findSpeakerSink(wp)
-
-  if (current === "headphones") {
-    // Switch to speakers
-    if (sp) {
-      for (const s of trackedStreams) {
-        try {
-          s.set_target_endpoint(sp)
-          s.set_mute(false)
-        } catch (_) {}
-      }
-    }
-    setGameMuted(false)
-    setGameOutputMode("speakers")
-    return
-  }
-
-  if (current === "speakers") {
-    // Switch to mute
-    for (const s of trackedStreams) {
-      try {
-        s.set_mute(true)
-      } catch (_) {}
-    }
-    setGameMuted(true)
-    setGameOutputMode("mute")
-    return
-  }
-
-  // Mute -> headphones
-  if (hp) {
-    for (const s of trackedStreams) {
-      try {
-        s.set_target_endpoint(hp)
-        s.set_mute(false)
-      } catch (_) {}
-    }
-  } else {
-    for (const s of trackedStreams) {
-      try {
-        s.set_mute(false)
-      } catch (_) {}
-    }
-  }
-  setGameMuted(false)
-  setGameOutputMode("headphones")
 }
 
 let initialized = false

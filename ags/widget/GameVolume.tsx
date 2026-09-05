@@ -4,9 +4,7 @@ import { createComputed } from "ags"
 import {
   MAX_GAME_VOLUME,
   bumpGameVolume,
-  cycleGameOutputMode,
   gameMuted,
-  gameOutputMode,
   gameTitle,
   gameVolume,
   hasGameStream,
@@ -21,9 +19,6 @@ const TRACK_W = 100
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_STEAM_YELLOW = `${ICON_DIR}/steam-yellow.svg`
 const ICON_STEAM_MUTED = `${ICON_DIR}/steam-muted.svg`
-const ICON_HEADPHONES = `${ICON_DIR}/headphones.svg`
-const ICON_SPEAKERS = `${ICON_DIR}/speakers.svg`
-const ICON_MUTED = `${ICON_DIR}/muted.svg`
 
 function GameVolumeTrack() {
   const setFromX = (widget: Gtk.Widget, x: number) => {
@@ -83,20 +78,6 @@ export default function GameVolume() {
     gameMuted() ? ICON_STEAM_MUTED : ICON_STEAM_YELLOW,
   )
 
-  const outputIconFile = createComputed(() => {
-    const mode = gameOutputMode()
-    if (mode === "mute") return ICON_MUTED
-    if (mode === "headphones") return ICON_HEADPHONES
-    return ICON_SPEAKERS
-  })
-
-  const outputTip = createComputed(() => {
-    const mode = gameOutputMode()
-    if (mode === "mute") return "Juego silenciado → Auriculares"
-    if (mode === "headphones") return "Juego en Auriculares (HDMI) → Parlantes"
-    return "Juego en Parlantes → Silenciar juego"
-  })
-
   const steamTip = createComputed(() => {
     const title = gameTitle()
     const pct = Math.round(gameVolume() * 100)
@@ -126,22 +107,13 @@ export default function GameVolume() {
         self.add_controller(scroll)
       }}
     >
-      {/* 1. Ícono de Steam conservado */}
+      {/* Ícono de Steam: clic para silenciar/reactivar juego en tándem */}
       <button
         class="GameVolume-steam"
         tooltipText={steamTip}
         onClicked={() => toggleGameMute()}
       >
         <image file={steamIconFile} pixelSize={16} />
-      </button>
-
-      {/* 2. Control independiente de auriculares / salida de audio */}
-      <button
-        class="GameVolume-output"
-        tooltipText={outputTip}
-        onClicked={() => cycleGameOutputMode()}
-      >
-        <image file={outputIconFile} pixelSize={16} />
       </button>
 
       <button

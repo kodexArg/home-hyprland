@@ -17,6 +17,7 @@ import RecModeIndicator from "./RecModeIndicator"
 import CastRecChip from "./CastRecChip"
 import MicIndicator from "./MicIndicator"
 import GameVolume from "./GameVolume"
+import { ensureGameStreamsFollowDefault } from "./game-audio"
 // import LiveModeIndicator from "./LiveModeIndicator" // Super+L liberada 2026-08-01
 // Caffeine + ClockCluster parked (UI hidden). Restore with widget/caffeine.ts + block below.
 // import {
@@ -128,6 +129,7 @@ function cycleOutputMode(wp: AstalWp.Wp) {
 
   if (mode === "speakers") {
     muteAllSinks(wp)
+    ensureGameStreamsFollowDefault()
     return
   }
   if (mode === "mute") {
@@ -138,6 +140,7 @@ function cycleOutputMode(wp: AstalWp.Wp) {
     } else {
       wp.defaultSpeaker.set_mute(false)
     }
+    ensureGameStreamsFollowDefault()
     return
   }
   if (hp) hp.set_mute(true)
@@ -147,6 +150,7 @@ function cycleOutputMode(wp: AstalWp.Wp) {
   } else {
     wp.defaultSpeaker.set_mute(false)
   }
+  ensureGameStreamsFollowDefault()
 }
 
 function VolumeTrack() {
@@ -241,9 +245,9 @@ function Volume() {
     void sinkId()
     void routePulse()
     const mode = modeOfEndpoint(wp.defaultSpeaker)
-    if (mode === "mute") return "Muted → headphones"
-    if (mode === "headphones") return "Headphones → speakers"
-    return "Speakers → mute"
+    if (mode === "mute") return "Silencio → Auriculares"
+    if (mode === "headphones") return "Auriculares → Parlantes"
+    return "Parlantes → Silencio"
   })
 
   const bump = (delta: number) => {
