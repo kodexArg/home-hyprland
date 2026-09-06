@@ -1,0 +1,44 @@
+{
+  "input": {
+    "blocklist": [],
+    "plugins_order": [
+      "filter#0",
+      "gate#0",
+      "deesser#0"
+    ],
+    "filter#0": {
+      "bypass": false,
+      "frequency": 90.0,
+      "mode": "12dB/oct Highpass",
+      "q": 0.707
+    },
+    "gate#0": {
+      "attack": 10.0,
+      "bypass": false,
+      "close-threshold": -36.0,
+      "curve-threshold": -34.0,
+      "hold": 100.0,
+      "hysteresis": true,
+      "knee": 2.8,
+      "makeup": 0.0,
+      "open-threshold": -30.0,
+      "range": -60.0,
+      "reduction": 0.0,
+      "release": 150.0
+    },
+    "deesser#0": {
+      "bypass": false,
+      "detection": "RMS",
+      "f1-freq": 6000.0,
+      "f1-level": 0.0,
+      "f2-freq": 8000.0,
+      "f2-level": 0.0,
+      "f2-q": 1.0,
+      "laxity": 15,
+      "mode": "Wide",
+      "ratio": 3.0,
+      "sc-listen": false,
+      "threshold": -20.0
+    }
+  }
+}
