@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# kdx-logs: High-performance, categorized system log viewer for debian-sid / Hyprland
+set -euo pipefail
+
+# Ensure user has access to full journal (fallback to passwordless sudo if session lacks group)
+run_journal() {
+  if id -Gn 2>/dev/null | grep -qw "systemd-journal"; then
+    journalctl "$@"
+  elif sudo -n true 2>/dev/null; then
+    sudo journalctl "$@"
+  else
+    journalctl "$@"
+  fi
+}
+
+run_dmesg() {
+  if dmesg -T >/dev/null 2>&1; then
+    dmesg -T --color=always
+  elif sudo -n true 2>/dev/null; then
+    sudo dmesg -T --color=always
+  else
+    run_journal -k -b
+  fi
+}
+
+# Colorize log lines for instant visual clarity
+colorize() {
+  awk '
+    BEGIN {
+      C_RESET  = "\033[0m"
+      C_RED    = "\033[1;31m"
+      C_YELLOW = "\033[1;33m"
+      C_CYAN   = "\033[0;36m"
+      C_GREEN  = "\033[0;32m"
+      C_MAGENTA= "\033[0;35m"
+    }
+    {
+      line = $0
+      # Highlight errors and failures
+      if (line ~ /(?i)(error|failed|failure|critical|alert|emerg|fault|panic)/) {
+        gsub(/(?i)(error|failed|failure|critical|alert|emerg|fault|panic)/, C_RED "&" C_RESET, line)
+      }
+      # Highlight warnings
+      if (line ~ /(?i)(warn|warning)/) {
+        gsub(/(?i)(warn|warning)/, C_YELLOW "&" C_RESET, line)
+      }
+      print line
+    }
+  '
+}
+
+fetch_logs() {
+  local category="$1"
+  local count="${2:-100}"
+  case "$category" in
+    errors)
+      run_journal -p 0..3 -xb --no-hostname -o short-iso -n "$count"
+      ;;
+    hypr)
+      run_journal -b --no-hostname -o short-iso -n "$count" \
+        _COMM=Hyprland _COMM=hyprland _COMM=xdg-desktop-por + UNIT=ags-hyprland.service
+      ;;
+    audio)
+      run_journal -b --no-hostname -o short-iso -n "$count" \
+        _COMM=pipewire _COMM=wireplumber _COMM=easyeffects + UNIT=pipewire.service + UNIT=wireplumber.service + UNIT=easyeffects.service
+      ;;
+    network)
+      run_journal -b --no-hostname -o short-iso -n "$count" \
+        UNIT=warp-svc.service + UNIT=systemd-resolved.service + UNIT=NetworkManager.service
+      ;;
+    kernel)
+      run_dmesg | tail -n "$count"
+      ;;
+    security)
+      run_journal -b --no-hostname -o short-iso -n "$count" \
+        _COMM=sudo _COMM=polkitd _COMM=su UNIT=systemd-logind.service
+      ;;
+    ai)
+      run_journal -b --no-hostname -o short-iso -n "$count" \
+        UNIT=local-llm.service + UNIT=comfyui.service + UNIT=docker.service
+      ;;
+    user)
+      run_journal --user -b --no-hostname -o short-iso -n "$count"
+      ;;
+    all)
+      run_journal -b --no-hostname -o short-iso -n "$count"
+      ;;
+    *)
+      run_journal -b --no-hostname -o short-iso -n "$count"
+      ;;
+  esac
+}
+
+# If an explicit argument was passed, view directly
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    --preview)
+      fetch_logs "$2" 80 | colorize
+      exit 0
+      ;;
+    errors|hypr|audio|network|kernel|security|ai|user|all)
+      fetch_logs "$1" 1000 | colorize | less -R +G
+      exit 0
+      ;;
+    lnav)
+      if command -v lnav >/dev/null 2>&1; then
+        run_journal -b | lnav
+      else
+        echo "lnav no está instalado." >&2
+      fi
+      exit 0
+      ;;
+    stream)
+      run_journal -f -b --no-hostname -o short-iso | colorize
+      exit 0
+      ;;
+  esac
+fi
+
+# Interactive FZF Dashboard
+SELF_BIN="${BASH_SOURCE[0]}"
+
+# Precalculate quick badges
+err_count=$(run_journal -p 0..3 -xb -q --no-pager | wc -l || echo "0")
+if [[ "$err_count" -gt 0 ]]; then
+  badge_err="\033[1;31m[$err_count errores]\033[0m"
+else
+  badge_err="\033[1;32m[0 errores]\033[0m"
+fi
+
+entries=(
+  "errors   🚨 [1] Críticos & Errores (Boot)        $badge_err"
+  "hypr     🖥️  [2] Hyprland, Wayland & Portales     [compositor, ags, portals]"
+  "audio    🔊 [3] Audio Stack (PipeWire & WireP.)  [pipewire, wireplumber, easyeffects]"
+  "network  🌐 [4] Red, WARP & DNS (Resolved)       [warp, resolved, networkmanager]"
+  "kernel   🐧 [5] Kernel & Hardware (Dmesg/GPU)    [dmesg, nvidia, pcie, usb]"
+  "security 🛡️  [6] Seguridad & Auth (Sudo/Polkit)   [sudo, polkit, logind]"
+  "ai       🤖 [7] AI & Servicios (LLM/Comfy/Docker)[local-llm, comfyui, docker]"
+  "user     📦 [8] Servicios de Usuario Systemd     [systemd --user]"
+  "all      📜 [9] Journal Completo (Boot actual)   [todos los eventos]"
+  "stream   📡 [S] Live Stream en Tiempo Real       [journalctl -f]"
+  "lnav     🧭 [L] LNAV (Análisis Profundo & SQL)   [timeline, histograma, filtros]"
+)
+
+choice=$(printf "%b\n" "${entries[@]}" | fzf \
+  --ansi \
+  --header="SYSTEM LOGS — debian-sid | Enter: Ver Completo | L: LNAV | S: Stream | Esc/Q: Salir" \
+  --header-first \
+  --prompt="Seleccionar Categoría > " \
+  --preview="$SELF_BIN --preview {1}" \
+  --preview-window="right:68%:wrap" \
+  --bind="1:become(echo errors),2:become(echo hypr),3:become(echo audio),4:become(echo network),5:become(echo kernel),6:become(echo security),7:become(echo ai),8:become(echo user),9:become(echo all),l:become(echo lnav),s:become(echo stream),q:abort" \
+  --reverse \
+  --border=rounded \
+  --color="border:#9a958c,header:#F3EEE4,prompt:#81a1c1,pointer:#88c0d0" \
+  | awk '{print $1}')
+
+if [[ -z "${choice:-}" ]]; then
+  exit 0
+fi
+
+case "$choice" in
+  lnav)
+    run_journal -b | lnav
+    ;;
+  stream)
+    clear
+    echo -e "\033[1;36m=== Streaming en vivo (Ctrl+C para salir) ===\033[0m"
+    run_journal -f -b --no-hostname -o short-iso | colorize
+    ;;
+  *)
+    clear
+    fetch_logs "$choice" 3000 | colorize | less -R +G
+    ;;
+esac

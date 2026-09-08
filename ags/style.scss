@@ -291,8 +291,13 @@ window.Bar {
       color: $status-gray; /* off */
     }
 
-    &.ready image {
-      color: $status-green; /* model selected & /v1/models answering */
+    &.ready image,
+    &.active image {
+      color: $status-green; /* model selected & /v1/models answering / brain listening */
+    }
+
+    &.standby image {
+      color: $status-gray; /* model ready in VRAM, brain listening off */
     }
 
     &.thinking image {

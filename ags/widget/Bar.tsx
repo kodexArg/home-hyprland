@@ -42,6 +42,15 @@ const ICON_SPEAKERS = `${ICON_DIR}/speakers.svg`
 const ICON_MUTED = `${ICON_DIR}/muted.svg`
 const ICON_HEADPHONES = `${ICON_DIR}/headphones.svg`
 
+function isVirtualEndpoint(ep: AstalWp.Endpoint): boolean {
+  const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
+  return (
+    d.includes("easy effects") ||
+    d.includes("easyeffects") ||
+    d.includes("echo-cancel")
+  )
+}
+
 function routeLooksLikeHeadphones(
   name: string | null | undefined,
   description: string | null | undefined,
@@ -55,30 +64,40 @@ function routeLooksLikeHeadphones(
 }
 
 function endpointLooksLikeHdmiHeadphones(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
   const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
   return (
-    d.includes("hdmi") ||
-    d.includes("displayport") ||
+    d.includes("auricular") ||
+    d.includes("headphone") ||
+    d.includes("headset") ||
+    d.includes("g2790g4") ||
+    d.includes("aoc") ||
     d.includes("tu106") ||
-    d.includes("nvidia")
+    (d.includes("hdmi") && !d.includes("asus"))
   )
 }
 
 function endpointLooksLikeMbSpeakers(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
   if (endpointLooksLikeHdmiHeadphones(ep)) return false
   const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
   return (
+    d.includes("parlante") ||
+    d.includes("motherboard") ||
     d.includes("analog") ||
     d.includes("ryzen") ||
     d.includes("alc897") ||
     d.includes("lineout") ||
-    d.includes("line-out")
+    d.includes("line-out") ||
+    d.includes("family 17h") ||
+    d.includes("starship")
   )
 }
 
 type OutputMode = "speakers" | "mute" | "headphones"
 
 function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
   if (endpointLooksLikeHdmiHeadphones(ep)) return true
   if (endpointLooksLikeMbSpeakers(ep)) return false
   const r = ep.route
@@ -86,7 +105,7 @@ function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
 }
 
 function listSpeakers(wp: AstalWp.Wp): AstalWp.Endpoint[] {
-  return wp.audio?.speakers ?? []
+  return (wp.audio?.speakers ?? []).filter((s) => !isVirtualEndpoint(s))
 }
 
 function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
@@ -99,17 +118,32 @@ function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
 }
 
 function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
-  return listSpeakers(wp).find((s) => endpointIsHeadphones(s)) ?? null
+  const all = listSpeakers(wp)
+  return (
+    all.find((s) => endpointLooksLikeHdmiHeadphones(s)) ??
+    all.find((s) => endpointIsHeadphones(s)) ??
+    null
+  )
 }
 
 function modeOfEndpoint(ep: AstalWp.Endpoint): OutputMode {
-  if (ep.mute) return "mute"
+  if (!ep || ep.mute) return "mute"
   if (endpointIsHeadphones(ep)) return "headphones"
   return "speakers"
 }
 
 function currentOutputMode(wp: AstalWp.Wp): OutputMode {
-  return modeOfEndpoint(wp.defaultSpeaker)
+  const def = wp.defaultSpeaker
+  if (!def) return "speakers"
+  if (def.mute) return "mute"
+  if (isVirtualEndpoint(def)) {
+    const sp = findSpeakerSink(wp)
+    const hp = findHeadphoneSink(wp)
+    if (hp && !hp.mute) return "headphones"
+    if (sp && !sp.mute) return "speakers"
+    return "mute"
+  }
+  return modeOfEndpoint(def)
 }
 
 function iconFileForMode(mode: OutputMode): string {
@@ -118,8 +152,11 @@ function iconFileForMode(mode: OutputMode): string {
   return ICON_SPEAKERS
 }
 
-function muteAllSinks(wp: AstalWp.Wp) {
-  for (const s of listSpeakers(wp)) s.set_mute(true)
+function muteAllPhysicalSinks(wp: AstalWp.Wp) {
+  const hp = findHeadphoneSink(wp)
+  const sp = findSpeakerSink(wp)
+  if (sp) sp.set_mute(true)
+  if (hp) hp.set_mute(true)
 }
 
 function cycleOutputMode(wp: AstalWp.Wp) {
@@ -128,7 +165,7 @@ function cycleOutputMode(wp: AstalWp.Wp) {
   const sp = findSpeakerSink(wp)
 
   if (mode === "speakers") {
-    muteAllSinks(wp)
+    muteAllPhysicalSinks(wp)
     ensureGameStreamsFollowDefault()
     return
   }
@@ -138,7 +175,10 @@ function cycleOutputMode(wp: AstalWp.Wp) {
       hp.set_is_default(true)
       hp.set_mute(false)
     } else {
-      wp.defaultSpeaker.set_mute(false)
+      wp.defaultSpeaker?.set_mute(false)
+    }
+    for (const s of wp.audio?.speakers ?? []) {
+      if (isVirtualEndpoint(s)) s.set_mute(false)
     }
     ensureGameStreamsFollowDefault()
     return
@@ -148,7 +188,10 @@ function cycleOutputMode(wp: AstalWp.Wp) {
     sp.set_is_default(true)
     sp.set_mute(false)
   } else {
-    wp.defaultSpeaker.set_mute(false)
+    wp.defaultSpeaker?.set_mute(false)
+  }
+  for (const s of wp.audio?.speakers ?? []) {
+    if (isVirtualEndpoint(s)) s.set_mute(false)
   }
   ensureGameStreamsFollowDefault()
 }
@@ -229,7 +272,9 @@ function Volume() {
   const routePulse = createPoll(0, 250, () => {
     const s = AstalWp.get_default()?.defaultSpeaker
     const r = s?.route
-    return `${s?.id ?? 0}|${s?.mute ? 1 : 0}|${r?.name ?? ""}`.length
+    const sp = AstalWp.get_default() ? findSpeakerSink(AstalWp.get_default()!) : null
+    const hp = AstalWp.get_default() ? findHeadphoneSink(AstalWp.get_default()!) : null
+    return `${s?.id ?? 0}|${s?.mute ? 1 : 0}|${sp?.mute ? 1 : 0}|${hp?.mute ? 1 : 0}|${r?.name ?? ""}`.length
   })
 
   const outputIconFile = createComputed(() => {
@@ -237,14 +282,14 @@ function Volume() {
     void sinkId()
     void sinkDesc()
     void routePulse()
-    return iconFileForMode(modeOfEndpoint(wp.defaultSpeaker))
+    return iconFileForMode(currentOutputMode(wp))
   })
 
   const iconTip = createComputed(() => {
     void mute()
     void sinkId()
     void routePulse()
-    const mode = modeOfEndpoint(wp.defaultSpeaker)
+    const mode = currentOutputMode(wp)
     if (mode === "mute") return "Silencio → Auriculares"
     if (mode === "headphones") return "Auriculares → Parlantes"
     return "Parlantes → Silencio"

@@ -52,6 +52,40 @@ const [apiReady, setApiReady] = createState(false)
 const [lastFail, setLastFail] = createState("")
 const [vramUsedMib, setVramUsedMib] = createState<number | null>(null)
 
+const BRAIN_ACTIVE_FILE = "/tmp/dictate_brain_active"
+const [brainActive, setBrainActive] = createState(readBrainActive())
+
+export function readBrainActive(): boolean {
+  try {
+    const f = Gio.File.new_for_path(BRAIN_ACTIVE_FILE)
+    if (f.query_exists(null)) {
+      const [ok, bytes] = f.load_contents(null)
+      if (ok) {
+        return new TextDecoder().decode(bytes).trim() === "1"
+      }
+    }
+  } catch {}
+  return false
+}
+
+export function toggleBrainActive(): void {
+  try {
+    const bin =
+      GLib.find_program_in_path("kdx-dictator") ??
+      `${GLib.get_home_dir()}/.local/bin/kdx-dictator`
+    Gio.Subprocess.new(
+      [bin, "brain", "toggle"],
+      Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => {
+      setBrainActive(readBrainActive())
+      return GLib.SOURCE_REMOVE
+    })
+  } catch (e) {
+    printerr(`local-llm: toggleBrainActive failed: ${e}`)
+  }
+}
+
 let tickSource: number | null = null
 let ctlInFlight = false
 
@@ -242,6 +276,7 @@ function ensureTick() {
   if (tickSource !== null) return
   tickSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, () => {
     const busy = tickFsm()
+    setBrainActive(readBrainActive())
     if (!busy) {
       const s = probeSvc()
       setSvcSnap(s)
@@ -561,6 +596,21 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
     return off ? "LocalLlm-off armed" : "LocalLlm-off"
   })
 
+  const brainListenerClass = createComputed(() => {
+    void brainActive()
+    return brainActive() ? "LocalLlm-model on" : "LocalLlm-model"
+  })
+  const brainListenerMark = createComputed(() => {
+    void brainActive()
+    return brainActive() ? "●" : "○"
+  })
+  const brainListenerLabel = createComputed(() => {
+    void brainActive()
+    return brainActive()
+      ? "🧠 Escucha de Dictador: ACTIVO"
+      : "🧠 Escucha de Dictador: INACTIVO"
+  })
+
   return (
     <window
       visible={panelVisible}
@@ -606,6 +656,24 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
           xalign={0}
           tooltipText={`timeout ${LOAD_TIMEOUT_SEC}s (2×${LOAD_BUDGET_SEC}s densenet budget @ 8GB) · ready=/v1/models · click outside or Esc to close`}
         />
+
+        <box class="LocalLlm-sep" heightRequest={1} hexpand />
+
+        <button
+          class={brainListenerClass}
+          tooltipText="Activar/desactivar escucha de cortes del dictador para interpretar acciones"
+          onClicked={() => toggleBrainActive()}
+        >
+          <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
+            <label class="LocalLlm-mark" label={brainListenerMark} xalign={0.5} />
+            <label
+              class="LocalLlm-label"
+              label={brainListenerLabel}
+              xalign={0}
+              hexpand
+            />
+          </box>
+        </button>
 
         <box class="LocalLlm-sep" heightRequest={1} hexpand />
 
@@ -697,7 +765,7 @@ export default function LocalLlm({
 
   // Client color SSOT (v1 busy + feedback). Poll 200 ms for snappier orange.
   // Priority: busy>0 → orange · feedback unknown (timed, idle) → red · else readiness.
-  type BrainTone = "off" | "ready" | "thinking" | "red"
+  type BrainTone = "off" | "standby" | "active" | "thinking" | "red"
   type Overlay = { kind: "busy" | "unknown" | null }
   const overlay = createPoll({ kind: null } as Overlay, 200, () => {
     try {
@@ -742,15 +810,19 @@ export default function LocalLlm({
     }
   })
 
+  const brainPoll = createPoll(false, 250, () => readBrainActive())
+
   const tone = createComputed((): BrainTone => {
     void tx()
     void svcSnap()
     void apiReady()
     void overlay()
+    void brainPoll()
     const o = overlay()
     if (o.kind === "busy") return "thinking"
     if (o.kind === "unknown") return "red"
-    if (svcSnap() === "running" && apiReady()) return "ready"
+    if (brainPoll()) return "active"
+    if (svcSnap() === "running" && apiReady()) return "standby"
     return "off"
   })
 
@@ -765,11 +837,11 @@ export default function LocalLlm({
   // Baked-color icon variants: GTK does not tint file SVGs via CSS `color`
   // (currentColor resolves to black), so the state is carried by the file.
   const iconFile = createComputed(() => {
-    void tone()
     const t = tone()
     if (t === "red") return `${ICON_DIR}/brain-red.svg`
     if (t === "thinking") return `${ICON_DIR}/brain-orange.svg`
-    if (t === "ready") return `${ICON_DIR}/brain-green.svg`
+    if (t === "active") return `${ICON_DIR}/brain-green.svg`
+    if (t === "standby") return `${ICON_DIR}/brain-gray.svg`
     return `${ICON_DIR}/brain-dark.svg`
   })
 
@@ -784,22 +856,36 @@ export default function LocalLlm({
     void vramUsedMib()
     void overlay()
     void tipClock()
+    void brainPoll()
     const base = statusLine()
     const o = overlay()
+    const brainState = brainPoll() ? "ACTIVO (escuchando dictador)" : "INACTIVO"
     const extra =
       o.kind === "unknown"
         ? " · UNKNOWN (red)"
         : o.kind === "busy"
-          ? " · BUSY (orange)"
+          ? " · INTERPRETANDO (orange)"
           : ""
-    return `${base}${extra} — click for menu · outside/Esc closes`
+    return `🧠 Cerebro: ${brainState}\n${base}${extra}\nClic: alternar escucha · Clic secundario: modelos`
   })
 
   return (
     <button
       class={cls}
       tooltipText={tip}
-      onClicked={() => setMenuOpen(!menuOpen.peek())}
+      $={(self: Gtk.Button) => {
+        const click = new Gtk.GestureClick()
+        click.set_button(0)
+        click.connect("pressed", (_g, _n, _x, _y) => {
+          const btn = click.get_current_button()
+          if (btn === 3) {
+            setMenuOpen(!menuOpen.peek())
+          } else if (btn === 1) {
+            toggleBrainActive()
+          }
+        })
+        self.add_controller(click)
+      }}
     >
       <image file={iconFile} pixelSize={16} />
     </button>

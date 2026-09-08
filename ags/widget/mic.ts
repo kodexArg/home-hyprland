@@ -86,13 +86,27 @@ export function probeMicDescription(source?: string): string {
   return src
 }
 
+function stopDictationIfActive(): void {
+  try {
+    const dictatorBin =
+      GLib.find_program_in_path("kdx-dictator") ??
+      `${GLib.get_home_dir()}/.local/bin/kdx-dictator`
+    Gio.Subprocess.new([dictatorBin, "stop"], Gio.SubprocessFlags.STDERR_SILENCE)
+  } catch {}
+}
+
 function snap(): void {
   const src = resolveSourceName()
   const muted = probeMicMuted(src)
+  const prevMuted = micMuted.peek()
   setMicMuted(muted)
   setMicName(probeMicDescription(src))
   if (muted && micHearing.peek()) {
     setMicHearing(false)
+  }
+  // SI se apaga micrófono -> DICTADO SE APAGA
+  if (muted && !prevMuted) {
+    stopDictationIfActive()
   }
 }
 
@@ -207,7 +221,10 @@ export function toggleMicMute(): void {
   // Optimistic flip, then re-probe after PipeWire applies
   const next = !micMuted.peek()
   setMicMuted(next)
-  if (next) setMicHearing(false)
+  if (next) {
+    setMicHearing(false)
+    stopDictationIfActive()
+  }
   GLib.timeout_add(GLib.PRIORITY_DEFAULT, REPROBE_MS, () => {
     snap()
     return GLib.SOURCE_REMOVE

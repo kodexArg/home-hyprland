@@ -5,7 +5,7 @@ PartOf=pipewire.service
 After=pipewire.service wireplumber.service
 
 [Service]
-ExecStart=/usr/bin/easyeffects --service-mode
+ExecStart=/usr/bin/easyeffects --service-mode --hide-window
 Restart=on-failure
 RestartSec=3
 

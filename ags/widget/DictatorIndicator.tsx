@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createState, createComputed } from "ags"
+import { micMuted } from "./mic"
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const STATE_FILE = "/tmp/dictate_state.json"
@@ -77,6 +78,25 @@ function startWatching(): void {
 }
 
 export function toggleDictation(): void {
+  // SI microfono APAGADO: DICTADO NO PUEDE ACTIVARSE
+  if (dictatorMode() === "off" && micMuted()) {
+    try {
+      Gio.Subprocess.new(
+        [
+          "notify-send",
+          "-t",
+          "2500",
+          "-i",
+          "dialog-warning-symbolic",
+          "Dictado de Voz",
+          "⚠️ Micrófono silenciado — activalo para iniciar dictado",
+        ],
+        Gio.SubprocessFlags.STDERR_SILENCE,
+      )
+    } catch {}
+    return
+  }
+
   try {
     Gio.Subprocess.new(
       [DICTATOR_BIN, "toggle"],
@@ -128,6 +148,9 @@ export default function DictatorIndicator() {
     const p = dictatorPhase()
     const t = tone()
     if (t === "muted") {
+      if (micMuted()) {
+        return "💬 Dictado continuo — ⚠️ Micrófono silenciado (activá el micrófono primero)"
+      }
       return "💬 Dictado continuo — Deshabilitado (clic o Super+D para habilitar)"
     }
     if (t === "idle") {
@@ -137,6 +160,9 @@ export default function DictatorIndicator() {
       return "💬 Dictado — 🟢 Whisper trabajando (transcribiendo / escribiendo al cursor)"
     }
     if (t === "busy") {
+      if (p === "busy") {
+        return "💬 Dictado — 🟠 Fin de mensaje detectado — procesando..."
+      }
       return `💬 Dictado — ⚡ Cambiando de modo / procesando (${p.toUpperCase()})...`
     }
     return "💬 Dictado — ⚠️ Error en /tmp/dictate.log"

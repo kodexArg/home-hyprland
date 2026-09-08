@@ -125,7 +125,17 @@ export function isSteamGameStream(s: AstalWp.Stream): GameDetection {
   return { isGame: false, title: "" }
 }
 
+export function isVirtualEndpoint(ep: AstalWp.Endpoint): boolean {
+  const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
+  return (
+    d.includes("easy effects") ||
+    d.includes("easyeffects") ||
+    d.includes("echo-cancel")
+  )
+}
+
 export function endpointLooksLikeMbSpeakers(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
   const d = (ep.description ?? "").toLowerCase()
   return (
     d.includes("parlantes") ||
@@ -137,6 +147,7 @@ export function endpointLooksLikeMbSpeakers(ep: AstalWp.Endpoint): boolean {
 }
 
 export function endpointLooksLikeHdmiHeadphones(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
   const d = (ep.description ?? "").toLowerCase()
   return (
     d.includes("auriculares") ||
@@ -147,6 +158,7 @@ export function endpointLooksLikeHdmiHeadphones(ep: AstalWp.Endpoint): boolean {
 }
 
 export function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
   if (endpointLooksLikeHdmiHeadphones(ep)) return true
   if (endpointLooksLikeMbSpeakers(ep)) return false
   const r = ep.route
@@ -156,7 +168,7 @@ export function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
 }
 
 export function listSpeakers(wp: AstalWp.Wp): AstalWp.Endpoint[] {
-  return wp.audio?.speakers ?? []
+  return (wp.audio?.speakers ?? []).filter((s) => !isVirtualEndpoint(s))
 }
 
 export function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
@@ -169,7 +181,12 @@ export function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
 }
 
 export function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
-  return listSpeakers(wp).find((s) => endpointIsHeadphones(s)) ?? null
+  const all = listSpeakers(wp)
+  return (
+    all.find((s) => endpointLooksLikeHdmiHeadphones(s)) ??
+    all.find((s) => endpointIsHeadphones(s)) ??
+    null
+  )
 }
 
 // Reactive state

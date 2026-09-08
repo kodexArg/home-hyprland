@@ -71,7 +71,7 @@ local kdxShare    = "/home/kodex/.local/bin/kdx-share"
 local agsBin      = "PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin /usr/local/bin/ags"
 local grokBot     = "grok-bot"
 local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/kitty/grok.conf /home/kodex/.local/bin/grok --fullscreen"
-local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy --dangerously-skip-permissions"
+local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy-launch"
 local warpToggle  = "/home/kodex/.local/bin/hypr-warp-toggle"
 local mainMod     = "SUPER"
 local resizeStep  = 40
@@ -287,6 +287,28 @@ hl.window_rule({
     workspace = "6 silent",
 })
 
+-- Hell Let Loose: game surface lives on right landscape ws 6 (Super+6).
+hl.window_rule({
+    name      = "hell-let-loose-class-right",
+    match     = { class = ".*steam_app_686810.*" },
+    monitor   = aoc,
+    workspace = "6",
+})
+
+hl.window_rule({
+    name      = "hell-let-loose-title-right",
+    match     = { title = ".*Hell Let Loose.*" },
+    monitor   = aoc,
+    workspace = "6",
+})
+
+hl.window_rule({
+    name      = "hell-let-loose-exe-right",
+    match     = { class = ".*HLL.*" },
+    monitor   = aoc,
+    workspace = "6",
+})
+
 -- Super+K tags the active window; this rule confines the pointer while tagged.
 local pointerConfineTag = "pointer-confine"
 hl.window_rule({
@@ -311,6 +333,13 @@ hl.window_rule({
     name  = "kdx-share-mirror-float",
     match = { class = "at.yrlf.wl_mirror", title = "kdx-share.*" },
     float = true,
+})
+hl.window_rule({
+    name   = "kdx-logs-float",
+    match  = { class = "kdx-logs" },
+    float  = true,
+    center = true,
+    size   = { "1300", "800" },
 })
 
 local function revealAllWindows()
@@ -496,7 +525,10 @@ hl.bind(mainMod .. " + mouse:274", hl.dsp.window.drag(),   { mouse = true })
 hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
 hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })
 hl.bind("XF86AudioMute",         hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),     { locked = true, repeating = true })
-hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"),   { locked = true, repeating = true })
+-- XF86AudioMicMute disabled (2026-09-06): Logitech G300s G7 (button 6 / F20) maps to XF86AudioMicMute via XKB and was accidentally muting the mic
+-- hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"),   { locked = true, repeating = true })
+-- Logitech G300s: G8/F19 mute bind removed (2026-09-05). G9 = Unmute micrófono (F24)
+hl.bind("F24", hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0"), { locked = true })
 hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd("brightnessctl -e4 -n2 set 5%+"),                  { locked = true, repeating = true })
 hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl -e4 -n2 set 5%-"),                  { locked = true, repeating = true })
 hl.bind("XF86AudioNext",         hl.dsp.exec_cmd("playerctl next"),       { locked = true })
@@ -511,7 +543,7 @@ hl.on("hyprland.start", function()
     -- and never returns — bar lives only on portrait HDMI-A-2.
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE DISPLAY")
     hl.exec_cmd("systemctl --user start ags-hyprland.service")
-    hl.exec_cmd(agyCli)
+    hl.exec_cmd(grokBot)
     -- anyrun-launch sets PATH incl. /usr/games (Steam game .desktop Exec=steam …)
     hl.exec_cmd("/home/kodex/.local/bin/anyrun-launch daemon")
 end)

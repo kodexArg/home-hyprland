@@ -56,6 +56,7 @@ const ICON_REC_ON = `${ICON_DIR}/rec-on.svg`
 const ICON_SCREEN = `${ICON_DIR}/screen.svg`
 const ICON_AREA = `${ICON_DIR}/area.svg`
 const ICON_PANEL = `${ICON_DIR}/panel.svg`
+const ICON_LOGS = `${ICON_DIR}/logs.svg`
 
 /** Fixed label column width — keeps icon | text columns aligned across rows. */
 const LABEL_W = 120
@@ -535,6 +536,34 @@ function CastRow() {
   )
 }
 
+function LogsRow() {
+  return (
+    <MenuRow
+      iconFile={ICON_LOGS}
+      label="Logs"
+      tip="System Logs — monitor de errores, servicios, kernel y audio"
+      rowClass="SystemMenu-row"
+      onClicked={() => {
+        closeAll()
+        try {
+          Gio.Subprocess.new(
+            [
+              "kitty",
+              "--class=kdx-logs",
+              "-T",
+              "System Logs",
+              "/home/kodex/.local/bin/kdx-logs",
+            ],
+            Gio.SubprocessFlags.NONE,
+          )
+        } catch (e) {
+          printerr(`system-menu: launch logs failed: ${e}`)
+        }
+      }}
+    />
+  )
+}
+
 function MenuList() {
   return (
     <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
@@ -542,7 +571,7 @@ function MenuList() {
         class="SystemMenu-status"
         label="SYSTEM"
         xalign={0}
-        tooltipText={`${L2TP_CONN} · WARP · Cast · Restart · Power off · outside/Esc closes`}
+        tooltipText={`${L2TP_CONN} · WARP · Cast · Logs · Restart · Power off · outside/Esc closes`}
       />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
@@ -550,6 +579,7 @@ function MenuList() {
       <VpnRow />
       <WarpRow />
       <CastRow />
+      <LogsRow />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 

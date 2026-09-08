@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Drive the live Brave window on this Hyprland session (not Cursor's browser).
+
+Playwright-style: screenshot the window, then click in window-local pixels.
+Clicks go through Hyprland Lua (cursor.move + mouse:272). No CDP, no restart.
+
+  kdx-brave-play status
+  kdx-brave-play shot [path]
+  kdx-brave-play focus
+  kdx-brave-play click <x> <y>     # window-local, origin top-left of the window box
+  kdx-brave-play type 'text'
+  kdx-brave-play key Return
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CLASS = "brave-browser"
+
+
+def hypr_j(cmd: str) -> object:
+    return json.loads(
+        subprocess.check_output(["hyprctl", "-j", cmd], text=True),
+    )
+
+
+def hypr_eval(code: str) -> str:
+    return subprocess.check_output(["hyprctl", "eval", code], text=True).strip()
+
+
+def find_brave() -> dict:
+    clients = hypr_j("clients")
+    assert isinstance(clients, list)
+    matches = [
+        c
+        for c in clients
+        if c.get("class") == CLASS and c.get("mapped")
+    ]
+    if not matches:
+        raise SystemExit("kdx-brave-play: no mapped brave-browser window")
+    matches.sort(key=lambda c: int(c.get("focusHistoryID") or 99))
+    return matches[0]
+
+
+def status() -> None:
+    win = find_brave()
+    monitors = hypr_j("monitors")
+    assert isinstance(monitors, list)
+    mon = next((m for m in monitors if m.get("id") == win.get("monitor")), None)
+    x, y = win["at"]
+    w, h = win["size"]
+    payload = {
+        "title": win.get("title"),
+        "pid": win.get("pid"),
+        "address": win.get("address"),
+        "workspace": (win.get("workspace") or {}).get("id"),
+        "monitor": {
+            "id": win.get("monitor"),
+            "name": None if mon is None else mon.get("name"),
+            "description": None if mon is None else mon.get("description"),
+        },
+        "box": {"x": x, "y": y, "w": w, "h": h},
+        "xwayland": win.get("xwayland"),
+    }
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
+def focus_brave() -> dict:
+    win = find_brave()
+    # Window objects from get_windows(), not address strings (0.56).
+    result = hypr_eval(
+        'local ws = hl.get_windows({ class = "brave-browser" }); '
+        "if #ws == 0 then error('no brave') end; "
+        "hl.dispatch(hl.dsp.focus({ window = ws[1] })); "
+        "return ws[1].title"
+    )
+    if result not in {"ok", win.get("title", "")} and "error" in result.lower():
+        raise SystemExit(f"kdx-brave-play focus failed: {result}")
+    time.sleep(0.08)
+    return win
+
+
+def restore_last() -> None:
+    hypr_eval("hl.dispatch(hl.dsp.focus({ last = true }))")
+
+
+def shot(path: Path | None) -> Path:
+    win = find_brave()
+    x, y = win["at"]
+    w, h = win["size"]
+    if path is None:
+        dest_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "kdx-brave"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        path = dest_dir / "shot.png"
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    geom = f"{x},{y} {w}x{h}"
+    proc = subprocess.run(["grim", "-g", geom, str(path)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"grim failed: {proc.stderr.strip() or proc.returncode}")
+    print(path)
+    return path
+
+
+def click_local(lx: int, ly: int) -> None:
+    win = focus_brave()
+    x, y = win["at"]
+    w, h = win["size"]
+    if not (0 <= lx < w and 0 <= ly < h):
+        raise SystemExit(f"click {lx},{ly} outside window {w}x{h}")
+    gx, gy = int(x) + int(lx), int(y) + int(ly)
+    hypr_eval(f"hl.dispatch(hl.dsp.cursor.move({{ x = {gx}, y = {gy} }}))")
+    time.sleep(0.04)
+    hypr_eval(
+        'hl.dispatch(hl.dsp.send_key_state({ mods = "", key = "mouse:272", state = "down" }))'
+    )
+    time.sleep(0.03)
+    hypr_eval(
+        'hl.dispatch(hl.dsp.send_key_state({ mods = "", key = "mouse:272", state = "up" }))'
+    )
+
+
+def type_text(text: str) -> None:
+    focus_brave()
+    subprocess.check_call(["wtype", "--", text])
+
+
+def key(name: str) -> None:
+    focus_brave()
+    subprocess.check_call(["wtype", "-k", name])
+
+
+def usage() -> None:
+    print(__doc__.strip(), file=sys.stderr)
+    raise SystemExit(2)
+
+
+def main(argv: list[str]) -> None:
+    if not argv:
+        usage()
+    cmd = argv[0]
+    if cmd == "status":
+        status()
+    elif cmd == "focus":
+        focus_brave()
+    elif cmd == "shot":
+        dest = Path(argv[1]) if len(argv) > 1 else None
+        shot(dest)
+    elif cmd == "click":
+        if len(argv) != 3:
+            usage()
+        click_local(int(argv[1]), int(argv[2]))
+    elif cmd == "type":
+        if len(argv) < 2:
+            usage()
+        type_text(" ".join(argv[1:]))
+    elif cmd == "key":
+        if len(argv) != 2:
+            usage()
+        key(argv[1])
+    else:
+        usage()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
