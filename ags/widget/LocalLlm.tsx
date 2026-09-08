@@ -756,6 +756,27 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
   )
 }
 
+const BRAIN_STATE_FILE = "/tmp/brain_state.json"
+
+interface BrainSnapshot {
+  state?: "off" | "standby" | "thinking" | "queued" | "running" | "error"
+  pile?: number
+  detail?: string
+}
+
+function readBrainState(): BrainSnapshot {
+  try {
+    const f = Gio.File.new_for_path(BRAIN_STATE_FILE)
+    if (f.query_exists(null)) {
+      const [ok, bytes] = f.load_contents(null)
+      if (ok) {
+        return JSON.parse(new TextDecoder().decode(bytes))
+      }
+    }
+  } catch {}
+  return { state: readBrainActive() ? "standby" : "off", pile: 0 }
+}
+
 export default function LocalLlm({
   gdkmonitor,
 }: {
@@ -763,67 +784,27 @@ export default function LocalLlm({
 }) {
   LocalLlmPanel(gdkmonitor)
 
-  // Client color SSOT (v1 busy + feedback). Poll 200 ms for snappier orange.
-  // Priority: busy>0 → orange · feedback unknown (timed, idle) → red · else readiness.
-  type BrainTone = "off" | "standby" | "active" | "thinking" | "red"
-  type Overlay = { kind: "busy" | "unknown" | null }
-  const overlay = createPoll({ kind: null } as Overlay, 200, () => {
-    try {
-      const f = Gio.File.new_for_path(COLOR_FILE)
-      if (f.query_exists(null)) {
-        const [ok, bytes] = f.load_contents(null)
-        if (ok) {
-          const d = JSON.parse(new TextDecoder().decode(bytes)) as {
-            v?: number
-            busy?: number
-            feedback?: string | null
-            feedback_until?: number | null
-            tone?: string
-            until?: number | null
-          }
-          const busy = Number(d.busy ?? 0)
-          if (busy > 0) return { kind: "busy" as const }
-          // v1 feedback
-          if (
-            d.feedback === "unknown" &&
-            d.feedback_until != null &&
-            Date.now() / 1000 < Number(d.feedback_until)
-          )
-            return { kind: "unknown" as const }
-          // compat tone/until (older writers)
-          if (d.tone === "orange") return { kind: "busy" as const }
-          if (
-            d.tone === "red" &&
-            (d.until == null || Date.now() / 1000 < Number(d.until))
-          )
-            return { kind: "unknown" as const }
-        }
-      }
-      // legacy thinking file = busy
-      if (Gio.File.new_for_path(THINKING_FILE).query_exists(null))
-        return { kind: "busy" as const }
-      return { kind: null as const }
-    } catch {
-      if (Gio.File.new_for_path(THINKING_FILE).query_exists(null))
-        return { kind: "busy" as const }
-      return { kind: null as const }
-    }
-  })
-
+  type BrainTone = "off" | "standby" | "thinking" | "queued" | "running" | "error"
   const brainPoll = createPoll(false, 250, () => readBrainActive())
+  const brainStatePoll = createPoll(
+    { state: "off", pile: 0 } as BrainSnapshot,
+    80,
+    () => readBrainState(),
+  )
 
   const tone = createComputed((): BrainTone => {
     void tx()
     void svcSnap()
     void apiReady()
-    void overlay()
     void brainPoll()
-    const o = overlay()
-    if (o.kind === "busy") return "thinking"
-    if (o.kind === "unknown") return "red"
-    if (brainPoll()) return "active"
-    if (svcSnap() === "running" && apiReady()) return "standby"
-    return "off"
+    void brainStatePoll()
+    if (!brainPoll()) return "off"
+    const bs = brainStatePoll()
+    const st = bs.state
+    if (st === "thinking" || st === "queued" || st === "running" || st === "error") {
+      return st
+    }
+    return "standby"
   })
 
   const cls = createComputed(() => {
@@ -834,13 +815,19 @@ export default function LocalLlm({
     return parts.join(" ")
   })
 
-  // Baked-color icon variants: GTK does not tint file SVGs via CSS `color`
-  // (currentColor resolves to black), so the state is carried by the file.
+  // Baked-color icon variants matching user FSM:
+  // - off: dark gray
+  // - standby: light gray (waiting for input)
+  // - thinking: green (receiving / thinking)
+  // - queued: yellow (receiving while thinking, pile 1..5)
+  // - running: orange (executing action wtype lockout)
+  // - error: red
   const iconFile = createComputed(() => {
     const t = tone()
-    if (t === "red") return `${ICON_DIR}/brain-red.svg`
-    if (t === "thinking") return `${ICON_DIR}/brain-orange.svg`
-    if (t === "active") return `${ICON_DIR}/brain-green.svg`
+    if (t === "error") return `${ICON_DIR}/brain-red.svg`
+    if (t === "running") return `${ICON_DIR}/brain-orange.svg`
+    if (t === "queued") return `${ICON_DIR}/brain-yellow.svg`
+    if (t === "thinking") return `${ICON_DIR}/brain-green.svg`
     if (t === "standby") return `${ICON_DIR}/brain-gray.svg`
     return `${ICON_DIR}/brain-dark.svg`
   })
@@ -854,19 +841,25 @@ export default function LocalLlm({
     void apiReady()
     void lastFail()
     void vramUsedMib()
-    void overlay()
     void tipClock()
     void brainPoll()
+    void brainStatePoll()
+    const t = tone()
+    const bs = brainStatePoll()
     const base = statusLine()
-    const o = overlay()
-    const brainState = brainPoll() ? "ACTIVO (escuchando dictador)" : "INACTIVO"
-    const extra =
-      o.kind === "unknown"
-        ? " · UNKNOWN (red)"
-        : o.kind === "busy"
-          ? " · INTERPRETANDO (orange)"
-          : ""
-    return `🧠 Cerebro: ${brainState}\n${base}${extra}\nClic: alternar escucha · Clic secundario: modelos`
+    const stateDesc =
+      t === "off"
+        ? "OFF (inactivo)"
+        : t === "standby"
+          ? "ESCUCHANDO (esperando cortes del dictador)"
+          : t === "thinking"
+            ? "PENSANDO (interpretando intención...)"
+            : t === "queued"
+              ? `EN COLA (Pila ${bs.pile ?? 1}/5 — acumulando frases)`
+              : t === "running"
+                ? "EJECUTANDO (bloqueo de escucha activo)"
+                : "ERROR (recuperando en 3s...)"
+    return `🧠 Cerebro: ${stateDesc}\n${base}\nClic: alternar escucha · Clic secundario: modelos`
   })
 
   return (

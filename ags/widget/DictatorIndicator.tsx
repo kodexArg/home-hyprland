@@ -130,10 +130,10 @@ export default function DictatorIndicator() {
     if (p === "err") {
       return "error"
     }
-    if (p === "stt" || p === "paste" || p === "ok") {
+    if (p === "stt" || p === "paste" || p === "ok" || p === "working" || p === "writing" || p === "listening") {
       return "working"
     }
-    if (p === "stopping" || p === "busy" || p === "arming") {
+    if (p === "stopping" || p === "busy" || p === "arming" || p === "thinking") {
       return "busy"
     }
     return "idle"

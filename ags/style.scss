@@ -287,25 +287,29 @@ window.Bar {
 
     /* state carried by icon color only — no persistent rectangle
        beyond the standard (transparent → hover) border */
-    image {
-      color: $status-gray; /* off */
-    }
-
-    &.ready image,
-    &.active image {
-      color: $status-green; /* model selected & /v1/models answering / brain listening */
+    &.off image {
+      color: $status-gray; /* off: dark gray */
     }
 
     &.standby image {
-      color: $status-gray; /* model ready in VRAM, brain listening off */
+      color: $status-gray; /* waiting for input: light gray */
     }
 
     &.thinking image {
-      color: $orange-500; /* generation in flight (color/thinking contract) */
+      color: $status-green; /* input received & thinking: green */
     }
 
+    &.queued image {
+      color: $status-yellow; /* receiving while thinking / queue: yellow */
+    }
+
+    &.running image {
+      color: $orange-500; /* executing action: orange */
+    }
+
+    &.error image,
     &.red image {
-      color: $status-red; /* unknown intent — client-requested, typically 3s */
+      color: $status-red; /* error: red */
     }
 
     &.open {
