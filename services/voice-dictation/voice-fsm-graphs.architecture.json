@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "3-Tier FSM Architecture: Microphone, Speech Dictator & Cognitive Brain",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1320,
+      990
+    ],
+    "views": [
+      {
+        "id": "view-fsm1-fsm2",
+        "label": "🎙️ FSM 1 & FSM 2 (Capture & Queue)",
+        "focus": [
+          "fsm1_muted",
+          "fsm1_stream",
+          "fsm2_standby",
+          "fsm2_accum",
+          "fsm2_queue",
+          "fsm2_direct",
+          "fsm2_dispatch"
+        ],
+        "note": "FSM 1 gates audio capture. FSM 2 handles VAD speech segmentation, buffering pending chunks (pile 1..5) without cognitive reflection."
+      },
+      {
+        "id": "view-fsm3",
+        "label": "🧠 FSM 3 (Cognitive Router & Hyprland)",
+        "focus": [
+          "fsm3_standby",
+          "fsm3_router",
+          "fsm3_write",
+          "fsm3_hypr",
+          "fsm3_error"
+        ],
+        "note": "FSM 3 holds no queue. It receives a consolidated chunk and routes either refined text typing or native Hyprland dispatch commands."
+      },
+      {
+        "id": "view-pipeline",
+        "label": "⚡ Full Vertical Pipeline",
+        "focus": [
+          "fsm1_stream",
+          "fsm2_accum",
+          "fsm2_queue",
+          "fsm2_dispatch",
+          "fsm3_standby",
+          "fsm3_router",
+          "fsm3_write",
+          "fsm3_hypr"
+        ],
+        "note": "Complete vertical data flow: PCM capture in FSM 1, utterance queuing in FSM 2, and cognitive intent resolution with audio lockout in FSM 3."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "fsm1_stream",
+      "type": "frontend",
+      "label": "MIC_ON (Streaming)",
+      "sublabel": "Light Gray / PCM Capture",
+      "tag": "Audio Gate",
+      "pos": [
+        180,
+        68
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm1_muted",
+      "type": "security",
+      "label": "MIC_OFF (Muted)",
+      "sublabel": "Dark Gray / Silenced",
+      "tag": "Hardware Gate",
+      "pos": [
+        580,
+        68
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm2_standby",
+      "type": "frontend",
+      "label": "STANDBY (VAD Listen)",
+      "sublabel": "Light Gray / Idle Listen",
+      "tag": "VAD Active",
+      "pos": [
+        180,
+        225
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm2_accum",
+      "type": "frontend",
+      "label": "ACCUMULATING",
+      "sublabel": "Green / Active Voice",
+      "tag": "Utterance Buffer",
+      "pos": [
+        580,
+        225
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm2_queue",
+      "type": "messagebus",
+      "label": "QUEUE_MANAGER",
+      "sublabel": "Yellow / Pile 1..5",
+      "tag": "Zero Thought",
+      "pos": [
+        980,
+        225
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm2_direct",
+      "type": "frontend",
+      "label": "DIRECT_STREAM",
+      "sublabel": "Green / wtype live",
+      "tag": "Brain OFF",
+      "pos": [
+        180,
+        385
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm2_dispatch",
+      "type": "backend",
+      "label": "DISPATCH_CHUNK",
+      "sublabel": "Orange / Dispatches Chunk",
+      "tag": "Unified Chunk",
+      "pos": [
+        580,
+        385
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm3_standby",
+      "type": "frontend",
+      "label": "WAITING_CHUNK",
+      "sublabel": "Light Gray / Standby",
+      "tag": "No Queue",
+      "pos": [
+        580,
+        550
+      ],
+      "size": [
+        220,
+        56
+      ]
+    },
+    {
+      "id": "fsm3_router",
+      "type": "backend",
+      "label": "ACTION_ROUTER",
+      "sublabel": "Green / Thinking (:28000)",
+      "tag": "Cognitive Router",
+      "pos": [
+        570,
+        680
+      ],
+      "size": [
+        240,
+        60
+      ]
+    },
+    {
+      "id": "fsm3_write",
+      "type": "backend",
+      "label": "ACTION: WRITE",
+      "sublabel": "Orange / Default wtype",
+      "tag": "Punctuation & Text",
+      "pos": [
+        170,
+        830
+      ],
+      "size": [
+        240,
+        64
+      ]
+    },
+    {
+      "id": "fsm3_hypr",
+      "type": "external",
+      "label": "ACTION: HYPRLAND",
+      "sublabel": "Orange / Dispatcher",
+      "tag": "Workspaces & Focus",
+      "pos": [
+        570,
+        830
+      ],
+      "size": [
+        240,
+        64
+      ]
+    },
+    {
+      "id": "fsm3_error",
+      "type": "security",
+      "label": "ERROR_RECOVERY",
+      "sublabel": "Red / Auto-recover",
+      "tag": "Timeout (3s)",
+      "pos": [
+        980,
+        830
+      ],
+      "size": [
+        220,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "FSM 1: Microphone Stream Gate (Hardware / Audio Gate)",
+      "wraps": [
+        "fsm1_stream",
+        "fsm1_muted"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "FSM 2: Dictator & Queue Manager (Queue & Chunk Engine - Zero Thought)",
+      "wraps": [
+        "fsm2_standby",
+        "fsm2_accum",
+        "fsm2_queue",
+        "fsm2_direct",
+        "fsm2_dispatch"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "FSM 3: Cognitive Brain (Action Router & Hyprland Dispatcher - No Queue)",
+      "wraps": [
+        "fsm3_standby",
+        "fsm3_router",
+        "fsm3_write",
+        "fsm3_hypr",
+        "fsm3_error"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_fsm1_toggle",
+      "from": "fsm1_muted",
+      "to": "fsm1_stream",
+      "fromSide": "left",
+      "toSide": "right",
+      "label": "Super+D"
+    },
+    {
+      "id": "conn_stream_to_fsm2",
+      "from": "fsm1_stream",
+      "to": "fsm2_standby",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "16kHz PCM",
+      "labelDy": 24
+    },
+    {
+      "id": "conn_fsm2_direct",
+      "from": "fsm2_standby",
+      "to": "fsm2_direct",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "Brain OFF",
+      "labelDy": 24
+    },
+    {
+      "id": "conn_fsm2_voice",
+      "from": "fsm2_standby",
+      "to": "fsm2_accum",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "Voice Active"
+    },
+    {
+      "id": "conn_fsm2_pause",
+      "from": "fsm2_accum",
+      "to": "fsm2_queue",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "Silence Cut"
+    },
+    {
+      "id": "conn_fsm2_dispatch",
+      "from": "fsm2_queue",
+      "to": "fsm2_dispatch",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "label": "Piles Chunks"
+    },
+    {
+      "id": "conn_fsm2_to_fsm3",
+      "from": "fsm2_dispatch",
+      "to": "fsm3_standby",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "If Standby",
+      "labelDy": 24
+    },
+    {
+      "id": "conn_fsm3_eval",
+      "from": "fsm3_standby",
+      "to": "fsm3_router",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "Evaluate Intent",
+      "labelDy": 24
+    },
+    {
+      "id": "conn_fsm3_write",
+      "from": "fsm3_router",
+      "to": "fsm3_write",
+      "fromSide": "left",
+      "toSide": "top",
+      "label": "default text"
+    },
+    {
+      "id": "conn_fsm3_hypr",
+      "from": "fsm3_router",
+      "to": "fsm3_hypr",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "focus/switch",
+      "labelDy": 24
+    },
+    {
+      "id": "conn_fsm3_error",
+      "from": "fsm3_router",
+      "to": "fsm3_error",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "Failure/Timeout"
+    },
+    {
+      "id": "conn_fsm3_recover",
+      "from": "fsm3_error",
+      "to": "fsm3_standby",
+      "fromSide": "top",
+      "toSide": "right",
+      "label": "Recover (3s)"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "FSM 1 (Switch) & FSM 2 (Zero-Thought Queue)",
+      "items": [
+        "FSM 1 (Audio Gate): Toggles microphone hardware capture between muted and continuous 16kHz PCM audio streaming.",
+        "FSM 2 (Queue Manager): Silero VAD cuts upon silence; piles successive utterances (pile 1..5) without cognitive reflection.",
+        "Dispatch Guard: Emits DISPATCH_CHUNK to FSM 3 ONLY IF Cognitive Brain is in STANDBY (Light Gray). If Brain is busy, the queue holds."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "FSM 3: Cognitive Brain (Router Without Queue)",
+      "items": [
+        "Clean Reception: FSM 3 receives a single consolidated chunk without managing buffering or speech slicing.",
+        "Action Router: Thinking (:28000) resolves intent into default writing (refined text) or Hyprland actions (workspaces, monitors, Chromium).",
+        "Return to Standby: Upon completing execution, Brain returns to Standby and immediately drains any pending chunks in QueueManager."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Hyprland Router & System Execution",
+      "items": [
+        "Default Writing: Refines punctuation, casing, and grammar via local LLM before injecting keystrokes with wtype under Audio Lockout.",
+        "Hyprland Actions: Dispatches native Lua focus for Workspace 1/2/3, right monitor (HDMI-A-1 AOC), or Chromium stage window (Workspace 4).",
+        "Auto-Recovery: Transient LLM timeouts or offline states trigger ERROR (Red) and automatically recover to STANDBY in 3.0 seconds."
+      ]
+    }
+  ]
+}

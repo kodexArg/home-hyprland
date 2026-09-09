@@ -405,7 +405,8 @@ window.Bar {
       color: $status-gray;
     }
 
-    &.active image {
+    &.active image,
+    &.working image {
       color: $status-green;
     }
 
@@ -413,6 +414,7 @@ window.Bar {
       color: $orange-500;
     }
 
+    &.loading image,
     &.error image {
       color: $status-red;
     }

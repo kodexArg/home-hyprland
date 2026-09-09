@@ -12,12 +12,13 @@ const DICTATOR_BIN =
   GLib.find_program_in_path("dictate") ??
   `${GLib.get_home_dir()}/.local/bin/kdx-dictator`
 
-export type DictatorTone = "muted" | "idle" | "working" | "busy" | "error"
+export type DictatorTone = "muted" | "idle" | "working" | "busy" | "error" | "loading"
 
 /**
  * FSM Dictado (especificación del usuario):
  * - deshabilitado -> gris oscuro (#a0a0a0, 0.20 opacity) -> dictate-bubble-dark.svg
- * - habilitado (en espera / standby) -> gris claro (#9a9a9a, 0.55 opacity) -> dictate-bubble-gray.svg
+ * - cargando modelo -> rojo (#e53935, 1.0 opacity) -> dictate-bubble-red.svg
+ * - habilitado (ready / en espera) -> gris claro (#9a9a9a, 0.55 opacity) -> dictate-bubble-gray.svg
  * - faster-whisper trabajando / transcribiendo -> verde claro (#7bc96f, 1.0 opacity) -> dictate-bubble-green.svg
  * - cambiando de modo / transición -> naranja (#ff8c42, 1.0 opacity) -> dictate-bubble-orange.svg
  * - error -> rojo (#e53935, 1.0 opacity) -> dictate-bubble-red.svg
@@ -28,6 +29,7 @@ const ICONS: Record<DictatorTone, string> = {
   working: `${ICON_DIR}/dictate-bubble-green.svg`,
   busy: `${ICON_DIR}/dictate-bubble-orange.svg`,
   error: `${ICON_DIR}/dictate-bubble-red.svg`,
+  loading: `${ICON_DIR}/dictate-bubble-red.svg`,
 }
 
 const [dictatorPhase, setDictatorPhase] = createState("idle")
@@ -114,15 +116,17 @@ export function toggleDictation(): void {
 export default function DictatorIndicator() {
   startWatching()
 
-  // Mapeo FSM exacto:
-  // 1. Deshabilitado -> gris oscuro
-  // 2. Error -> rojo
-  // 3. Faster-whisper trabajando (stt / transcribiendo / paste) -> verde
-  // 4. Cambiando de modo / stopping / arming -> naranja
-  // 5. Habilitado (standby / escuchando) -> gris claro
+  // Mapeo FSM:
+  // 1. Deshabilitado -> gris oscuro (#a0a0a0, 0.20 opacity)
+  // 2. Cargando modelo -> rojo (#e53935, 1.0 opacity)
+  // 3. Ready (en espera / standby) -> gris claro (#9a9a9a, 0.55 opacity)
+  // 4. Faster-whisper trabajando (stt / writing / paste) -> verde claro (#7bc96f, 1.0 opacity)
+  // 5. Finalizando / transición -> naranja (#ff8c42, 1.0 opacity)
+  // 6. Error -> rojo (#e53935, 1.0 opacity)
   const tone = createComputed((): DictatorTone => {
     const p = dictatorPhase()
     const m = dictatorMode()
+    const d = dictatorDetail()
 
     if (p === "idle" || !p || m === "off") {
       return "muted"
@@ -130,10 +134,25 @@ export default function DictatorIndicator() {
     if (p === "err") {
       return "error"
     }
+    // Al cargar el modelo -> ROJO
+    if (
+      p === "loading" ||
+      p === "arming" ||
+      d.includes("loading") ||
+      d.includes("spawn") ||
+      d.includes("worker")
+    ) {
+      return "loading"
+    }
+    // Al estar ready / en espera -> GRIS CLARO
+    if (p === "rec" || d === "standby_listening") {
+      return "idle"
+    }
+    // Whisper trabajando / escribiendo al cursor -> VERDE
     if (p === "stt" || p === "paste" || p === "ok" || p === "working" || p === "writing" || p === "listening") {
       return "working"
     }
-    if (p === "stopping" || p === "busy" || p === "arming" || p === "thinking") {
+    if (p === "stopping" || p === "busy" || p === "thinking") {
       return "busy"
     }
     return "idle"
@@ -153,8 +172,11 @@ export default function DictatorIndicator() {
       }
       return "💬 Dictado continuo — Deshabilitado (clic o Super+D para habilitar)"
     }
+    if (t === "loading") {
+      return "💬 Dictado — 🔴 Cargando modelo STT en GPU (Whisper CUDA)..."
+    }
     if (t === "idle") {
-      return "💬 Dictado continuo — 🎙️ Habilitado (escuchando... siempre streamea al cursor)"
+      return "💬 Dictado continuo — 🎙️ Ready (en espera / escuchando... streamea al cursor)"
     }
     if (t === "working") {
       return "💬 Dictado — 🟢 Whisper trabajando (transcribiendo / escribiendo al cursor)"

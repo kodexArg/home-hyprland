@@ -1,0 +1,94 @@
+[
+  {
+    "name": "acoustic_artifact_filter",
+    "description": "Rejects isolated mechanical switch click transients that resonate in vowel formants (500Hz-2500Hz)",
+    "pattern": "^\\s*(?:[aeiouáéíóú]\\.?|[aeiouáéíóú]{2}\\.?|eh\\.?|ah\\.?|oh\\.?|uh\\.?)\\s*$",
+    "action": "drop_match",
+    "replacement": "",
+    "flags": [
+      "IGNORECASE"
+    ],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "hesitation_ellipsis_filter",
+    "description": "Eliminates cross-attention entropy hesitation dots (...) and Unicode ellipsis glyphs (…)",
+    "pattern": "(?:\\.{2,}|…)",
+    "action": "replace",
+    "replacement": "",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "duplicate_punctuation_filter",
+    "description": "Consolidates runs of repeated punctuation marks into canonical single glyphs",
+    "pattern": "([.,!?:;])\\1+",
+    "action": "replace",
+    "replacement": "\\1",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "mid_sentence_pause_punctuation_filter",
+    "description": "Replaces pause-induced full stops or semicolons before lowercase continuations with whitespace",
+    "pattern": "[.;]\\s+([a-zñáéíóúü])",
+    "action": "replace",
+    "replacement": " \\1",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "trailing_slice_punctuation_filter",
+    "description": "Strips uncommitted trailing punctuation on intermediate streaming slices to prevent burned dots",
+    "pattern": "[\\s.,;:]+$",
+    "action": "strip_trailing",
+    "replacement": "",
+    "flags": [],
+    "pipeline": "streaming",
+    "enabled": true
+  },
+  {
+    "name": "punctuation_leading_whitespace_filter",
+    "description": "Removes erroneous whitespace before terminal punctuation marks",
+    "pattern": "\\s+([.,;:!?])",
+    "action": "replace",
+    "replacement": "\\1",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "punctuation_trailing_whitespace_filter",
+    "description": "Ensures standard whitespace follows terminal punctuation marks",
+    "pattern": "([.,;:!?])(?=[^\\s.,;:!?0-9])",
+    "action": "replace",
+    "replacement": "\\1 ",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "inverted_spanish_punctuation_filter",
+    "description": "Removes whitespace after Spanish opening punctuation marks (¿, ¡)",
+    "pattern": "([¿¡])\\s+",
+    "action": "replace",
+    "replacement": "\\1",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  },
+  {
+    "name": "whitespace_normalization_filter",
+    "description": "Collapses contiguous whitespace into a single space and strips outer padding",
+    "pattern": "\\s+",
+    "action": "replace",
+    "replacement": " ",
+    "flags": [],
+    "pipeline": "both",
+    "enabled": true
+  }
+]

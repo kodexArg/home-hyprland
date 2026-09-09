@@ -2,11 +2,21 @@
 # kdx-dictator: Hyprland voice dictation CLI (stream speech to focused window)
 set -euo pipefail
 
-PYTHON_BIN="/home/kodex/Services/voice-dictation/.venv/bin/python"
-SCRIPT_PATH="/home/kodex/Services/voice-dictation/dictate.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICES_DIR="$(cd "$SCRIPT_DIR/../services/voice-dictation" 2>/dev/null && pwd || echo "/home/kodex/Services/voice-dictation")"
+
+PYTHON_BIN="$SERVICES_DIR/.venv/bin/python"
+SCRIPT_PATH="$SERVICES_DIR/dictate.py"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="/home/kodex/Services/voice-dictation/.venv/bin/python"
+fi
+if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="$(command -v python3)"
+fi
+
+if [[ ! -f "$SCRIPT_PATH" ]]; then
+  SCRIPT_PATH="/home/kodex/Services/voice-dictation/dictate.py"
 fi
 
 exec "$PYTHON_BIN" "$SCRIPT_PATH" "$@"

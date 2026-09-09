@@ -1,0 +1,10 @@
+/home/kodex/.local/state/voice-dictation/logs/*.log {
+    weekly
+    rotate 5
+    size 5M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

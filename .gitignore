@@ -6,3 +6,10 @@
 # AGS generated / deps (regenerate on host)
 ags/node_modules/
 ags/@girs/
+
+# Python noise
+.venv
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
