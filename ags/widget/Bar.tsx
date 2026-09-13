@@ -8,7 +8,6 @@ import { barModeClass, barVisible, setOverBar } from "./bar-mode"
 import RamTrack from "./RamTrack"
 import SystemMenu from "./SystemMenu"
 import WorkspacePeek from "./WorkspacePeek"
-import DictatorIndicator from "./DictatorIndicator"
 import LiveIndicator from "./LiveIndicator"
 import KodexbotChip from "./KodexbotChip"
 import RecModeIndicator from "./RecModeIndicator"
@@ -553,7 +552,6 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           <CastRecChip />
           <box spacing={2} class="BrainCluster" valign={Gtk.Align.CENTER}>
             <MicIndicator gdkmonitor={gdkmonitor} />
-            <DictatorIndicator gdkmonitor={gdkmonitor} />
           </box>
           <RamTrack />
           <Clock />
