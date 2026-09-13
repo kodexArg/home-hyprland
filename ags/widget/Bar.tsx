@@ -2,14 +2,12 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import AstalWp from "gi://AstalWp"
 import GLib from "gi://GLib"
-import { createBinding, createComputed } from "ags"
+import { createBinding, createComputed, createState } from "ags"
 import { createPoll } from "ags/time"
 import { barModeClass, barVisible, setOverBar } from "./bar-mode"
-import LocalLlm from "./LocalLlm"
 import RamTrack from "./RamTrack"
 import SystemMenu from "./SystemMenu"
 import WorkspacePeek from "./WorkspacePeek"
-// import RecMenu from "./RecMenu" // parked — REC lamp menu WIP, re-enable later
 import DictatorIndicator from "./DictatorIndicator"
 import LiveIndicator from "./LiveIndicator"
 import KodexbotChip from "./KodexbotChip"
@@ -18,22 +16,6 @@ import CastRecChip from "./CastRecChip"
 import MicIndicator from "./MicIndicator"
 import GameVolume from "./GameVolume"
 import { ensureGameStreamsFollowDefault } from "./game-audio"
-// import LiveModeIndicator from "./LiveModeIndicator" // Super+L liberada 2026-08-01
-// Caffeine + ClockCluster parked (UI hidden). Restore with widget/caffeine.ts + block below.
-// import {
-//   caffeineShellClass,
-//   caffeineTooltip,
-//   caffeineUiOn,
-//   toggleCaffeine,
-// } from "./caffeine"
-// export {
-//   toggleCaffeine,
-//   getCaffeineOn,
-//   getCaffeineStatus,
-//   getCaffeineToken,
-//   requestCaffeineOn,
-//   requestCaffeineOff,
-// } from "./caffeine"
 
 const TRACK_W = 140
 
@@ -41,6 +23,9 @@ const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_SPEAKERS = `${ICON_DIR}/speakers.svg`
 const ICON_MUTED = `${ICON_DIR}/muted.svg`
 const ICON_HEADPHONES = `${ICON_DIR}/headphones.svg`
+const ICON_BLUETOOTH = `${ICON_DIR}/bluetooth.svg`
+
+const OUTPUT_PENDING_MS = 2000
 
 function isVirtualEndpoint(ep: AstalWp.Endpoint): boolean {
   const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
@@ -94,10 +79,22 @@ function endpointLooksLikeMbSpeakers(ep: AstalWp.Endpoint): boolean {
   )
 }
 
-type OutputMode = "speakers" | "mute" | "headphones"
+type OutputMode = "speakers" | "mute" | "headphones" | "bluetooth"
+
+function endpointLooksLikeBluetooth(ep: AstalWp.Endpoint): boolean {
+  if (isVirtualEndpoint(ep)) return false
+  const d = `${ep.description ?? ""} ${ep.name ?? ""}`.toLowerCase()
+  return (
+    d.includes("bluez") ||
+    d.includes("bluetooth") ||
+    d.includes("jbl") ||
+    d.includes("bluetooth_output")
+  )
+}
 
 function endpointIsHeadphones(ep: AstalWp.Endpoint): boolean {
   if (isVirtualEndpoint(ep)) return false
+  if (endpointLooksLikeBluetooth(ep)) return false
   if (endpointLooksLikeHdmiHeadphones(ep)) return true
   if (endpointLooksLikeMbSpeakers(ep)) return false
   const r = ep.route
@@ -111,8 +108,12 @@ function listSpeakers(wp: AstalWp.Wp): AstalWp.Endpoint[] {
 function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   const all = listSpeakers(wp)
   return (
-    all.find((s) => endpointLooksLikeMbSpeakers(s)) ??
-    all.find((s) => !endpointIsHeadphones(s)) ??
+    all.find(
+      (s) => endpointLooksLikeMbSpeakers(s) && !endpointLooksLikeBluetooth(s),
+    ) ??
+    all.find(
+      (s) => !endpointIsHeadphones(s) && !endpointLooksLikeBluetooth(s),
+    ) ??
     null
   )
 }
@@ -120,14 +121,23 @@ function findSpeakerSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
 function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   const all = listSpeakers(wp)
   return (
-    all.find((s) => endpointLooksLikeHdmiHeadphones(s)) ??
+    all.find(
+      (s) =>
+        endpointLooksLikeHdmiHeadphones(s) && !endpointLooksLikeBluetooth(s),
+    ) ??
     all.find((s) => endpointIsHeadphones(s)) ??
     null
   )
 }
 
+function findBluetoothSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
+  const all = listSpeakers(wp)
+  return all.find((s) => endpointLooksLikeBluetooth(s)) ?? null
+}
+
 function modeOfEndpoint(ep: AstalWp.Endpoint): OutputMode {
   if (!ep || ep.mute) return "mute"
+  if (endpointLooksLikeBluetooth(ep)) return "bluetooth"
   if (endpointIsHeadphones(ep)) return "headphones"
   return "speakers"
 }
@@ -137,8 +147,10 @@ function currentOutputMode(wp: AstalWp.Wp): OutputMode {
   if (!def) return "speakers"
   if (def.mute) return "mute"
   if (isVirtualEndpoint(def)) {
+    const bt = findBluetoothSink(wp)
     const sp = findSpeakerSink(wp)
     const hp = findHeadphoneSink(wp)
+    if (bt && !bt.mute) return "bluetooth"
     if (hp && !hp.mute) return "headphones"
     if (sp && !sp.mute) return "speakers"
     return "mute"
@@ -146,53 +158,98 @@ function currentOutputMode(wp: AstalWp.Wp): OutputMode {
   return modeOfEndpoint(def)
 }
 
+function outputModeOrder(wp: AstalWp.Wp): OutputMode[] {
+  const order: OutputMode[] = ["speakers", "mute", "headphones"]
+  if (findBluetoothSink(wp)) order.push("bluetooth")
+  return order
+}
+
+function nextOutputMode(wp: AstalWp.Wp, from: OutputMode): OutputMode {
+  const order = outputModeOrder(wp)
+  const i = order.indexOf(from)
+  const idx = i < 0 ? 0 : (i + 1) % order.length
+  return order[idx]!
+}
+
 function iconFileForMode(mode: OutputMode): string {
   if (mode === "mute") return ICON_MUTED
   if (mode === "headphones") return ICON_HEADPHONES
+  if (mode === "bluetooth") return ICON_BLUETOOTH
   return ICON_SPEAKERS
 }
 
-function muteAllPhysicalSinks(wp: AstalWp.Wp) {
-  const hp = findHeadphoneSink(wp)
-  const sp = findSpeakerSink(wp)
-  if (sp) sp.set_mute(true)
-  if (hp) hp.set_mute(true)
+function tipForMode(mode: OutputMode, wp: AstalWp.Wp): string {
+  const nxt = nextOutputMode(wp, mode)
+  const label: Record<OutputMode, string> = {
+    speakers: "Parlantes",
+    mute: "Silencio",
+    headphones: "Auriculares",
+    bluetooth: "Bluetooth",
+  }
+  return `${label[mode]} → ${label[nxt]}`
 }
 
-function cycleOutputMode(wp: AstalWp.Wp) {
-  const mode = currentOutputMode(wp)
+function unmuteVirtual(wp: AstalWp.Wp) {
+  for (const s of wp.audio?.speakers ?? []) {
+    if (isVirtualEndpoint(s)) s.set_mute(false)
+  }
+}
+
+function muteEndpoint(ep: AstalWp.Endpoint | null) {
+  if (ep) ep.set_mute(true)
+}
+
+function applyOutputMode(wp: AstalWp.Wp, mode: OutputMode) {
   const hp = findHeadphoneSink(wp)
   const sp = findSpeakerSink(wp)
+  const bt = findBluetoothSink(wp)
 
-  if (mode === "speakers") {
-    muteAllPhysicalSinks(wp)
+  if (mode === "mute") {
+    muteEndpoint(sp)
+    muteEndpoint(hp)
+    muteEndpoint(bt)
     ensureGameStreamsFollowDefault()
     return
   }
-  if (mode === "mute") {
-    if (sp) sp.set_mute(true)
+
+  if (mode === "headphones") {
+    muteEndpoint(sp)
+    muteEndpoint(bt)
     if (hp) {
       hp.set_is_default(true)
       hp.set_mute(false)
     } else {
       wp.defaultSpeaker?.set_mute(false)
     }
-    for (const s of wp.audio?.speakers ?? []) {
-      if (isVirtualEndpoint(s)) s.set_mute(false)
-    }
+    unmuteVirtual(wp)
     ensureGameStreamsFollowDefault()
     return
   }
-  if (hp) hp.set_mute(true)
+
+  if (mode === "bluetooth") {
+    muteEndpoint(sp)
+    muteEndpoint(hp)
+    if (bt) {
+      bt.set_is_default(true)
+      bt.set_mute(false)
+    } else {
+      applyOutputMode(wp, "speakers")
+      return
+    }
+    unmuteVirtual(wp)
+    ensureGameStreamsFollowDefault()
+    return
+  }
+
+  muteEndpoint(hp)
+  muteEndpoint(bt)
   if (sp) {
     sp.set_is_default(true)
     sp.set_mute(false)
   } else {
     wp.defaultSpeaker?.set_mute(false)
   }
-  for (const s of wp.audio?.speakers ?? []) {
-    if (isVirtualEndpoint(s)) s.set_mute(false)
-  }
+  unmuteVirtual(wp)
   ensureGameStreamsFollowDefault()
 }
 
@@ -269,30 +326,116 @@ function Volume() {
   const mute = createBinding(wp, "defaultSpeaker", "mute")
   const sinkId = createBinding(wp, "defaultSpeaker", "id")
   const sinkDesc = createBinding(wp, "defaultSpeaker", "description")
-  const routePulse = createPoll(0, 250, () => {
-    const s = AstalWp.get_default()?.defaultSpeaker
+  const routePulse = createPoll(0, 1000, () => {
+    const w = AstalWp.get_default()
+    const s = w?.defaultSpeaker
     const r = s?.route
-    const sp = AstalWp.get_default() ? findSpeakerSink(AstalWp.get_default()!) : null
-    const hp = AstalWp.get_default() ? findHeadphoneSink(AstalWp.get_default()!) : null
-    return `${s?.id ?? 0}|${s?.mute ? 1 : 0}|${sp?.mute ? 1 : 0}|${hp?.mute ? 1 : 0}|${r?.name ?? ""}`.length
+    const sp = w ? findSpeakerSink(w) : null
+    const hp = w ? findHeadphoneSink(w) : null
+    const bt = w ? findBluetoothSink(w) : null
+    return `${s?.id ?? 0}|${s?.mute ? 1 : 0}|${sp?.mute ? 1 : 0}|${hp?.mute ? 1 : 0}|${bt?.mute ? 1 : 0}|${bt?.id ?? 0}|${r?.name ?? ""}`.length
   })
 
-  const outputIconFile = createComputed(() => {
+  const [pendingMode, setPendingMode] = createState<OutputMode | null>(null)
+  const [applyingMode, setApplyingMode] = createState<OutputMode | null>(null)
+  let settleSource: number | null = null
+  let applyPollSource: number | null = null
+
+  function clearSettleTimer() {
+    if (settleSource !== null) {
+      GLib.source_remove(settleSource)
+      settleSource = null
+    }
+  }
+
+  function clearApplyPoll() {
+    if (applyPollSource !== null) {
+      GLib.source_remove(applyPollSource)
+      applyPollSource = null
+    }
+  }
+
+  function finishApplying() {
+    clearApplyPoll()
+    setApplyingMode(null)
+  }
+
+  function watchApply(want: OutputMode) {
+    clearApplyPoll()
+    const started = GLib.get_monotonic_time()
+    const budgetUs = 2_000_000
+    applyPollSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, () => {
+      const cur = currentOutputMode(wp)
+      const elapsed = GLib.get_monotonic_time() - started
+      if (cur === want || elapsed >= budgetUs) {
+        applyPollSource = null
+        setApplyingMode(null)
+        return GLib.SOURCE_REMOVE
+      }
+      return GLib.SOURCE_CONTINUE
+    })
+  }
+
+  function armSettleTimer() {
+    clearSettleTimer()
+    settleSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, OUTPUT_PENDING_MS, () => {
+      settleSource = null
+      const want = pendingMode.peek()
+      setPendingMode(null)
+      if (want === null) return GLib.SOURCE_REMOVE
+      const cur = currentOutputMode(wp)
+      if (want === cur) {
+        setApplyingMode(null)
+        return GLib.SOURCE_REMOVE
+      }
+      setApplyingMode(want)
+      applyOutputMode(wp, want)
+      watchApply(want)
+      return GLib.SOURCE_REMOVE
+    })
+  }
+
+  function onOutputIconClick() {
+    clearApplyPoll()
+    setApplyingMode(null)
+    const shown =
+      pendingMode.peek() ?? applyingMode.peek() ?? currentOutputMode(wp)
+    const next = nextOutputMode(wp, shown)
+    setPendingMode(next)
+    armSettleTimer()
+  }
+
+  const displayMode = createComputed(() => {
     void mute()
     void sinkId()
     void sinkDesc()
     void routePulse()
-    return iconFileForMode(currentOutputMode(wp))
+    void pendingMode()
+    void applyingMode()
+    return pendingMode() ?? applyingMode() ?? currentOutputMode(wp)
   })
+
+  const outputIconFile = createComputed(() => iconFileForMode(displayMode()))
 
   const iconTip = createComputed(() => {
     void mute()
     void sinkId()
     void routePulse()
-    const mode = currentOutputMode(wp)
-    if (mode === "mute") return "Silencio → Auriculares"
-    if (mode === "headphones") return "Auriculares → Parlantes"
-    return "Parlantes → Silencio"
+    void pendingMode()
+    void applyingMode()
+    const mode = displayMode()
+    const base = tipForMode(mode, wp)
+    if (pendingMode() !== null) return `${base} · preview (2s)`
+    if (applyingMode() !== null) return `${base} · aplicando…`
+    return base
+  })
+
+  const muteBtnClass = createComputed(() => {
+    void pendingMode()
+    void applyingMode()
+    if (pendingMode() !== null) return "Volume-mute pending"
+    if (applyingMode() !== null) return "Volume-mute applying"
+    return "Volume-mute"
   })
 
   const bump = (delta: number) => {
@@ -319,9 +462,9 @@ function Volume() {
       }}
     >
       <button
-        class="Volume-mute"
+        class={muteBtnClass}
         tooltipText={iconTip}
-        onClicked={() => cycleOutputMode(wp)}
+        onClicked={() => onOutputIconClick()}
       >
         <image file={outputIconFile} pixelSize={16} />
       </button>
@@ -347,40 +490,6 @@ function Volume() {
   )
 }
 
-// --- parked: ClockCluster (clock + caffeine cup) — restore with caffeine imports above ---
-// const ICON_CAFFEINE_ON = `${ICON_DIR}/caffeine-on.svg`
-// const ICON_CAFFEINE_OFF = `${ICON_DIR}/caffeine-off.svg`
-//
-// function ClockCaffeine({ timeFormat = "%H:%M" }) {
-//   const time = createPoll("", 1000, () =>
-//     GLib.DateTime.new_now_local().format(timeFormat)!,
-//   )
-//   const iconFile = caffeineUiOn((on) =>
-//     on ? ICON_CAFFEINE_ON : ICON_CAFFEINE_OFF,
-//   )
-//
-//   return (
-//     <box class={caffeineShellClass} spacing={0} valign={Gtk.Align.CENTER}>
-//       <menubutton class="ClockCluster-time" tooltipText="Calendar">
-//         <label class="Clock-time" label={time} />
-//         <popover>
-//           <Gtk.Calendar />
-//         </popover>
-//       </menubutton>
-//
-//       <button
-//         class="ClockCluster-cup"
-//         tooltipText={caffeineTooltip}
-//         onClicked={() => toggleCaffeine()}
-//       >
-//         <image file={iconFile} pixelSize={14} />
-//       </button>
-//     </box>
-//   )
-// }
-// --- end parked ClockCaffeine ---
-
-/** Clock only — DSEG7, no caffeine. */
 function Clock({ timeFormat = "%H:%M" }) {
   const time = createPoll("", 1000, () =>
     GLib.DateTime.new_now_local().format(timeFormat)!,
@@ -438,26 +547,16 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
         <box $type="center">
           <WorkspacePeek />
         </box>
-        {/* spacing=10: equal gap brain · track · clock · sandwich (and chips) */}
         <box $type="end" spacing={10} class="Bar-end">
-          {/* legacy voice indicators retired 2026-08-01 — kodexBot cutover */}
-          {/* <LiveIndicator /> */}
-          {/* <DictationIndicator /> */}
-          {/* <LiveModeIndicator /> — desactivado 2026-08-01: Super+L liberada */}
           <KodexbotChip />
           <RecModeIndicator />
           <CastRecChip />
-          {/* <RecMenu gdkmonitor={gdkmonitor} /> parked — REC lamp WIP */}
-          {/* mic indicator + dictator indicator + brain clustered tightly (spacing=2) */}
           <box spacing={2} class="BrainCluster" valign={Gtk.Align.CENTER}>
-            <MicIndicator />
-            <DictatorIndicator />
-            <LocalLlm gdkmonitor={gdkmonitor} />
+            <MicIndicator gdkmonitor={gdkmonitor} />
+            <DictatorIndicator gdkmonitor={gdkmonitor} />
           </box>
           <RamTrack />
-          {/* <ClockCaffeine /> parked — clock+cup cluster; see ClockCaffeine above */}
           <Clock />
-          {/* Extreme right: sandwich → system menu (mic · restart · power off) */}
           <SystemMenu gdkmonitor={gdkmonitor} />
         </box>
       </centerbox>

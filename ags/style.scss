@@ -134,6 +134,21 @@ window.Bar {
       padding: 0 1px;
     }
 
+    /* ASD output preview — icon tint yellow until settle (2s) */
+    &-mute.pending {
+      border-color: $status-yellow;
+      color: $status-yellow;
+      /* cream SVG → yellow tint without swapping assets */
+      filter: sepia(1) saturate(8) hue-rotate(5deg) brightness(1.05);
+    }
+
+    /* ASD apply — orange while PipeWire switches; icon stays on target mode */
+    &-mute.applying {
+      border-color: $orange-500;
+      color: $orange-500;
+      filter: sepia(1) saturate(10) hue-rotate(-10deg) brightness(0.95);
+    }
+
     &-step {
       min-width: 16px;
       padding: 0 1px;
@@ -543,11 +558,15 @@ window.Bar {
 
 $panel-label: color.mix($cream-100, $warm-200, 55%);
 
-window.LocalLlmClickaway {
+window.LocalLlmClickaway,
+window.MicClickaway,
+window.DictatorClickaway {
   background: rgba(12, 11, 9, 0.02);
 }
 
-window.LocalLlmPanel {
+window.LocalLlmPanel,
+window.MicPanel,
+window.DictatorPanel {
   background: rgba(12, 11, 9, 0.02);
   color: $panel-label;
 
@@ -557,7 +576,74 @@ window.LocalLlmPanel {
     background: $fill-inactive;
     padding: 8px;
     margin: 0;
-    min-width: 240px;
+    min-width: 270px;
+  }
+
+  .LocalLlm-menu.MicMenu {
+    min-width: 340px;
+    padding: 10px;
+  }
+
+  .Mic-ee-box {
+    background: color.mix($ink-1000, transparent, 35%);
+    border: 1px solid color.mix($border-inactive, transparent, 60%);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin: 2px 0 4px;
+  }
+
+  .Mic-ee-preset {
+    font-size: 0.82em;
+    font-weight: 600;
+    color: color.mix($cream-100, $orange-500, 40%);
+  }
+
+  .Mic-ee-summary {
+    font-size: 0.76em;
+    color: color.mix($cream-100, $warm-200, 45%);
+    margin-bottom: 2px;
+  }
+
+  .Mic-source-detail {
+    font-size: 0.72em;
+    color: color.mix($cream-100, $warm-200, 40%);
+  }
+
+  .LocalLlm-model.Mic-source.ee .LocalLlm-label {
+    color: color.mix($cream-100, $orange-500, 35%);
+  }
+
+
+  .LocalLlm-log-box {
+    background: color.mix($ink-1000, transparent, 35%);
+    border: 1px solid color.mix($border-inactive, transparent, 60%);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin: 3px 0 5px;
+
+    .LocalLlm-log-title {
+      font-size: 0.72em;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: color.mix($cream-100, $warm-200, 50%);
+    }
+
+    .LocalLlm-log-content {
+      font-family: monospace;
+      font-size: 0.76em;
+      color: color.mix($cream-100, $orange-500, 45%);
+      margin-top: 2px;
+    }
+  }
+
+  .LocalLlm-section-title {
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: color.mix($cream-100, $warm-200, 45%);
+    padding: 4px 6px 2px;
   }
 
   .LocalLlm-status {
@@ -1641,4 +1727,19 @@ button.CastRecChip {
     }
   }
 }
+
+/* ── Tooltips (Nautilus dark styling matching AGS bar & design system) ── */
+tooltip {
+  background-color: rgba(24, 23, 21, 0.96);
+  border: 1px solid rgba(255, 140, 66, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+  padding: 6px 10px;
+}
+
+tooltip label {
+  color: $cream-100;
+  padding: 2px 4px;
+}
+
 

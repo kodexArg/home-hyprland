@@ -1,0 +1,189 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Pilar Mic — BrainCluster",
+    "quality_profile": "showcase",
+    "output": "docs/archify/brain-refactor-mic.html"
+  },
+  "lanes": [
+    {
+      "id": "ui",
+      "label": "Barra"
+    },
+    {
+      "id": "menu",
+      "label": "Fuentes"
+    },
+    {
+      "id": "audio",
+      "label": "Audio"
+    }
+  ],
+  "phases": [
+    {
+      "id": "gesto",
+      "label": "Gesto",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "elegir",
+      "label": "Fuente",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "usar",
+      "label": "Uso",
+      "fromCol": 4,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "icono",
+    "gesto",
+    "menu",
+    "lista",
+    "default",
+    "stack"
+  ],
+  "nodes": [
+    {
+      "id": "icono",
+      "lane": "ui",
+      "col": 0,
+      "type": "frontend",
+      "label": "Icono Mic",
+      "sublabel": "input global",
+      "width": 120
+    },
+    {
+      "id": "gesto",
+      "lane": "ui",
+      "col": 1,
+      "type": "frontend",
+      "label": "Gesto",
+      "sublabel": "izq mute · der menú",
+      "width": 128
+    },
+    {
+      "id": "mute",
+      "lane": "ui",
+      "col": 4,
+      "type": "frontend",
+      "label": "Mute",
+      "sublabel": "toggle",
+      "width": 100
+    },
+    {
+      "id": "menu",
+      "lane": "menu",
+      "col": 2,
+      "type": "backend",
+      "label": "Menú",
+      "sublabel": "más info · estética",
+      "width": 128
+    },
+    {
+      "id": "lista",
+      "lane": "menu",
+      "col": 3,
+      "type": "backend",
+      "label": "Lista",
+      "sublabel": "Brio · BT · EE",
+      "width": 120
+    },
+    {
+      "id": "probe_ee",
+      "lane": "menu",
+      "col": 5,
+      "type": "external",
+      "label": "Rama EE",
+      "sublabel": "existe · config humana · 1ª",
+      "width": 140
+    },
+    {
+      "id": "default",
+      "lane": "audio",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Default",
+      "sublabel": "preferir EE",
+      "width": 112
+    },
+    {
+      "id": "stack",
+      "lane": "audio",
+      "col": 5,
+      "type": "backend",
+      "label": "Stack voz",
+      "sublabel": "FSM / dictado",
+      "width": 112
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-icono-gesto",
+      "from": "icono",
+      "to": "gesto"
+    },
+    {
+      "id": "e-gesto-mute",
+      "from": "gesto",
+      "to": "mute",
+      "label": "clic izq",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-gesto-menu",
+      "from": "gesto",
+      "to": "menu",
+      "label": "clic der",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-menu-lista",
+      "from": "menu",
+      "to": "lista"
+    },
+    {
+      "id": "e-lista-ee",
+      "from": "lista",
+      "to": "probe_ee",
+      "label": "si hay EE",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-ee-lista",
+      "from": "probe_ee",
+      "to": "lista",
+      "label": "1ª opción",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "id": "e-lista-default",
+      "from": "lista",
+      "to": "default",
+      "label": "elegir",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-default-stack",
+      "from": "default",
+      "to": "stack",
+      "label": "audio"
+    },
+    {
+      "id": "e-mute-default",
+      "from": "mute",
+      "to": "default",
+      "label": "mute",
+      "variant": "dashed"
+    }
+  ]
+}
