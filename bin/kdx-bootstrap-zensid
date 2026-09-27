@@ -11,6 +11,9 @@
 #   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid apt        # only apt steps
 #   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid build      # only astal + ags
 #   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid dropins    # only systemd drop-ins
+#   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid stremio    # Stremio (pinned trixie .debs)
+#   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid nosleep    # zensid never suspends
+#   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid session    # Hyprland = default GDM session for the user
 # Env overrides:
 #   AGS_REF=v3.1.2     (default: newest vX.Y.Z tag of Aylur/ags at run time)
 #   ASTAL_REF=<sha>    (default: Aylur/astal main HEAD — astal has no releases)
@@ -34,14 +37,27 @@ TRIXIE_PKGS=(
   # desktop helpers used by hypr-* / kdx-* / AGS
   kitty grim slurp wf-recorder wl-clipboard wtype socat jq playerctl brightnessctl
   fuzzel wofi nautilus pulseaudio-utils libnotify-bin python3-evdev qt6-wayland
-  bluez network-manager ffmpeg
+  bluez network-manager ffmpeg vlc mpv
   fonts-dseg fonts-noto-color-emoji
   # astal + ags build deps
-  git meson ninja-build valac valadoc gobject-introspection libgirepository1.0-dev
+  curl git meson ninja-build valac valadoc gobject-introspection libgirepository1.0-dev
   libgtk-3-dev libgtk-layer-shell-dev libgtk-4-dev libgtk4-layer-shell-dev
   libwireplumber-0.5-dev libjson-glib-dev wayland-protocols
   golang-go gjs npm
 )
+
+# Stremio: no official trixie .deb (official Linux shell v1.2.0 = flatpak only).
+# Community Debian packaging (vejeta/stremio-debian, salsa mendezr) builds for trixie;
+# deps resolve 100% from trixie (verified with apt-get --simulate on zensid 2026-09-27).
+STREMIO_REL=qt6-4.4.183.qt6.dfsg-2
+STREMIO_BASE=https://github.com/vejeta/stremio-debian/releases/download/$STREMIO_REL
+STREMIO_DEBS=(
+  "stremio-qt6_4.4.183.qt6%2Bdfsg-2_amd64-trixie.deb 04a4c8c0dca78f3ef36d1c13d5759669ea3514784bb5aa72177d8d775298e266"
+  "stremio-server_4.20.16-1_all-trixie.deb 8bce276827ca25968ee1cbfbf17eab8c3985edc9c6482522d4651cc2f3917ddf"
+)
+STREMIO_VERSION=4.4.183.qt6+dfsg-2
+SLEEP_TARGETS=(sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
+LOGIND_DROPIN=/etc/systemd/logind.conf.d/90-kdx-nosleep.conf
 
 log()  { printf '\033[1;33m[kdx-bootstrap-zensid]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[kdx-bootstrap-zensid] %s\033[0m\n' "$*" >&2; exit 1; }
@@ -145,6 +161,57 @@ step_dropins() {
   done
 }
 
+step_stremio() {
+  if [[ "$(dpkg-query -W -f='${Version}' stremio-qt6 2>/dev/null)" == "$STREMIO_VERSION" ]]; then
+    log "stremio-qt6 $STREMIO_VERSION already installed"; return
+  fi
+  local dir="$SRC_ROOT/stremio"; install -d -o "$TARGET_USER" "$dir"
+  local files=()
+  for entry in "${STREMIO_DEBS[@]}"; do
+    local url_name=${entry%% *} sum=${entry##* } name
+    name=$(printf '%b' "${url_name//%/\\x}")
+    if [[ ! -f $dir/$name ]]; then as_user curl -fsSL -o "$dir/$name" "$STREMIO_BASE/$url_name"; fi
+    echo "$sum  $dir/$name" | sha256sum -c - || die "checksum mismatch: $name"
+    files+=("$dir/$name")
+  done
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${files[@]}"
+}
+
+step_nosleep() {
+  log "masking ${SLEEP_TARGETS[*]}"
+  systemctl mask "${SLEEP_TARGETS[@]}"
+  install -d /etc/systemd/logind.conf.d
+  cat > "$LOGIND_DROPIN" <<CONF
+# kdx: zensid must never suspend (media box on the Samsung TV)
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+HandleSuspendKey=ignore
+HandleHibernateKey=ignore
+IdleAction=ignore
+CONF
+  # HUP re-reads logind.conf without touching running sessions
+  systemctl kill -s HUP systemd-logind
+}
+
+step_session() {
+  local sess=hyprland
+  [[ -f /usr/share/wayland-sessions/hyprland-uwsm.desktop ]] && command -v uwsm >/dev/null && sess=hyprland-uwsm
+  [[ -f /usr/share/wayland-sessions/$sess.desktop ]] || die "no $sess.desktop — install hyprland first (apt step)"
+  local uid; uid=$(id -u "$TARGET_USER")
+  if busctl call org.freedesktop.Accounts "/org/freedesktop/Accounts/User$uid" \
+       org.freedesktop.Accounts.User SetSession s "$sess" 2>/dev/null; then
+    log "AccountsService: default session for $TARGET_USER = $sess (GNOME stays in the gear menu)"
+  else
+    install -d /var/lib/AccountsService/users
+    local f=/var/lib/AccountsService/users/$TARGET_USER
+    touch "$f"; grep -q '^\[User\]' "$f" || printf '[User]\n' >> "$f"
+    sed -i '/^Session=/d;/^XSession=/d' "$f"; sed -i "/^\[User\]/a Session=$sess" "$f"
+    log "AccountsService file: Session=$sess"
+  fi
+}
+
 verify() {
   log "verify:"
   Hyprland --version 2>/dev/null | head -1 || true
@@ -155,7 +222,8 @@ verify() {
 
 Next steps as $TARGET_USER (no root), see hypr/profiles/README-zensid.md:
   ln -sfn ~/home-hyprland/hypr/profiles/zensid.lua ~/.config/hypr/hyprland.lua
-  cp  ~/home-hyprland/hypr/{hypridle,hyprpaper}.conf ~/.config/hypr/
+  ln -sfn ~/home-hyprland/hypr/profiles/zensid.hypridle.conf ~/.config/hypr/hypridle.conf
+  ln -sfn ~/home-hyprland/hypr/hyprpaper.conf ~/.config/hypr/hyprpaper.conf
   rsync -a --exclude node_modules --exclude @girs ~/home-hyprland/ags/ ~/.config/ags/
   install -m 755 ~/home-hyprland/bin/* ~/.local/bin/
   cp ~/home-hyprland/systemd/user/ags-hyprland.service ~/.config/systemd/user/
@@ -170,8 +238,11 @@ main() {
     apt)     step_apt ;;
     build)   step_build ;;
     dropins) step_dropins ;;
-    all)     step_apt; step_build; step_dropins ;;
-    *) die "unknown step: $1 (apt|build|dropins|all)" ;;
+    stremio) step_stremio ;;
+    nosleep) step_nosleep ;;
+    session) step_session ;;
+    all)     step_apt; step_build; step_dropins; step_stremio; step_nosleep; step_session ;;
+    *) die "unknown step: $1 (apt|build|dropins|stremio|nosleep|session|all)" ;;
   esac
   verify
 }

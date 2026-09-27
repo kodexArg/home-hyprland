@@ -52,6 +52,8 @@ local kdxShare    = bin .. "kdx-share"
 local reveal      = bin .. "hypr-reveal-all"
 local btToggle    = bin .. "hypr-bluetooth-toggle"
 local agsBin      = "PATH=" .. bin .. ":/usr/local/bin:/usr/bin /usr/local/bin/ags"
+local grokBot     = "grok-bot"                -- /usr/bin/grok-bot (deb grok-bot, class grok-bot)
+local stremio     = "stremio-qt6"             -- deb stremio-qt6 (vejeta/stremio-debian, trixie build)
 local mainMod     = "SUPER"
 local resizeStep  = 40
 
@@ -110,8 +112,38 @@ hl.animation({ leaf = "border",     enabled = false })
 
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 
+-- ── Window rules ────────────────────────────────────────────────────────────
+-- Grok Bot: autostarted at login, lands silently on the panel (ws 1).
+hl.window_rule({
+    name      = "grok-bot-panel",
+    match     = { class = "grok-bot" },
+    workspace = "1 silent",
+})
+-- zensid + Samsung = media box: Stremio / VLC / mpv go to the TV (ws 4),
+-- fullscreen, and keep the screen awake while fullscreen.
+hl.window_rule({
+    name         = "media-on-tv",
+    match        = { class = "(?i)^(.*stremio.*|vlc|mpv)$" },
+    monitor      = tv,
+    workspace    = "4",
+    fullscreen   = true,
+    idle_inhibit = "fullscreen",
+})
+
+local function openOrFocusGrokBot()
+    for _, w in ipairs(hl.get_windows()) do
+        if w.class and string.lower(w.class) == "grok-bot" then
+            hl.dispatch(hl.dsp.focus({ window = w }))
+            return
+        end
+    end
+    hl.dispatch(hl.dsp.exec_cmd(grokBot))
+end
+
 -- ── Keybinds (parity with Sid/TUF where the tool exists on zensid) ──────────
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
+hl.bind(mainMod .. " + G", openOrFocusGrokBot)
+hl.bind(mainMod .. " + Z", hl.dsp.exec_cmd(stremio))   -- Stremio on the TV
 hl.bind(mainMod .. " + X", hl.dsp.exec_cmd(browser))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
@@ -183,4 +215,6 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE DISPLAY KDX_BAR_MODEL KDX_NO_NVIDIA GSK_RENDERER")
     hl.exec_cmd("systemctl --user start hyprpaper.service hypridle.service hyprpolkitagent.service")
     hl.exec_cmd("systemctl --user start ags-hyprland.service")
+    -- Grok Bot autostart (single instance), same idea as Sid
+    hl.exec_cmd("pgrep -x grok-bot >/dev/null 2>&1 || " .. grokBot)
 end)
