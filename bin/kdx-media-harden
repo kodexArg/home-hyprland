@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# kdx-media-harden — user-level media/torrent settings for zensid (idempotent, no root).
+#  * Deluge (GTK classic mode, no daemon exposed): downloads + completed in ~/Videos,
+#    fixed listen port 55881 (inbound dropped by nftables anyway), UPnP / NAT-PMP / LSD off,
+#    DHT + PEX on, protocol encryption "enabled" (prefer encrypted, allow plain),
+#    stop seeding (pause) at ratio 1.0, allow_remote=false, no release check.
+#  * Stremio streaming server: cache in ~/.stremio-server, cacheSize 10 GiB.
+#    Menu launcher override with CASTING_DISABLED=1 (same as Super+Z).
+#  * xdg-mime: magnet: + .torrent -> Deluge, video/* -> VLC (VLC goes to the TV via
+#    the media-on-tv window rule).
+# No indexers / search plugins / source addons are installed or enabled here.
+set -euo pipefail
+VIDEOS="$HOME/Videos"; mkdir -p "$VIDEOS"
+
+if pgrep -x deluged >/dev/null || pgrep -x deluge-gtk >/dev/null; then
+  echo "kdx-media-harden: close Deluge first (it rewrites core.conf on exit)" >&2; exit 1
+fi
+DCONF="$HOME/.config/deluge/core.conf"
+if [[ ! -f $DCONF ]]; then   # let Deluge write its own defaults once
+  deluged -c "$HOME/.config/deluge" -u 127.0.0.1 -L error; sleep 3
+  deluge-console -c "$HOME/.config/deluge" halt >/dev/null 2>&1 || pkill -x deluged || true; sleep 2
+fi
+python3 - "$DCONF" "$VIDEOS" <<"PY"
+import json, sys
+p, V = sys.argv[1], sys.argv[2]
+s = open(p).read(); dec = json.JSONDecoder()
+hdr, i = dec.raw_decode(s); body, _ = dec.raw_decode(s[i:].lstrip())
+body.update({
+  "download_location": V, "move_completed": False, "move_completed_path": V,
+  "torrentfiles_location": V, "copy_torrent_file": False,
+  "random_port": False, "listen_ports": [55881, 55881],
+  "upnp": False, "natpmp": False, "lsd": False, "dht": True, "utpex": True,
+  "enc_in_policy": 1, "enc_out_policy": 1, "enc_level": 2,
+  "stop_seed_at_ratio": True, "stop_seed_ratio": 1.0, "share_ratio_limit": 1.0,
+  "remove_seed_at_ratio": False, "allow_remote": False,
+  "new_release_check": False, "send_info": False,
+  "prioritize_first_last_pieces": True,
+})
+open(p, "w").write(json.dumps(hdr, indent=4) + json.dumps(body, indent=4, sort_keys=True))
+print("deluge core.conf hardened:", p)
+PY
+
+SCONF="$HOME/.stremio-server/server-settings.json"
+if [[ -f $SCONF ]]; then
+  python3 - "$SCONF" <<"PY"
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d["cacheSize"] = 10 * 1024**3
+json.dump(d, open(p, "w"), indent=4); print("stremio cacheSize = 10 GiB:", d.get("cacheRoot"))
+PY
+else
+  echo "stremio: server-settings.json not created yet (start Stremio once, re-run)"
+fi
+
+APPS="$HOME/.local/share/applications"; mkdir -p "$APPS"
+if [[ -f /usr/share/applications/stremio-qt6.desktop ]]; then
+  sed 's|^Exec=stremio-qt6|Exec=env CASTING_DISABLED=1 stremio-qt6|' \
+    /usr/share/applications/stremio-qt6.desktop > "$APPS/stremio-qt6.desktop"
+fi
+
+xdg-mime default deluge.desktop x-scheme-handler/magnet application/x-bittorrent
+mapfile -t VMIME < <(grep '^MimeType=' /usr/share/applications/vlc.desktop | cut -d= -f2 | tr ';' '\n' \
+  | grep -E '^video/|^application/(x-matroska|mp4|x-mpegurl|vnd\.apple\.mpegurl|ogg)$' | sort -u)
+xdg-mime default vlc.desktop "${VMIME[@]}"
+echo "xdg-mime: magnet -> $(xdg-mime query default x-scheme-handler/magnet), video/mp4 -> $(xdg-mime query default video/mp4) (${#VMIME[@]} video types)"

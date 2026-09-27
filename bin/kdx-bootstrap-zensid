@@ -14,6 +14,8 @@
 #   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid stremio    # Stremio (pinned trixie .debs)
 #   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid nosleep    # zensid never suspends
 #   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid session    # Hyprland = default GDM session for the user
+#   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid firewall   # nftables inbound default-drop (system/zensid/nftables.conf)
+#   sudo ~/home-hyprland/bin/kdx-bootstrap-zensid torrent    # Deluge GTK only: Debian's system deluged service disabled
 # Env overrides:
 #   AGS_REF=v3.1.2     (default: newest vX.Y.Z tag of Aylur/ags at run time)
 #   ASTAL_REF=<sha>    (default: Aylur/astal main HEAD — astal has no releases)
@@ -38,6 +40,8 @@ TRIXIE_PKGS=(
   kitty grim slurp wf-recorder wl-clipboard wtype socat jq playerctl brightnessctl
   fuzzel wofi nautilus pulseaudio-utils libnotify-bin python3-evdev qt6-wayland
   bluez network-manager ffmpeg vlc mpv
+  # Stremio shell QML needs QtCore (missing from the stremio-qt6 .deb Depends); deluge = torrent step
+  qml6-module-qtcore nftables
   fonts-dseg fonts-noto-color-emoji
   # astal + ags build deps
   curl git meson ninja-build valac valadoc gobject-introspection libgirepository1.0-dev
@@ -216,6 +220,25 @@ step_session() {
   fi
 }
 
+step_firewall() {
+  local repo conf=/etc/nftables.conf; repo="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y nftables
+  nft -c -f "$repo/system/zensid/nftables.conf"
+  if [[ -f $conf && ! -f $conf.kdx-orig ]] && ! grep -q "kdx_filter" "$conf"; then cp -a "$conf" "$conf.kdx-orig"; fi
+  install -m 755 "$repo/system/zensid/nftables.conf" "$conf"
+  systemctl enable nftables.service
+  systemctl restart nftables.service
+  log "nftables: $(nft list chain inet kdx_filter input | grep -c accept) accept rules, policy drop"
+}
+
+step_torrent() {
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends deluge deluged deluge-console
+  # Debian enables a system-wide deluged (user debian-deluged) on install: not wanted,
+  # Deluge GTK runs in classic mode for the user; hardening via kdx-media-harden.
+  systemctl disable --now deluged.service 2>/dev/null || true
+  log "deluged system service: $(systemctl is-enabled deluged.service 2>/dev/null || true)"
+}
+
 verify() {
   log "verify:"
   sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$(id -u "$TARGET_USER")" Hyprland --version 2>/dev/null | head -1 || true
@@ -232,6 +255,8 @@ Next steps as $TARGET_USER (no root), see hypr/profiles/README-zensid.md:
   install -m 755 ~/home-hyprland/bin/* ~/.local/bin/
   cp ~/home-hyprland/systemd/user/ags-hyprland.service ~/.config/systemd/user/
   systemctl --user daemon-reload && systemctl --user enable ags-hyprland.service
+  ln -sfn ~/home-hyprland/wireplumber/zensid/51-zensid-audio.conf ~/.config/wireplumber/wireplumber.conf.d/
+  kdx-media-harden   # Deluge core.conf, Stremio cache, xdg-mime (magnet/.torrent -> Deluge, video/* -> VLC)
   # Log out → GDM gear → "Hyprland" (GNOME stays selectable)
 NEXT
 }
@@ -245,8 +270,10 @@ main() {
     stremio) step_stremio ;;
     nosleep) step_nosleep ;;
     session) step_session ;;
-    all)     step_apt; step_build; step_dropins; step_stremio; step_nosleep; step_session ;;
-    *) die "unknown step: $1 (apt|build|dropins|stremio|nosleep|session|all)" ;;
+    firewall) step_firewall ;;
+    torrent) step_torrent ;;
+    all)     step_apt; step_build; step_dropins; step_stremio; step_nosleep; step_session; step_firewall; step_torrent ;;
+    *) die "unknown step: $1 (apt|build|dropins|stremio|nosleep|session|firewall|torrent|all)" ;;
   esac
   verify
 }

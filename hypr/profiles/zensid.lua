@@ -53,7 +53,10 @@ local reveal      = bin .. "hypr-reveal-all"
 local btToggle    = bin .. "hypr-bluetooth-toggle"
 local agsBin      = "PATH=" .. bin .. ":/usr/local/bin:/usr/bin /usr/local/bin/ags"
 local grokBot     = "grok-bot"                -- /usr/bin/grok-bot (deb grok-bot, class grok-bot)
-local stremio     = "stremio-qt6"             -- deb stremio-qt6 (vejeta/stremio-debian, trixie build)
+-- deb stremio-qt6 (vejeta/stremio-debian, trixie build). The shell spawns
+-- /usr/bin/node /usr/share/stremio/server.js itself (11470/12470, firewalled to
+-- loopback by nftables). CASTING_DISABLED=1: no mDNS/SSDP casting discovery.
+local stremio     = "env CASTING_DISABLED=1 stremio-qt6"
 local mainMod     = "SUPER"
 local resizeStep  = 40
 
@@ -121,6 +124,9 @@ hl.window_rule({
 })
 -- zensid + Samsung = media box: Stremio / VLC / mpv go to the TV (ws 4),
 -- fullscreen, and keep the screen awake while fullscreen.
+-- Stremio Qt6 runs native Wayland, class "com.stremio.stremio" (matched below).
+-- TV unplugged (verified 2026-09-27): ws 4 is created on eDP-1 and the window
+-- opens there fullscreen, never lost on a missing output.
 hl.window_rule({
     name         = "media-on-tv",
     match        = { class = "(?i)^(.*stremio.*|vlc|mpv)$" },

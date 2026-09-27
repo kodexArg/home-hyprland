@@ -48,3 +48,27 @@ HyprControl skills), **own system**: Debian 13 trixie + trixie-backports only.
 - Official `Stremio/stremio-linux-shell` v1.2.0: flatpak bundle only (`com.stremio.Stremio.Devel.flatpak`); flatpak not installed on zensid.
 - stremio.com 4.4 .deb: Ubuntu build (legacy deps).
 - **Chosen**: vejeta/stremio-debian `stremio-qt6` + `stremio-server` built for trixie; `apt-get install --simulate` = 82 new pkgs, all from trixie.
+
+## Media box: Stremio, Deluge, audio, firewall (2026-09-27, verified on zensid)
+- **Stremio**: `stremio-qt6` 4.4.183 runs native Wayland (class `com.stremio.stremio`) — needed
+  `qml6-module-qtcore` (missing from the .deb Depends; now in the bootstrap apt list). The shell
+  spawns `/usr/bin/node /usr/share/stremio/server.js` (streaming server 4.20.16) itself: no
+  autostart unit. Super+Z / menu launch with `CASTING_DISABLED=1`. Cache: `~/.stremio-server`,
+  `cacheSize` 10 GiB (`kdx-media-harden`). Only default/official addons; no source addons.
+- **Firewall** (`system/zensid/nftables.conf`, bootstrap step `firewall`): server.js hard-codes
+  `listen(11470)` / `listen(12470)` on all addresses (no host option) and zensid has a global
+  IPv6, so inbound is default-drop (allowed: lo, established, ICMP, DHCP, mDNS, ssh 22).
+  Probed from Sid over LAN: 11470/12470 (v4 + v6) time out, loopback answers 200.
+- **Deluge** (bootstrap step `torrent`, then `kdx-media-harden`): GTK classic mode (no daemon
+  RPC port); Debian's system `deluged.service` disabled. ~/Videos for downloads + completed,
+  fixed port 55881 (inbound dropped by nftables: outbound-only peers, fine for a leecher box),
+  UPnP / NAT-PMP / LSD off (nothing asks the router to open ports), DHT + PEX on, encryption
+  enabled (prefer encrypted), pause at ratio 1.0. No search/indexer plugins.
+- **xdg-mime**: `magnet:` + `.torrent` → `deluge.desktop`; `video/*` → `vlc.desktop` (VLC goes
+  to the TV via `media-on-tv`).
+- **Audio** (`wireplumber/zensid/`, symlinked into `~/.config/wireplumber/wireplumber.conf.d/`):
+  PCH card uses `pch-headphones-only.profile-set.conf` (only `analog-output-headphones`, which
+  forces ALSA `Speaker` off) → the internal speaker port does not exist. HDMI sinks priority
+  2000, headphones 500. Nothing plugged → only "Dummy Output" (silence).
+- **TV unplugged**: ws 4 is created on eDP-1 and the media window opens there fullscreen.
+
