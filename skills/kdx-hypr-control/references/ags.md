@@ -201,6 +201,23 @@ Recorded in `style.scss` as `$status-*` and aligned with Presentation Orange:
 | Colors | empty gray · b0–b1 green · b2 yellow · b3 orange · b4 red |
 | IPC | `ags request ram-status` |
 
+### WorkspacePeek — Miniatura de ventanas y paleta armónica
+
+| Aspecto | Definición |
+|---|---|
+| Archivo | `widget/WorkspacePeek.tsx` |
+| Mecanismo | `DrawingArea` (GTK4 + Cairo). Escucha `hyprctl clients -j` y `monitors -j` (cada 500 ms). |
+| Geometría | Rectángulos proporcionales normalizados dentro de la silueta del monitor. |
+| Base neutral | Gris claro original `rgba(0.93, 0.91, 0.88, 0.18)` con borde fino `0.5px` oscuro. |
+| Tinte armónico | Modulación dentro de la gama grisácea según la identidad de la app / wallpaper: |
+| · Kitty | `[0.92, 0.62, 0.58, 0.28]` (vino/óxido cálido extraído de `Makima-dark.png`) |
+| · AGY CLI | `[0.92, 0.76, 0.48, 0.28]` (sepia/ámbar dorado extraído de `agy-bg.jpg`) |
+| · Codium | `[0.60, 0.78, 0.96, 0.26]` (azul grisáceo / índigo tenue) |
+| · Grok | `[0.95, 0.95, 0.95, 0.24]` (blanco/gris carbón limpio) |
+| · Spotify | `[0.45, 0.86, 0.58, 0.26]` (verde atenuado en gama gris) |
+| · WhatsApp | `[0.42, 0.84, 0.65, 0.26]` (verde esmeralda suave) |
+| Extensibilidad | Registro `APP_COLORS` (OCP) mapeado a `class` o `title`. Fallback a gris claro neutro. |
+
 `CaptureToggle` / `CapturePanel` are written but **commented out in the `end` box
 since 2026-07-17** — both buttons were mocks; the real work is the `Print` binds
 on `hypr-screenshot`. Code kept for when it gets wired.
