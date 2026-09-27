@@ -13,6 +13,8 @@ Type=simple
 PassEnvironment=WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR XDG_SESSION_TYPE
 Environment=PATH=/home/kodex/.local/bin:/usr/local/bin:/usr/bin
 Environment=GSK_RENDERER=gl
+# Source-built astal (zensid) lives in /usr/local; harmless where the dir is absent.
+Environment=GI_TYPELIB_PATH=/usr/local/lib/x86_64-linux-gnu/girepository-1.0:/usr/lib/x86_64-linux-gnu/girepository-1.0
 ExecStartPre=/bin/sh -c 'test -n "$WAYLAND_DISPLAY" && test -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"'
 ExecStart=/usr/local/bin/ags run /home/kodex/.config/ags
 Restart=on-failure

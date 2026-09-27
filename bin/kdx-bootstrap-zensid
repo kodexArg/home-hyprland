@@ -137,9 +137,10 @@ step_build() {
   export GI_TYPELIB_PATH="$PREFIX/lib/$LIBDIR_ARCH/girepository-1.0"
 
   # ags (latest stable tag)
-  local want="${ags_ref#v}" have=""
-  have=$("$PREFIX/bin/ags" --version 2>/dev/null | awk '{print $NF}' || true)
-  if [[ ${FORCE:-0} == 1 || "$have" != "$want" ]]; then
+  # ags v3.1.2 still reports "3.1.0" (upstream cli/version not bumped) → track the built tag in a stamp
+  local ags_stamp="$PREFIX/share/kdx-zensid/ags.ref" have=""
+  [[ -x $PREFIX/bin/ags && -f $ags_stamp ]] && have=$(cat "$ags_stamp")
+  if [[ ${FORCE:-0} == 1 || "$have" != "$ags_ref" ]]; then
     fetch_repo https://github.com/Aylur/ags "$SRC_ROOT/ags" "$ags_ref"
     log "building ags $ags_ref (have: ${have:-none})"
     as_user bash -c "cd '$SRC_ROOT/ags' && npm install --no-audit --no-fund"
@@ -147,6 +148,7 @@ step_build() {
       || as_user meson setup --prefix="$PREFIX" "$SRC_ROOT/ags/build" "$SRC_ROOT/ags"
     as_user env GOTOOLCHAIN=local meson compile -C "$SRC_ROOT/ags/build"
     meson install -C "$SRC_ROOT/ags/build"
+    install -d "$PREFIX/share/kdx-zensid"; echo "$ags_ref" > "$ags_stamp"
   else
     log "ags $have already installed"
   fi
@@ -216,7 +218,7 @@ step_session() {
 
 verify() {
   log "verify:"
-  Hyprland --version 2>/dev/null | head -1 || true
+  sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$(id -u "$TARGET_USER")" Hyprland --version 2>/dev/null | head -1 || true
   apt-cache policy hyprland | sed -n '1,3p'
   "$PREFIX/bin/ags" --version || true
   ls /usr/share/wayland-sessions/
