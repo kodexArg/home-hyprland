@@ -17,12 +17,17 @@ import {
 //   toggleCaffeine,
 // } from "./widget/caffeine"
 import { toggleRecMenu } from "./widget/RecMenu"
+import {
+  toggleBrainMenu,
+  toggleMicMenu,
+  toggleDictatorMenu,
+} from "./widget/cluster-menu"
 import { getRamStatus } from "./widget/ram"
 import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
 import GLib from "gi://GLib"
 
-// Left panel = ASUS VA27EHF (HDMI-A-2 / portrait/landscape).
-const BAR_MODEL = "VA27EHF"
+// Desktop PC: ASUS VA27EHF. Laptop TUF (kdxsid): eDP — set KDX_BAR_MODEL or match connector.
+const BAR_MODEL = GLib.getenv("KDX_BAR_MODEL") || "VA27EHF"
 
 let spawnedFor: string | null = null
 
@@ -41,8 +46,17 @@ function isBarMonitor(mon: {
 }): boolean {
   const model = modelOf(mon).toUpperCase()
   const desc = (mon.description ?? "").toUpperCase()
-  // HDMI-A-N flips; bind by panel model, not connector.
-  return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
+  // HDMI-A-N flips on desktop; on laptop prefer eDP-1 when BAR_MODEL is eDP/CMN/BUILTIN.
+  const c = connectorOf(mon).toUpperCase()
+  if (BAR_MODEL.toUpperCase() === "EDP" || BAR_MODEL.toUpperCase() === "BUILTIN") {
+    return c.includes("EDP") || model.includes("CMN") || desc.includes("BUILT-IN")
+  }
+  return model.includes(BAR_MODEL.toUpperCase()) || desc.includes(BAR_MODEL.toUpperCase()) || c.includes(BAR_MODEL.toUpperCase())
+}
+
+function sanitizeCss(input: unknown): string {
+  const raw = typeof input === "string" ? input : (input as { default?: string })?.default ?? ""
+  return raw.replace(/@charset[^;]*;/gi, "").replace(/@use[^;]*;/gi, "").trim()
 }
 
 function trySpawnBar(reason: string) {
@@ -66,7 +80,7 @@ function trySpawnBar(reason: string) {
 }
 
 app.start({
-  css: style,
+  css: sanitizeCss(style),
   main() {
     trySpawnBar("main")
 
@@ -148,6 +162,20 @@ app.start({
       res(`warp: phase=${getWarpPhase()} active=${getWarpActive()}`)
       return
     }
+
+    if (cmd === "mic-menu" || cmd === "mic") {
+      res(toggleMicMenu())
+      return
+    }
+    if (cmd === "dictator-menu" || cmd === "dictator") {
+      res(toggleDictatorMenu())
+      return
+    }
+    if (cmd === "brain-menu" || cmd === "brain") {
+      res(toggleBrainMenu())
+      return
+    }
+
     res(`unknown request: ${argv.join(" ")}`)
   },
 })

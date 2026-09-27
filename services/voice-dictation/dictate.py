@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -47,7 +48,6 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_SILENCE_END_SECONDS = 0.45
 DEFAULT_AUTO_ENTER = True
 DEFAULT_BACKEND_MODE = "auto"
-DEFAULT_VRAM_OCCUPIED_TRIGGER_MB = 2048
 DEFAULT_PREFERRED_GPU_BACKEND = "whisper-cuda"
 
 SAMPLE_RATE = 16000
@@ -122,7 +122,7 @@ UI_PROJECTIONS: dict[str, dict[str, Any]] = {
     PHASE_IDLE:      {"label": "",       "class": "idle",      "visible": False, "tooltip": ""},
     PHASE_ARMING:    {"label": "LOAD",   "class": "loading",   "visible": True,  "tooltip": "🔴 Inicializando stream y cargando modelo…"},
     PHASE_LOADING:   {"label": "LOAD",   "class": "loading",   "visible": True,  "tooltip": "🔴 Cargando modelo STT en GPU (Whisper CUDA)…"},
-    PHASE_REC:       {"label": "REC",    "class": "rec",       "visible": True,  "tooltip": "🎙️ Listening — silence auto-commits; Super+D stops"},
+    PHASE_REC:       {"label": "REC",    "class": "rec",       "visible": True,  "tooltip": "🎙️ Listening — silence auto-commits; Super+Ctrl+D stops"},
     PHASE_WRITING:   {"label": "STREAM", "class": "writing",   "visible": True,  "tooltip": "🎙️ Live dictation streaming…"},
     PHASE_LISTENING: {"label": "HEAR",   "class": "listening", "visible": True,  "tooltip": "🎙️ Listening to utterance…"},
     PHASE_THINKING:  {"label": "···",    "class": "thinking",  "visible": True,  "tooltip": "🟠 Utterance complete — dispatching to Brain…"},
@@ -201,7 +201,6 @@ def load_config() -> dict[str, Any]:
         "silence_sec": DEFAULT_SILENCE_END_SECONDS,
         "auto_enter": DEFAULT_AUTO_ENTER,
         "backend_mode": DEFAULT_BACKEND_MODE,
-        "vram_occupied_trigger_mb": DEFAULT_VRAM_OCCUPIED_TRIGGER_MB,
         "preferred_gpu_backend": DEFAULT_PREFERRED_GPU_BACKEND,
         "notify_on_router_switch": True,
         "max_continuous_speech_sec": 6.0,
@@ -229,11 +228,6 @@ def load_config() -> dict[str, Any]:
     if "DICTATE_BACKEND_MODE" in os.environ:
         configuration["backend_mode"] = os.environ["DICTATE_BACKEND_MODE"].strip().lower()
 
-    if "DICTATE_VRAM_TRIGGER_MB" in os.environ:
-        try:
-            configuration["vram_occupied_trigger_mb"] = int(os.environ["DICTATE_VRAM_TRIGGER_MB"])
-        except ValueError:
-            pass
 
     return configuration
 
@@ -299,21 +293,71 @@ def is_brain_active() -> bool:
     return False
 
 
+def stop_local_llm_service() -> None:
+    try:
+        res = subprocess.run(
+            ["systemctl", "--user", "is-active", "local-llm.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1.0,
+        )
+        if res.stdout.strip() in ("active", "activating"):
+            subprocess.run(
+                ["systemctl", "--user", "stop", "local-llm.service"],
+                check=False,
+                timeout=5.0,
+            )
+            print("[dictate.py] local-llm.service stopped and VRAM unloaded", flush=True)
+    except Exception as error:
+        print(f"[dictate.py] error stopping local-llm.service: {error}", flush=True)
+    try:
+        if os.path.exists(THINKING_FILE):
+            os.remove(THINKING_FILE)
+    except OSError:
+        pass
+
+
+def start_local_llm_service() -> None:
+    try:
+        res = subprocess.run(
+            ["systemctl", "--user", "is-active", "local-llm.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1.0,
+        )
+        if res.stdout.strip() not in ("active", "activating"):
+            subprocess.Popen(
+                ["systemctl", "--user", "start", "local-llm.service"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print("[dictate.py] local-llm.service started", flush=True)
+    except Exception as error:
+        print(f"[dictate.py] error starting local-llm.service: {error}", flush=True)
+
+
 def set_brain_active(active: bool) -> None:
     try:
         with open(BRAIN_ACTIVE_FILE, "w", encoding="utf-8") as file:
             file.write("1" if active else "0")
     except OSError:
         pass
+    if active:
+        if not is_brain_loaded():
+            start_local_llm_service()
+    else:
+        stop_local_llm_service()
 
 
 def toggle_brain_active() -> bool:
     new_active_state = not is_brain_active()
     set_brain_active(new_active_state)
     if new_active_state:
-        notify("🧠 Cognitive Brain active: listening for dictation chunks", "process-working-symbolic")
+        notify("🧠 Cognitive Brain: cargando modelo en VRAM... (rojo)", "process-working-symbolic")
     else:
-        notify("🧠 Cognitive Brain deactivated", "process-stop-symbolic")
+        notify("🧠 Cognitive Brain desactivado (modelo descargado)", "process-stop-symbolic")
     print(f"[dictate.py] brain active set to {new_active_state}", flush=True)
     return new_active_state
 
@@ -924,8 +968,8 @@ class VRAMTelemetry:
     total_mb: int
     free_mb: int
 
-    def is_occupied(self, threshold_mb: int = DEFAULT_VRAM_OCCUPIED_TRIGGER_MB) -> bool:
-        """Return True if occupied VRAM exceeds the given threshold."""
+    def is_occupied(self, threshold_mb: int) -> bool:
+        """Telemetry helper only: True if used_mb > threshold_mb. Does not affect STT routing."""
         return self.used_mb > threshold_mb
 
     @property
@@ -977,13 +1021,13 @@ class STTBackend(abc.ABC):
     @property
     @abc.abstractmethod
     def name(self) -> str:
-        """Identifier name of the backend (e.g. 'whisper-cuda', 'whisper-cpu', 'qwen3-asr')."""
+        """Identifier name of the backend (e.g. 'whisper-cuda', 'distil-whisper', 'qwen3-asr')."""
         ...
 
     @property
     @abc.abstractmethod
     def device(self) -> str:
-        """Target execution device ('cuda' or 'cpu')."""
+        """Target execution device (GPU backends use 'cuda')."""
         ...
 
     @property
@@ -995,7 +1039,7 @@ class STTBackend(abc.ABC):
     @property
     @abc.abstractmethod
     def vram_requirement_mb(self) -> int:
-        """Estimated VRAM needed to run on GPU (0 for CPU)."""
+        """Estimated VRAM needed to run on GPU."""
         ...
 
     @abc.abstractmethod
@@ -1015,7 +1059,7 @@ class STTBackend(abc.ABC):
 
     @abc.abstractmethod
     def unload(self) -> None:
-        """Unload model and free GPU/CPU memory."""
+        """Unload model and free device memory."""
         ...
 
     @abc.abstractmethod
@@ -1038,14 +1082,18 @@ class FasterWhisperBackend(STTBackend):
         model_size: str = "large-v3-turbo",
         device: str = "cuda",
         compute_type: str = "float16",
+        name: str | None = None,
     ) -> None:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
+        self._name_override = name
         self._model: Any = None
 
     @property
     def name(self) -> str:
+        if self._name_override:
+            return self._name_override
         return f"whisper-{self._device}"
 
     @property
@@ -1099,6 +1147,12 @@ class FasterWhisperBackend(STTBackend):
             del self._model
             self._model = None
             gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     def transcribe(
         self,
@@ -1271,27 +1325,27 @@ class Qwen3ASRBackend(STTBackend):
 
 
 class STTRouter:
-    """Strategy Context and dynamic VRAM-aware backend router.
+    """GPU-mandatory STT backend selector (Strategy Pattern).
 
-    Monitors GPU memory utilization against the occupied trigger threshold (default 2048 MiB / 2 GB).
-    When occupied VRAM > trigger_mb:
-        Routes to CPU backend (FasterWhisper CPU int8) to protect gaming / GPU workloads.
-        Dispatches system notifications on state transition ("pero avisa").
-    When occupied VRAM <= trigger_mb:
-        Routes to GPU backend (FasterWhisper CUDA float16, or Qwen3 if configured).
-        Dispatches system notification on state transition.
+    Policy: speech-to-text runs on GPU only. There is no CPU fallback.
+    If no GPU backend is available, routing raises RuntimeError and the
+    session surfaces the red LOAD/ERR UI.
+
+    Modes: auto | whisper-cuda | distil-whisper | qwen3-asr.
+    `auto` prefers `preferred_gpu_backend` (default whisper-cuda).
+    VRAM telemetry (nvidia-smi) is informational for status/CLI only.
     """
 
     _instance: ClassVar[STTRouter | None] = None
 
     def __init__(self) -> None:
         self._backends: dict[str, STTBackend] = {
-            "whisper-cuda": FasterWhisperBackend(device="cuda", compute_type="float16"),
+            "whisper-cuda": FasterWhisperBackend(model_size="large-v3-turbo", device="cuda", compute_type="int8_float16"),
+            "distil-whisper": FasterWhisperBackend(model_size="Systran/faster-distil-whisper-large-v3", device="cuda", compute_type="int8_float16", name="distil-whisper"),
             "qwen3-asr": Qwen3ASRBackend(device="cuda", compute_type="bfloat16"),
         }
         self._active_backend: STTBackend | None = None
         self._last_routed_name: str | None = None
-        self._occupied_trigger_mb: int = DEFAULT_VRAM_OCCUPIED_TRIGGER_MB
         self._backend_mode: str = "whisper-cuda"
         self._preferred_gpu: str = DEFAULT_PREFERRED_GPU_BACKEND
         self._notify_on_switch: bool = True
@@ -1303,9 +1357,6 @@ class STTRouter:
             cls._instance = cls()
         return cls._instance
 
-    @property
-    def occupied_trigger_mb(self) -> int:
-        return self._occupied_trigger_mb
 
     @property
     def backend_mode(self) -> str:
@@ -1324,15 +1375,24 @@ class STTRouter:
 
     def reload_config(self) -> None:
         config = load_config()
-        self._backend_mode = str(config.get("backend_mode", "whisper-cuda")).lower()
-        if self._backend_mode == "whisper-cpu":
-            self._backend_mode = "whisper-cuda"
-        self._occupied_trigger_mb = int(config.get("vram_occupied_trigger_mb", DEFAULT_VRAM_OCCUPIED_TRIGGER_MB))
+        mode = str(config.get("backend_mode", "whisper-cuda")).lower()
+        # Legacy: whisper-cpu was removed — GPU is mandatory.
+        if mode == "whisper-cpu":
+            print("[dictate.py] ignoring legacy backend_mode=whisper-cpu; using whisper-cuda", flush=True)
+            mode = "whisper-cuda"
+            config["backend_mode"] = "whisper-cuda"
+            config.pop("vram_occupied_trigger_mb", None)
+            save_config(config)
+        # Drop dead CPU-routing trigger key if present in config on disk
+        if "vram_occupied_trigger_mb" in config:
+            config.pop("vram_occupied_trigger_mb", None)
+            save_config(config)
+        self._backend_mode = mode
         self._preferred_gpu = str(config.get("preferred_gpu_backend", DEFAULT_PREFERRED_GPU_BACKEND)).lower()
         self._notify_on_switch = bool(config.get("notify_on_router_switch", True))
 
     def set_backend_mode(self, mode: str) -> None:
-        valid_modes = ("auto", "whisper-cuda", "qwen3-asr", "qwen3")
+        valid_modes = ("auto", "whisper-cuda", "distil-whisper", "qwen3-asr", "qwen3")
         if mode not in valid_modes:
             raise ValueError(f"Invalid mode {mode!r}. Valid options: {valid_modes}")
         config = load_config()
@@ -1340,21 +1400,18 @@ class STTRouter:
         save_config(config)
         self.reload_config()
 
-    def set_occupied_trigger_mb(self, trigger_mb: int) -> None:
-        if trigger_mb < 256:
-            raise ValueError(f"Trigger must be at least 256 MiB (got {trigger_mb})")
-        config = load_config()
-        config["vram_occupied_trigger_mb"] = trigger_mb
-        save_config(config)
-        self.reload_config()
 
     def decide_backend(self, telemetry: VRAMTelemetry | None = None) -> tuple[STTBackend, str]:
-        """Evaluate configuration to select GPU backend strategy (CPU fallback permanently eliminated)."""
+        """Select a GPU STT backend; raises if none are available."""
         # Manual override modes
         if self._backend_mode == "whisper-cuda":
             if self._backends.get("whisper-cuda") and self._backends["whisper-cuda"].is_available():
                 return self._backends["whisper-cuda"], "manual config override (whisper-cuda)"
             raise RuntimeError("whisper-cuda is not available on this host")
+        if self._backend_mode == "distil-whisper":
+            if self._backends.get("distil-whisper") and self._backends["distil-whisper"].is_available():
+                return self._backends["distil-whisper"], "manual config override (distil-whisper)"
+            raise RuntimeError("distil-whisper is not available on this host")
         if self._backend_mode in ("qwen3", "qwen3-asr"):
             if self._backends.get("qwen3-asr") and self._backends["qwen3-asr"].is_available():
                 return self._backends["qwen3-asr"], "manual config override (qwen3-asr)"
@@ -1368,7 +1425,7 @@ class STTRouter:
 
         for b_name, backend in self._backends.items():
             if backend.is_available():
-                return backend, f"GPU fallback to registered backend ({b_name})"
+                return backend, f"GPU alternate registered backend ({b_name})"
 
         raise RuntimeError(f"GPU STT backend {target_gpu} is unavailable (CPU fallback disabled)")
 
@@ -1410,8 +1467,6 @@ class STTRouter:
                 "total_gb": round(telemetry.total_gb, 2) if telemetry else None,
                 "used_percentage": round(telemetry.used_percentage, 1) if telemetry else None,
             },
-            "occupied_trigger_mb": self._occupied_trigger_mb,
-            "is_occupied": telemetry.is_occupied(self._occupied_trigger_mb) if telemetry else None,
             "backend_mode": self._backend_mode,
             "preferred_gpu": self._preferred_gpu,
             "routed_backend": backend.name,
@@ -2151,15 +2206,27 @@ def extract_verbal_enter(text: str) -> tuple[str, bool]:
     return stripped_text, False
 
 
+_last_brain_loaded_check: float = 0.0
+_last_brain_loaded_result: bool = False
+
+
 def is_brain_loaded() -> bool:
+    global _last_brain_loaded_check, _last_brain_loaded_result
+    now = time.monotonic()
+    if now - _last_brain_loaded_check < 1.0:
+        return _last_brain_loaded_result
+
+    _last_brain_loaded_check = now
     try:
         request = urllib.request.Request(f"{LLM_URL}/models")
-        with urllib.request.urlopen(request, timeout=0.3) as response:
+        with urllib.request.urlopen(request, timeout=1.5) as response:
             if response.status == 200:
                 data = json.loads(response.read().decode("utf-8"))
-                return bool(data.get("data"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+                _last_brain_loaded_result = bool(data.get("data"))
+                return _last_brain_loaded_result
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
         pass
+    _last_brain_loaded_result = False
     return False
 
 
@@ -2173,92 +2240,338 @@ class BrainState:
 
 
 class ActionType:
-    WRITE = "write"
+    """Enumeration of operational dispatch action targets."""
+    APP = "app"
     HYPRLAND = "hyprland"
+    AUDIO = "audio"
     KEY = "key"
+    WRITE = "write"
     NONE = "none"
 
 
-class ActionRouter:
+class SystemActionExecutor:
+    """Executes deterministic operating system commands for Hyprland, audio, and application lifecycle."""
+
     @staticmethod
-    def resolve_action(text: str) -> dict[str, Any]:
-        raw_text = text.strip()
-        normalized_text = raw_text.lower()
+    def execute(action: dict[str, Any], target_address: str | None = None, target_name: str = "") -> bool:
+        """Dispatches an action payload to system binaries without typing arbitrary text.
 
-        if re.search(r"\b(ir\s+al\s+panel\s+1|panel\s+1|workspace\s+1|pantalla\s+1|escritorio\s+1|switch\s+to\s+panel\s+1)\b", normalized_text):
-            return {
-                "action": ActionType.HYPRLAND,
-                "target": "workspace_1",
-                "lua": "hl.dispatch(hl.dsp.focus({ workspace = 1 }))",
-                "label": "Switch to Panel 1 (Workspace 1)",
-            }
+        Args:
+            action: Dictionary defining action type, command, target, and display label.
+            target_address: Optional Hyprland window address to focus before keypresses.
+            target_name: Human-readable target window title.
 
-        if re.search(r"\b(ir\s+al\s+panel\s+2|panel\s+2|workspace\s+2|pantalla\s+2|escritorio\s+2|switch\s+to\s+panel\s+2)\b", normalized_text):
-            return {
-                "action": ActionType.HYPRLAND,
-                "target": "workspace_2",
-                "lua": "hl.dispatch(hl.dsp.focus({ workspace = 2 }))",
-                "label": "Switch to Panel 2 (Workspace 2)",
-            }
+        Returns:
+            bool: True if execution succeeded or was dispatched, False otherwise.
+        """
+        action_type = action.get("action", ActionType.NONE)
+        cmd = action.get("cmd", "")
+        label = action.get("label", "")
+        target = action.get("target", "")
 
-        if re.search(r"\b(foco\s+(?:en\s+)?panel\s+3|panel\s+3|workspace\s+3|foco\s+terminal|foco\s+consola|ir\s+al\s+panel\s+3|focus\s+terminal)\b", normalized_text):
-            return {
-                "action": ActionType.HYPRLAND,
-                "target": "workspace_3",
-                "lua": "hl.dispatch(hl.dsp.focus({ workspace = 3 }))",
-                "label": "Focus Panel 3 (Workspace 3 Terminal)",
-            }
+        if action_type == ActionType.NONE:
+            return False
 
-        if re.search(r"\b(foco\s+(?:en\s+)?monitor\s+derecho|monitor\s+derecho|pantalla\s+derecha|segundo\s+monitor|focus\s+right\s+monitor)\b", normalized_text):
-            return {
-                "action": ActionType.HYPRLAND,
-                "target": "monitor_right",
-                "lua": 'hl.dispatch(hl.dsp.focus({ monitor = "HDMI-A-1" }))',
-                "label": "Focus Right Monitor (HDMI-A-1 AOC)",
-            }
+        if action_type == ActionType.HYPRLAND:
+            lua_code = action.get("lua", "")
+            if lua_code and shutil.which("hyprctl"):
+                res = subprocess.run(["hyprctl", "eval", lua_code], check=False, capture_output=True)
+                if res.returncode != 0:
+                    err_text = res.stderr.decode("utf-8", errors="ignore").strip() or res.stdout.decode("utf-8", errors="ignore").strip()
+                    first_line = err_text.splitlines()[0] if err_text else "error"
+                    raise RuntimeError(f"código {res.returncode}: {first_line[:45]}")
+                notify(f"🖥️ Hyprland: {label or 'Evaluated Lua'}", "preferences-system-windows-symbolic")
+                return True
+            if cmd and shutil.which("hyprctl"):
+                parts = ["hyprctl", "dispatch"] + shlex.split(cmd)
+                res = subprocess.run(parts, check=False, capture_output=True)
+                if res.returncode != 0:
+                    err_text = res.stderr.decode("utf-8", errors="ignore").strip() or res.stdout.decode("utf-8", errors="ignore").strip()
+                    first_line = err_text.splitlines()[0] if err_text else "error"
+                    msg = f"código {res.returncode}"
+                    if "expected near" in err_text:
+                        near_match = re.search(r"expected near '[^']+'", err_text)
+                        if near_match:
+                            msg += f" (sintaxis Lua: {near_match.group(0)})"
+                        else:
+                            msg += f": {first_line[:40]}"
+                    elif first_line:
+                        msg += f": {first_line[:40]}"
+                    raise RuntimeError(msg)
+                notify(f"🖥️ Hyprland: {label or cmd}", "preferences-system-windows-symbolic")
+                return True
 
-        if re.search(r"\b(foco\s+(?:en\s+)?panel\s+chromium|panel\s+chromium|foco\s+chromium|abrir\s+chromium|ver\s+en\s+chromium|focus\s+chromium)\b", normalized_text):
-            return {
-                "action": ActionType.HYPRLAND,
-                "target": "chromium",
-                "lua": 'for _, w in ipairs(hl.get_windows()) do if w.class and string.lower(w.class):find("chromium") then hl.dispatch(hl.dsp.focus({ window = w })) end end return "ok"',
-                "label": "Focus Chromium Stage Window (Workspace 4)",
-            }
+        elif action_type == ActionType.APP:
+            parts = shlex.split(cmd)
+            if not parts or not shutil.which(parts[0]):
+                raise RuntimeError(f"app no encontrada: {cmd}")
+            subprocess.Popen(parts, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            notify(f"🚀 App: {label or parts[0]}", "system-run-symbolic")
+            return True
 
-        if re.search(r"\b(listo\s+kodex|ok\s+kodex|dale\s+enter|presion[aá]\s+enter|dar\s+enter|apret[aá]\s+enter|press\s+enter)\b", normalized_text) or normalized_text in ("enter", "listo", "enviar", "submit"):
+        elif action_type == ActionType.AUDIO:
+            parts = shlex.split(cmd)
+            if not parts or not shutil.which(parts[0]):
+                raise RuntimeError(f"audio bin no encontrado: {cmd}")
+            res = subprocess.run(parts, check=False, capture_output=True)
+            if res.returncode != 0:
+                err_text = res.stderr.decode("utf-8", errors="ignore").strip() or res.stdout.decode("utf-8", errors="ignore").strip()
+                first_line = err_text.splitlines()[0] if err_text else "error"
+                raise RuntimeError(f"audio código {res.returncode}: {first_line[:40]}")
+            notify(f"🔊 Audio: {label or 'Ajuste de audio'}", "audio-volume-high-symbolic")
+            return True
+
+        elif action_type == ActionType.KEY:
+            target_key = target or cmd
+            if target_address and shutil.which("hyprctl"):
+                subprocess.run(
+                    ["hyprctl", "dispatch", "focuswindow", f"address:{target_address}"],
+                    check=False,
+                    capture_output=True,
+                )
+                time.sleep(FOCUS_SETTLE_SECONDS)
+            if target_key and shutil.which("wtype"):
+                subprocess.run(["wtype", "-k", target_key], check=False)
+                notify(f"⌨️ Key: {target_key}", "input-keyboard-symbolic")
+                return True
+
+        elif action_type == ActionType.WRITE:
+            if target and shutil.which("wtype"):
+                subprocess.run(["wtype", "-s", "1", "--", target], check=False)
+                notify(f"✍️ Typed: {target[:35]}...", "document-edit-symbolic")
+                return True
+
+        return False
+
+
+class FastRegexRouter:
+    """Zero-latency regular-expression command router active exclusively when FSM 3 (Brain) is disabled.
+
+    Provides instant operating system shortcuts prefaced by hotwords ('hypr', 'hiper')
+    or standalone control keystrokes, supporting phonetic number variants in Spanish.
+    """
+
+    HOTWORD_PATTERN = re.compile(r"""(?ix)^\s*(?:hypr|hiper|hyper|iper)\s+(.+)$""")
+
+    N1 = r"(?:1|uno|primer(?:o)?|one|first)"
+    N2 = r"(?:2|dos|segundo|two|second)"
+    N3 = r"(?:3|tres|tercer(?:o)?|three|third)"
+    N4 = r"(?:4|cuatro|cuarto|four|fourth)"
+    N5 = r"(?:5|cinco|quinto|five|fifth)"
+    N6 = r"(?:6|seis|sexto|six|sixth)"
+
+    @classmethod
+    def resolve(cls, text: str) -> dict[str, Any] | None:
+        """Matches spoken input against fast system macros if prefaced by hotword or representing standalone keys.
+
+        Args:
+            text: Raw transcribed string from STT.
+
+        Returns:
+            dict: Action descriptor dictionary if matched, None otherwise.
+        """
+        raw = text.strip()
+        if not raw:
+            return None
+        norm = raw.lower()
+
+        if VERBAL_ENTER_ONLY_REGEX.match(norm):
             return {"action": ActionType.KEY, "target": "Return", "label": "Press Return"}
-
-        if re.search(r"\b(borra\s+eso|borrar\s+eso|borrar|backspace|delete\s+that)\b", normalized_text):
+        if re.search(r"^\s*(?:borra\s+eso|borrar\s+eso|borrar|backspace|delete\s+that)\s*[.!?…]*$", norm):
             return {"action": ActionType.KEY, "target": "Backspace", "label": "Press Backspace"}
-
-        if re.search(r"\b(tabular|tabulaci[oó]n|tab)\b", normalized_text):
+        if re.search(r"^\s*(?:tabular|tabulaci[oó]n|tab)\s*[.!?…]*$", norm):
             return {"action": ActionType.KEY, "target": "Tab", "label": "Press Tab"}
-
-        if re.search(r"\b(escapar|escape|cancelar)\b", normalized_text):
+        if re.search(r"^\s*(?:escapar|escape|cancelar)\s*[.!?…]*$", norm):
             return {"action": ActionType.KEY, "target": "Escape", "label": "Press Escape"}
 
-        refined_text = ActionRouter._refine_text_with_thinking(raw_text)
-        return {
-            "action": ActionType.WRITE,
-            "target": refined_text,
-            "label": f"Write text ({len(refined_text)} chars)",
-        }
+        match = cls.HOTWORD_PATTERN.match(norm)
+        if not match:
+            return None
 
-    @staticmethod
-    def _refine_text_with_thinking(text: str) -> str:
-        trimmed = text.strip()
-        if not trimmed:
-            return ""
+        body = match.group(1).strip().rstrip(".!?…")
 
-        capitalized_fallback = trimmed[0].upper() + trimmed[1:] if not trimmed[0].isupper() else trimmed
+        if re.search(r"\b(?:sub(?:e|í|ir)?\s+(?:el\s+)?volumen|m[aá]s\s+volumen|sub(?:e|ir)?\s+audio)\b", body):
+            return {"action": ActionType.AUDIO, "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+", "label": "Subir volumen"}
+        if re.search(r"\b(?:baj(?:a|á|ar)?\s+(?:el\s+)?volumen|menos\s+volumen|baj(?:a|ar)?\s+audio)\b", body):
+            return {"action": ActionType.AUDIO, "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-", "label": "Bajar volumen"}
+        if re.search(r"\b(?:mute(?:ar)?|silenci(?:o|a|ar)|mutea(?:\s+el\s+audio)?)\b", body):
+            return {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", "label": "Silenciar audio"}
+        if re.search(r"\b(?:desmute(?:a|ar)?|reactiv(?:a|ar)?\s+audio|sonido)\b", body):
+            return {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0", "label": "Reactivar audio"}
+        if re.search(r"\b(?:mute\s+mic(?:r[oó]fono)?|silenci(?:a|ar)\s+mic(?:r[oó]fono)?)\b", body):
+            return {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle", "label": "Silenciar micrófono"}
+        if re.search(r"\b(?:activ(?:a|ar)\s+mic(?:r[oó]fono)?|desmute(?:a|ar)\s+mic(?:r[oó]fono)?)\b", body):
+            return {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0", "label": "Activar micrófono"}
+
+        if re.search(r"\b(?:screen|monitor|pantalla)\s+(?:izquierd[oa]|uno|1)\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-2", "label": "Focus Monitor Izquierdo (ASUS)"}
+        if re.search(r"\b(?:screen|monitor|pantalla)\s+(?:derech[oa]|dos|2)|segundo\s+monitor\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-1", "label": "Focus Monitor Derecho (AOC)"}
+
+        if re.search(rf"\b(?:ir\s+al\s+)?(?:panel|workspace|escritorio)\s+{cls.N1}\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "workspace 1", "label": "Switch to Panel 1 (ASUS)"}
+        if re.search(rf"\b(?:ir\s+al\s+)?(?:panel|workspace|escritorio)\s+{cls.N2}\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "workspace 2", "label": "Switch to Panel 2 (ASUS)"}
+        if re.search(rf"\b(?:ir\s+al\s+)?(?:panel|workspace|escritorio)\s+{cls.N3}\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "workspace 3", "label": "Switch to Panel 3 (Terminal)"}
+        if re.search(rf"\b(?:ir\s+al\s+)?(?:panel|workspace|escritorio)\s+{cls.N4}\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "workspace 4", "label": "Switch to Panel 4 (Stage)"}
+        if re.search(rf"\b(?:ir\s+al\s+)?(?:panel|workspace|escritorio)\s+{cls.N5}\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "workspace 5", "label": "Switch to Panel 5 (AOC)"}
+        if re.search(rf"\b(?:ir\s+al\s+)?(?:panel|workspace|escritorio)\s+{cls.N6}\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "workspace 6", "label": "Switch to Panel 6 (AOC)"}
+
+        if re.search(r"\b(?:ventana|foco)\s+izquierd[oa]\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "movefocus l", "label": "Focus Left"}
+        if re.search(r"\b(?:ventana|foco)\s+derech[oa]\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "movefocus r", "label": "Focus Right"}
+        if re.search(r"\b(?:ventana|foco)\s+arriba\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "movefocus u", "label": "Focus Up"}
+        if re.search(r"\b(?:ventana|foco)\s+abajo\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "movefocus d", "label": "Focus Down"}
+        if re.search(r"\b(?:pantalla\s+completa|fullscreen|maximizar)\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "fullscreen 1", "label": "Toggle Fullscreen"}
+        if re.search(r"\b(?:flotante|hacer\s+flotante|desacoplar|tiling)\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "togglefloating", "label": "Toggle Floating"}
+        if re.search(r"\b(?:cerrar(?:\s+ventana)?|matar(?:\s+ventana)?)\b", body):
+            return {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Kill Active Window"}
+
+        if re.search(r"\b(?:abr(?:ir|e)?\s+(?:la\s+)?(?:terminal|consola)|kitty)\b", body):
+            return {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"}
+        if re.search(r"\b(?:abr(?:ir|e)?\s+(?:el\s+)?navegador|chromium|stage)\b", body):
+            return {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"}
+
+        return None
+
+    @classmethod
+    def resolve_action(cls, text: str) -> dict[str, Any] | None:
+        """Backward-compatible invocation alias for resolve."""
+        return cls.resolve(text)
+
+
+class BrainSemanticRouter:
+    """Semantic intent interpreter and action resolver for FSM 3 (Cognitive Brain).
+
+    Implements the Zero Dictation Principle: never emits raw transcribed text as literal
+    keystrokes. Resolves spoken intent into deterministic operating system commands
+    using an upfront token-saving semantic lookup table, falling back to local LLM
+    classification.
+    """
+
+    DETERMINISTIC_INTENTS: ClassVar[dict[str, dict[str, Any]]] = {
+        "abre kitty": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "abrir kitty": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "open kitty terminal": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "abre la terminal": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "abrir la terminal": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "abrí una consola": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "abrir consola": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "iniciar consola": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "lanzá la terminal": {"action": ActionType.APP, "cmd": "kitty", "label": "Open Kitty Terminal"},
+        "abre chromium": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "abrir chromium": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "abrí el navegador": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "abrir navegador": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "mostrar navegador": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "abrir stage": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "lanzar navegador web": {"action": ActionType.APP, "cmd": "/home/kodex/.local/bin/chromium-stage", "label": "Open Chromium Stage"},
+        "cerrar ventana": {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Close Active Window"},
+        "cerrá esto": {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Close Active Window"},
+        "matá la ventana actual": {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Close Active Window"},
+        "cerrar esta aplicación": {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Close Active Window"},
+        "cerrar programa": {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Close Active Window"},
+        "close window": {"action": ActionType.HYPRLAND, "cmd": "killactive", "label": "Close Active Window"},
+        "sube el volumen": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+", "label": "Subir volumen"},
+        "subí el volumen": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+", "label": "Subir volumen"},
+        "más volumen": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+", "label": "Subir volumen"},
+        "subir audio": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+", "label": "Subir volumen"},
+        "dale más sonido": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+", "label": "Subir volumen"},
+        "baja el volumen": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-", "label": "Bajar volumen"},
+        "bajá el volumen": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-", "label": "Bajar volumen"},
+        "menos volumen": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-", "label": "Bajar volumen"},
+        "bajar audio": {"action": ActionType.AUDIO, "cmd": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-", "label": "Bajar volumen"},
+        "muteá el audio": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", "label": "Alternar silencio de audio"},
+        "silenciá la computadora": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1", "label": "Silenciar audio"},
+        "silencio": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1", "label": "Silenciar audio"},
+        "desmuteá el audio": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0", "label": "Reactivar audio"},
+        "reactivar sonido": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0", "label": "Reactivar audio"},
+        "silenciá el micrófono": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle", "label": "Alternar micrófono"},
+        "muteá el mic": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle", "label": "Alternar micrófono"},
+        "activar micrófono": {"action": ActionType.AUDIO, "cmd": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0", "label": "Activar micrófono"},
+        "ir al panel uno": {"action": ActionType.HYPRLAND, "cmd": "workspace 1", "label": "Switch to Panel 1 (ASUS)"},
+        "primer panel": {"action": ActionType.HYPRLAND, "cmd": "workspace 1", "label": "Switch to Panel 1 (ASUS)"},
+        "panel uno": {"action": ActionType.HYPRLAND, "cmd": "workspace 1", "label": "Switch to Panel 1 (ASUS)"},
+        "workspace uno": {"action": ActionType.HYPRLAND, "cmd": "workspace 1", "label": "Switch to Panel 1 (ASUS)"},
+        "ir al panel dos": {"action": ActionType.HYPRLAND, "cmd": "workspace 2", "label": "Switch to Panel 2 (ASUS)"},
+        "segundo panel": {"action": ActionType.HYPRLAND, "cmd": "workspace 2", "label": "Switch to Panel 2 (ASUS)"},
+        "panel dos": {"action": ActionType.HYPRLAND, "cmd": "workspace 2", "label": "Switch to Panel 2 (ASUS)"},
+        "workspace dos": {"action": ActionType.HYPRLAND, "cmd": "workspace 2", "label": "Switch to Panel 2 (ASUS)"},
+        "ir al panel tres": {"action": ActionType.HYPRLAND, "cmd": "workspace 3", "label": "Switch to Panel 3 (Terminal)"},
+        "tercer panel": {"action": ActionType.HYPRLAND, "cmd": "workspace 3", "label": "Switch to Panel 3 (Terminal)"},
+        "panel tres": {"action": ActionType.HYPRLAND, "cmd": "workspace 3", "label": "Switch to Panel 3 (Terminal)"},
+        "workspace tres": {"action": ActionType.HYPRLAND, "cmd": "workspace 3", "label": "Switch to Panel 3 (Terminal)"},
+        "ir al panel cuatro": {"action": ActionType.HYPRLAND, "cmd": "workspace 4", "label": "Switch to Panel 4 (Stage)"},
+        "cuarto panel": {"action": ActionType.HYPRLAND, "cmd": "workspace 4", "label": "Switch to Panel 4 (Stage)"},
+        "panel cuatro": {"action": ActionType.HYPRLAND, "cmd": "workspace 4", "label": "Switch to Panel 4 (Stage)"},
+        "workspace cuatro": {"action": ActionType.HYPRLAND, "cmd": "workspace 4", "label": "Switch to Panel 4 (Stage)"},
+        "ir al panel cinco": {"action": ActionType.HYPRLAND, "cmd": "workspace 5", "label": "Switch to Panel 5 (AOC)"},
+        "quinto panel": {"action": ActionType.HYPRLAND, "cmd": "workspace 5", "label": "Switch to Panel 5 (AOC)"},
+        "panel cinco": {"action": ActionType.HYPRLAND, "cmd": "workspace 5", "label": "Switch to Panel 5 (AOC)"},
+        "workspace cinco": {"action": ActionType.HYPRLAND, "cmd": "workspace 5", "label": "Switch to Panel 5 (AOC)"},
+        "ir al panel seis": {"action": ActionType.HYPRLAND, "cmd": "workspace 6", "label": "Switch to Panel 6 (AOC)"},
+        "sexto panel": {"action": ActionType.HYPRLAND, "cmd": "workspace 6", "label": "Switch to Panel 6 (AOC)"},
+        "panel seis": {"action": ActionType.HYPRLAND, "cmd": "workspace 6", "label": "Switch to Panel 6 (AOC)"},
+        "workspace seis": {"action": ActionType.HYPRLAND, "cmd": "workspace 6", "label": "Switch to Panel 6 (AOC)"},
+        "foco al monitor izquierdo": {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-2", "label": "Focus Left Monitor (ASUS)"},
+        "pantalla izquierda": {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-2", "label": "Focus Left Monitor (ASUS)"},
+        "monitor izquierdo": {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-2", "label": "Focus Left Monitor (ASUS)"},
+        "foco al monitor derecho": {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-1", "label": "Focus Right Monitor (AOC)"},
+        "pantalla derecha": {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-1", "label": "Focus Right Monitor (AOC)"},
+        "monitor derecho": {"action": ActionType.HYPRLAND, "cmd": "focusmonitor HDMI-A-1", "label": "Focus Right Monitor (AOC)"},
+        "pantalla completa": {"action": ActionType.HYPRLAND, "cmd": "fullscreen 1", "label": "Toggle Fullscreen"},
+        "maximizá esta ventana": {"action": ActionType.HYPRLAND, "cmd": "fullscreen 1", "label": "Toggle Fullscreen"},
+        "hacer ventana flotante": {"action": ActionType.HYPRLAND, "cmd": "togglefloating", "label": "Toggle Floating"},
+        "hacerla flotar": {"action": ActionType.HYPRLAND, "cmd": "togglefloating", "label": "Toggle Floating"},
+        "volver a mosaico": {"action": ActionType.HYPRLAND, "cmd": "togglefloating", "label": "Toggle Floating"},
+        "ventana de la izquierda": {"action": ActionType.HYPRLAND, "cmd": "movefocus l", "label": "Focus Left Window"},
+        "ventana de la derecha": {"action": ActionType.HYPRLAND, "cmd": "movefocus r", "label": "Focus Right Window"},
+        "ventana de arriba": {"action": ActionType.HYPRLAND, "cmd": "movefocus u", "label": "Focus Up Window"},
+        "ventana de abajo": {"action": ActionType.HYPRLAND, "cmd": "movefocus d", "label": "Focus Down Window"},
+    }
+
+    @classmethod
+    def resolve(cls, text: str) -> dict[str, Any]:
+        """Resolves spoken text into a deterministic action via local lookup or local LLM classification.
+
+        Args:
+            text: Spoken utterance received from speech queue.
+
+        Returns:
+            dict: Action descriptor dictionary.
+        """
+        cleaned = text.strip().lower().rstrip(".!?…")
+        if not cleaned:
+            return {"action": ActionType.NONE, "label": "Empty input"}
+
+        if cleaned in cls.DETERMINISTIC_INTENTS:
+            return cls.DETERMINISTIC_INTENTS[cleaned]
 
         if not is_brain_loaded():
-            return capitalized_fallback
+            return {"action": ActionType.NONE, "label": "Brain offline"}
 
+        return cls._classify_with_llm(cleaned)
+
+    @classmethod
+    def _classify_with_llm(cls, text: str) -> dict[str, Any]:
+        """Queries local LLM endpoint to classify natural language commands into structured JSON."""
         system_prompt = (
-            "You are an expert voice dictation assistant on Linux Hyprland.\n"
-            "Format the given spoken sentence with clean punctuation, proper casing, and grammar.\n"
-            "Output ONLY the final punctuated text without markdown or commentary."
+            "You are the semantic action router for a Linux Hyprland desktop assistant.\n"
+            "Map the user request into exactly ONE of the following JSON schemas:\n"
+            '1. {"action": "app", "cmd": "kitty" | "/home/kodex/.local/bin/chromium-stage", "label": "<description>"}\n'
+            '2. {"action": "hyprland", "cmd": "workspace 1" | "workspace 2" | "workspace 3" | "workspace 4" | "workspace 5" | "workspace 6" | "focusmonitor HDMI-A-1" | "focusmonitor HDMI-A-2" | "movefocus l" | "movefocus r" | "movefocus u" | "movefocus d" | "fullscreen 1" | "togglefloating" | "killactive", "label": "<description>"}\n'
+            '3. {"action": "audio", "cmd": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+" | "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" | "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" | "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle", "label": "<description>"}\n'
+            '4. {"action": "none"}\n'
+            "Strictly output only JSON without markdown or extra commentary."
         )
         payload = {
             "model": "local-model",
@@ -2267,7 +2580,7 @@ class ActionRouter:
                 {"role": "user", "content": text},
             ],
             "temperature": 0.0,
-            "max_tokens": 160,
+            "max_tokens": 512,
         }
         try:
             req = urllib.request.Request(
@@ -2276,51 +2589,49 @@ class ActionRouter:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=2.5) as response:
+            with urllib.request.urlopen(req, timeout=6.0) as response:
                 if response.status == 200:
                     response_data = json.loads(response.read().decode("utf-8"))
                     content = response_data["choices"][0]["message"]["content"].strip()
-                    if content.startswith('"') and content.endswith('"'):
-                        content = content[1:-1].strip()
-                    if content:
-                        return content
-        except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as error:
-            print(f"[router] LLM refinement fallback ({error})", flush=True)
+                    if "</think>" in content:
+                        content = content.split("</think>", 1)[1].strip()
+                    if "```" in content:
+                        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+                        if match:
+                            content = match.group(1).strip()
+                        else:
+                            parts = content.split("```")
+                            if len(parts) > 1:
+                                content = parts[1]
+                                if content.startswith("json"):
+                                    content = content[4:]
+                                content = content.strip()
+                    try:
+                        parsed = json.loads(content)
+                    except json.JSONDecodeError:
+                        match = re.search(r"\{.*?\}", content, re.DOTALL)
+                        if match:
+                            parsed = json.loads(match.group(0))
+                        else:
+                            raise
+                    if isinstance(parsed, dict) and "action" in parsed:
+                        return parsed
+        except Exception as error:
+            print(f"[brain] LLM semantic routing error: {error}", flush=True)
 
-        return capitalized_fallback
+        return {"action": ActionType.NONE, "label": "Unrecognized command"}
+
+
+class ActionRouter:
+    """Backward compatibility facade delegating to FastRegexRouter and SystemActionExecutor."""
 
     @staticmethod
-    def execute_action(action: dict[str, Any], target_address: str | None = None, target_name: str = "") -> None:
-        action_type = action.get("action")
-        target = action.get("target", "")
+    def resolve_action(text: str) -> dict[str, Any] | None:
+        return FastRegexRouter.resolve(text)
 
-        if action_type == ActionType.HYPRLAND:
-            lua_code = action.get("lua", "")
-            if lua_code:
-                print(f"[router] Hyprland action: {action.get('label')}", flush=True)
-                subprocess.run(["hyprctl", "eval", lua_code], check=False, capture_output=True)
-                notify(f"🖥️ Hyprland: {action.get('label')}", "preferences-system-windows-symbolic")
-            return
-
-        if target_address and shutil.which("hyprctl"):
-            subprocess.run(
-                ["hyprctl", "dispatch", "focuswindow", f"address:{target_address}"],
-                check=False,
-                capture_output=True,
-            )
-            time.sleep(FOCUS_SETTLE_SECONDS)
-
-        if action_type == ActionType.KEY:
-            print(f"[router] Key action: {target}", flush=True)
-            if shutil.which("wtype"):
-                subprocess.run(["wtype", "-k", target], check=False)
-            notify(f"🧠 Key: {target}", "input-keyboard-symbolic")
-
-        elif action_type == ActionType.WRITE:
-            print(f"[router] Write action: {target!r}", flush=True)
-            if shutil.which("wtype"):
-                subprocess.run(["wtype", "-s", "1", "--", target], check=False)
-            notify(f"✍️ Typed: {target[:35]}...", "document-edit-symbolic")
+    @staticmethod
+    def execute_action(action: dict[str, Any], target_address: str | None = None, target_name: str = "") -> bool:
+        return SystemActionExecutor.execute(action, target_address, target_name)
 
 
 class QueueManager:
@@ -2387,6 +2698,21 @@ class QueueManager:
             self.target_name = ""
 
 
+
+def await_brain_model_ready(brain: "BrainFSM", timeout_sec: float = 90.0) -> bool:
+    """Block until /v1/models is up (or timeout); sync brain_state so JSON is not left on model_loading."""
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if not is_brain_active():
+            return False
+        if is_brain_loaded():
+            brain.sync_active()
+            return True
+        time.sleep(0.5)
+    brain.sync_active()
+    return is_brain_loaded()
+
+
 class BrainFSM:
     _instance: BrainFSM | None = None
 
@@ -2398,30 +2724,86 @@ class BrainFSM:
 
     def __init__(self) -> None:
         self.lock = threading.RLock()
-        self.state = BrainState.STANDBY if is_brain_active() else BrainState.OFF
+        if is_brain_active():
+            self.state = BrainState.STANDBY if is_brain_loaded() else BrainState.ERROR
+            self.detail = "standby_ready" if is_brain_loaded() else "model_loading"
+        else:
+            self.state = BrainState.OFF
+            self.detail = "brain_disabled"
         self.pile = 0
-        self.detail = ""
         self.generation = 0
         self.is_running_lock = False
         self._last_logged_state = self.state
-        self.write_state("initialized")
+        self.write_state(self.detail)
 
     def sync_active(self) -> None:
         active = is_brain_active()
         with self.lock:
-            if not active and self.state != BrainState.OFF:
+            if not active:
+                if self.state != BrainState.OFF:
+                    self.state = BrainState.OFF
+                    self.pile = 0
+                    self.is_running_lock = False
+                    self.write_state("brain_disabled")
+            else:
+                loaded = is_brain_loaded()
+                if not loaded:
+                    if self.state not in (BrainState.THINKING, BrainState.RUNNING):
+                        if self.state != BrainState.ERROR or self.detail != "model_loading":
+                            self.state = BrainState.ERROR
+                            self.pile = 0
+                            self.write_state("model_loading", state_override=BrainState.ERROR)
+                elif self.state == BrainState.ERROR:
+                    try:
+                        if os.path.exists(BRAIN_STATE_FILE):
+                            with open(BRAIN_STATE_FILE, "r", encoding="utf-8") as file:
+                                data = json.load(file)
+                                if data.get("state") == BrainState.STANDBY:
+                                    self.state = BrainState.STANDBY
+                                    self.pile = 0
+                                    self.detail = "standby_ready"
+                    except Exception:
+                        pass
+                    if self.state == BrainState.ERROR and self.detail in ("model_loading", "brain_disabled", "brain_enabled", "initialized"):
+                        self.state = BrainState.STANDBY
+                        self.pile = 0
+                        self.write_state("standby_ready")
+                elif self.state == BrainState.OFF:
+                    self.state = BrainState.STANDBY
+                    self.pile = 0
+                    self.write_state("standby_ready")
+
+    def clear_error(self) -> None:
+        """Clears active error and resets state back to STANDBY (Light Gray)."""
+        with self.lock:
+            self.state = BrainState.STANDBY
+            self.pile = 0
+            self.is_running_lock = False
+            self.write_state("standby_ready", pile=0)
+            print("[brain] FSM 3 -> error cleared to STANDBY (Light Gray)", flush=True)
+            FSMLogManager.get_instance().log_fsm3_transition(
+                BrainState.ERROR,
+                BrainState.STANDBY,
+                detail="error_cleared_by_hover",
+            )
+
+    def set_active(self, active: bool) -> None:
+        set_brain_active(active)
+        with self.lock:
+            if active:
+                if not is_brain_loaded():
+                    self.state = BrainState.ERROR
+                    self.pile = 0
+                    self.write_state("model_loading", state_override=BrainState.ERROR)
+                else:
+                    self.state = BrainState.STANDBY
+                    self.pile = 0
+                    self.write_state("standby_ready")
+            else:
                 self.state = BrainState.OFF
                 self.pile = 0
                 self.is_running_lock = False
                 self.write_state("brain_disabled")
-            elif active and self.state == BrainState.OFF:
-                self.state = BrainState.STANDBY
-                self.pile = 0
-                self.write_state("brain_enabled")
-
-    def set_active(self, active: bool) -> None:
-        set_brain_active(active)
-        self.sync_active()
 
     def is_running_locked(self) -> bool:
         with self.lock:
@@ -2430,7 +2812,7 @@ class BrainFSM:
     def can_receive_chunk(self) -> bool:
         with self.lock:
             self.sync_active()
-            return self.state == BrainState.STANDBY and not self.is_running_lock
+            return self.state == BrainState.STANDBY and not self.is_running_lock and is_brain_loaded()
 
     def get_state_dict(self) -> dict[str, Any]:
         self.sync_active()
@@ -2515,10 +2897,17 @@ class BrainFSM:
 
     def _worker(self, chunk: str, generation: int, target_address: str | None, target_name: str, queue_manager: QueueManager) -> None:
         try:
-            action = ActionRouter.resolve_action(chunk)
+            action = BrainSemanticRouter.resolve(chunk)
         except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as error:
-            print(f"[brain] ActionRouter resolution error: {error}", flush=True)
-            self.trigger_error(detail=f"router_error:{str(error)[:25]}", generation=generation, queue_manager=queue_manager)
+            print(f"[brain] BrainSemanticRouter resolution error: {error}", flush=True)
+            self.trigger_error(detail=f"router_error: {str(error)[:30]}", generation=generation, queue_manager=queue_manager)
+            return
+
+        action_type = action.get("action", ActionType.NONE)
+        if action_type == ActionType.NONE:
+            err_label = action.get("label", "comando no reconocido")
+            print(f"[brain] Unrecognized command: {err_label}", flush=True)
+            self.trigger_error(detail=f"no reconocido: {chunk[:25]}", generation=generation, queue_manager=queue_manager)
             return
 
         with self.lock:
@@ -2534,24 +2923,32 @@ class BrainFSM:
                 detail=f"action_lockout_engaged:{action.get('action')}",
             )
 
+        execution_error: str | None = None
         try:
-            ActionRouter.execute_action(action, target_address, target_name)
-        except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:
+            SystemActionExecutor.execute(action, target_address, target_name)
+        except Exception as error:
+            execution_error = str(error)
             print(f"[brain] action execution error: {error}", flush=True)
         finally:
             with self.lock:
                 self.is_running_lock = False
                 self.pile = 0
-                self.state = BrainState.STANDBY
-                self.write_state("standby_ready", pile=0)
-                print("[brain] FSM 3 -> STANDBY (Light Gray)", flush=True)
                 FSMLogManager.get_instance().log_fsm1_transition(
                     "MIC_ON(LOCKOUT)",
                     "MIC_ON",
                     detail="action_lockout_released",
                 )
+                if execution_error:
+                    self.state = BrainState.ERROR
+                    self.write_state(detail=execution_error, pile=0)
+                    print(f"[brain] FSM 3 -> ERROR (Red) detail={execution_error}", flush=True)
+                    notify(f"⚠️ Brain Error: {execution_error}", "dialog-warning-symbolic")
+                else:
+                    self.state = BrainState.STANDBY
+                    self.write_state("standby_ready", pile=0)
+                    print("[brain] FSM 3 -> STANDBY (Light Gray)", flush=True)
 
-            if queue_manager.has_pending():
+            if not execution_error and queue_manager.has_pending():
                 print("[brain] draining queued chunks accumulated during execution", flush=True)
                 self.dispatch_from_queue(queue_manager)
 
@@ -2565,20 +2962,7 @@ class BrainFSM:
             self.write_state(detail, pile=0)
             print(f"[brain] FSM 3 -> ERROR (Red) detail={detail}", flush=True)
 
-        notify(f"⚠️ Brain: {detail} (recovering in 3s)", "dialog-warning-symbolic")
-
-        def recover():
-            time.sleep(3.0)
-            with self.lock:
-                if self.state == BrainState.ERROR:
-                    self.pile = 0
-                    self.state = BrainState.STANDBY
-                    self.write_state("recovered_ready", pile=0)
-                    print("[brain] FSM 3 -> auto-recovered to STANDBY", flush=True)
-            if queue_manager and queue_manager.has_pending():
-                self.dispatch_from_queue(queue_manager)
-
-        threading.Thread(target=recover, daemon=True).start()
+        notify(f"⚠️ Brain Error: {detail}", "dialog-warning-symbolic")
 
 
 def dispatch_chunk_to_brain_async(
@@ -2683,10 +3067,24 @@ def dispatch_to_stream(
     target_name: str,
     verbal_enter: bool = False,
 ) -> bool:
-    """Stream mode (Brain OFF): writes directly to the focused target window via wtype."""
+    """Stream mode (Brain OFF): executes fast regex macros or types text into the active focused window.
+
+    Guarantees strict exclusion: if Brain is enabled, streaming dispatch is prohibited.
+    """
+    if is_brain_active():
+        return False
+
     clean_text = text.strip()
     if not clean_text and not verbal_enter:
         return False
+
+    fast_action = FastRegexRouter.resolve(clean_text)
+    if fast_action:
+        enter(PHASE_WRITING, detail=f"fast_cmd:{fast_action.get('label', '')[:25]}")
+        SystemActionExecutor.execute(fast_action, target_address, target_name)
+        enter(PHASE_REC, detail="standby_listening")
+        return True
+
     live_address, live_name = get_active_window_info()
     address = live_address or target_address
     name = live_name or target_name
@@ -2726,7 +3124,10 @@ def dispatch_to_thinking(
         else:
             brain.sync_queue_status(queue_manager.pile)
             print(f"[queue_manager] words buffered in queue (pile={queue_manager.pile}): Brain busy", flush=True)
+            enter(PHASE_REC, detail="standby_listening")
             return True
+    elif is_space:
+        enter(PHASE_REC, detail="standby_listening")
     return False
 
 
@@ -2775,7 +3176,7 @@ def cmd_start() -> None:
     FSMLogManager.get_instance().log_fsm1_transition("MIC_OFF", "MIC_ON", detail=f"worker_spawned pid={process.pid}")
     configuration = load_config()
     notify(
-        f"🎙️ Continuous dictation ({configuration['silence_sec']:.1f}s silence auto-commits, Super+D stops)",
+        f"🎙️ Continuous dictation ({configuration['silence_sec']:.1f}s silence auto-commits, Super+Ctrl+D stops)",
         "media-record-symbolic",
         timeout_ms="2500",
     )
@@ -2786,61 +3187,44 @@ def cmd_stop(force: bool = False) -> None:
     phase = snapshot.get("phase") or PHASE_IDLE
     pid = read_pid()
 
+    write_mode("off")
+
     if pid is None:
         if phase in PHASES_CAN_STOP or phase in PHASES_BUSY:
             clear_to_idle(detail="stop_no_pid")
         FSMLogManager.get_instance().log_fsm1_transition("MIC_ON", "MIC_OFF", detail="stop_no_pid")
         return
 
-    if phase in PHASES_BUSY:
-        reason = "force" if force else "toggle"
-        FSMLogManager.get_instance().log_fsm1_transition("MIC_ON", "MIC_OFF", detail=f"stop_requested reason={reason}")
-        try:
-            with open(STOP_FILE, "w", encoding="utf-8") as file:
-                file.write(reason)
-        except OSError:
-            pass
-        try:
-            os.kill(pid, signal.SIGUSR1)
-        except OSError:
-            pass
-        print(f"[dictate.py] stop deferred (phase={phase} reason={reason})", flush=True)
-        return
-
-    if phase not in PHASES_CAN_STOP and not force:
-        if phase in (PHASE_OK, PHASE_ERR):
-            reason = "force" if force else "toggle"
-            try:
-                with open(STOP_FILE, "w", encoding="utf-8") as file:
-                    file.write(reason)
-            except OSError:
-                pass
-            try:
-                os.kill(pid, signal.SIGUSR1)
-            except OSError:
-                pass
-            print(f"[dictate.py] stop during flash phase={phase}", flush=True)
-            return
-        print(f"[dictate.py] stop ignored (phase={phase})", flush=True)
-        return
-
-    if not force:
-        started_at = snapshot.get("started_at")
-        if isinstance(started_at, (int, float)) and time.time() - started_at < BOUNCE_GUARD_SECONDS:
-            print("[dictate.py] stop ignored (bounce guard)", flush=True)
-            return
-
     reason = "force" if force else "toggle"
+    FSMLogManager.get_instance().log_fsm1_transition("MIC_ON", "MIC_OFF", detail=f"stop_requested reason={reason} pid={pid}")
+
     try:
         with open(STOP_FILE, "w", encoding="utf-8") as file:
             file.write(reason)
     except OSError:
         pass
+
     try:
-        os.kill(pid, signal.SIGUSR1)
+        os.kill(pid, signal.SIGTERM)
     except OSError:
         pass
-    enter(PHASE_STOPPING, stop_reason=reason, detail="stop_signaled")
+
+    deadline = time.time() + 0.8
+    while time.time() < deadline:
+        if not is_pid_alive(pid):
+            break
+        time.sleep(0.04)
+
+    if is_pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        time.sleep(0.05)
+
+    cleanup_runtime_files(PID_FILE, STOP_FILE)
+    clear_to_idle(detail=f"stopped_{reason}")
+    print(f"[dictate.py] worker pid={pid} stopped and unloaded (phase was {phase})", flush=True)
 
 
 def cmd_cycle() -> None:
@@ -2860,8 +3244,8 @@ def cmd_cycle() -> None:
         return
 
     write_mode("off")
-    cmd_stop(force=phase not in PHASES_CAN_STOP)
-    notify("⏹ Dictation stopped", "process-stop-symbolic")
+    cmd_stop(force=True)
+    notify("⏹ Dictation stopped (modelo descargado)", "process-stop-symbolic")
 
 
 def cmd_toggle() -> None:
@@ -3047,6 +3431,7 @@ def cmd_worker() -> None:
                         speech_accumulated_seconds = 0.0
                         last_speech_monotonic = None if is_silence else time.monotonic()
 
+                        recognized_text = ""
                         if audio_float32.size >= int(SAMPLE_RATE * 0.10):
                             recognized_text = transcribe_audio_array(
                                 audio_float32,
@@ -3054,17 +3439,20 @@ def cmd_worker() -> None:
                                 without_timestamps=True,
                                 is_partial_slice=not is_silence,
                             )
-                            if recognized_text and not is_hallucination_solo(recognized_text):
+                        if recognized_text and not is_hallucination_solo(recognized_text):
+                            live_address, live_name = get_active_window_info()
+                            current_address = live_address or target_address
+                            current_name = live_name or target_name
+
+                            if not brain_active:
                                 clean_text, verbal_enter = extract_verbal_enter(recognized_text)
                                 if not verbal_enter:
                                     clean_text = clean_text or recognized_text
 
-                                # When continuing an ongoing utterance, prevent mid-sentence capitalization
                                 if auto_lowercase and not prev_chunk_ended_sentence and clean_text:
                                     if clean_text[0].isupper() and not (len(clean_text) > 1 and clean_text[1].isupper()):
                                         clean_text = clean_text[0].lower() + clean_text[1:]
 
-                                # Strip trailing dots from intermediate cuts during continuous speech
                                 if strip_intermediate_dots and not is_silence:
                                     clean_text = re.sub(r"[\s.,;:]+$", "", clean_text)
 
@@ -3073,27 +3461,38 @@ def cmd_worker() -> None:
                                 elif verbal_enter:
                                     prev_chunk_ended_sentence = True
 
+                                dispatch_to_stream(
+                                    clean_text,
+                                    current_address,
+                                    current_name,
+                                    verbal_enter=verbal_enter,
+                                )
+                            else:
+                                dispatch_to_thinking(
+                                    recognized_text.strip(),
+                                    current_address,
+                                    current_name,
+                                    is_space=is_silence,
+                                )
+                        elif is_silence:
+                            if brain_active and QueueManager.get_instance().has_pending():
                                 live_address, live_name = get_active_window_info()
-                                current_address = live_address or target_address
-                                current_name = live_name or target_name
-
-                                if not brain_active:
-                                    dispatch_to_stream(
-                                        clean_text,
-                                        current_address,
-                                        current_name,
-                                        verbal_enter=verbal_enter,
-                                    )
-                                else:
-                                    dispatch_to_thinking(
-                                        clean_text,
-                                        current_address,
-                                        current_name,
-                                        is_space=is_silence,
-                                    )
+                                dispatch_to_thinking(
+                                    "",
+                                    live_address or target_address,
+                                    live_name or target_name,
+                                    is_space=True,
+                                )
+                            else:
+                                enter(PHASE_REC, detail="standby_listening")
 
                 time.sleep(POLL_INTERVAL_SECONDS)
     finally:
+        if backend is not None:
+            try:
+                backend.unload()
+            except Exception as unload_error:
+                print(f"[dictate.py] worker unload error: {unload_error}", flush=True)
         cleanup_runtime_files(PID_FILE, STOP_FILE)
         write_mode("off")
         clear_to_idle(detail=f"stop_{stop_reason}")
@@ -3273,6 +3672,10 @@ def cmd_backend(args: list[str]) -> None:
     subcommand = (args[0] if args else "status").lower()
     router = STTRouter.get_instance()
 
+    if subcommand in ("json", "j"):
+        print(json.dumps(router.get_status_dict(), ensure_ascii=False, indent=2))
+        return
+
     if subcommand in ("status", "st"):
         status = router.get_status_dict()
         telemetry = status["vram_telemetry"]
@@ -3287,13 +3690,7 @@ def cmd_backend(args: list[str]) -> None:
         else:
             print("GPU Memory: Telemetry unavailable (no nvidia-smi)")
 
-        trigger_mb = status["occupied_trigger_mb"]
-        state_str = "OCCUPIED (> trigger)" if status["is_occupied"] else "AVAILABLE (<= trigger)"
-        print("\nVRAM Occupied Trigger:")
-        print(f"  Threshold:     {trigger_mb} MiB ({trigger_mb / 1024.0:.2f} GiB)")
-        print(f"  Current State: {state_str}")
-
-        print("\nRouting Policy:")
+        print("\nRouting Policy (GPU mandatory — no CPU fallback):")
         print(f"  Configured Mode: {status['backend_mode']}")
         print(f"  Preferred GPU:   {status['preferred_gpu']}")
 
@@ -3310,28 +3707,23 @@ def cmd_backend(args: list[str]) -> None:
 
     elif subcommand in ("set", "mode"):
         if len(args) < 2:
-            print(f"usage: dictate backend set <auto|whisper-cuda|qwen3-asr> (current: {router.backend_mode})", file=sys.stderr)
+            print(f"usage: dictate backend set <auto|whisper-cuda|distil-whisper|qwen3-asr> (current: {router.backend_mode})", file=sys.stderr)
             sys.exit(2)
         target_mode = args[1].lower()
         try:
+            pid = read_pid()
+            was_running = pid is not None and is_pid_alive(pid)
             router.set_backend_mode(target_mode)
-            print(f"✅ Backend mode set to: {router.backend_mode}")
-            notify(f"⚡ STT backend mode: {router.backend_mode}", "preferences-system-symbolic")
+            if was_running:
+                cmd_stop(force=True)
+                cmd_start()
+                print(f"✅ Backend mode set to: {router.backend_mode} (restarted)")
+                notify(f"⚡ STT modelo cambiado: {router.backend_mode} (reiniciado)", "preferences-system-symbolic")
+            else:
+                print(f"✅ Backend mode set to: {router.backend_mode}")
+                notify(f"⚡ STT backend mode: {router.backend_mode}", "preferences-system-symbolic")
         except ValueError as err:
             print(f"error: {err}", file=sys.stderr)
-            sys.exit(2)
-
-    elif subcommand in ("trigger", "threshold"):
-        if len(args) < 2:
-            print(f"vram_occupied_trigger_mb: {router.occupied_trigger_mb} MiB ({router.occupied_trigger_mb / 1024.0:.2f} GiB)")
-            return
-        try:
-            new_val = int(args[1])
-            router.set_occupied_trigger_mb(new_val)
-            print(f"✅ VRAM occupied trigger set to: {new_val} MiB ({new_val / 1024.0:.2f} GiB)")
-            notify(f"⚡ STT trigger: {new_val} MiB", "preferences-system-symbolic")
-        except ValueError as err:
-            print(f"error: invalid trigger value {args[1]!r}: {err}", file=sys.stderr)
             sys.exit(2)
 
     elif subcommand in ("test", "evaluate"):
@@ -3339,7 +3731,7 @@ def cmd_backend(args: list[str]) -> None:
         backend, reason = router.decide_backend(telemetry)
         print("[TEST EVALUATION]")
         if telemetry:
-            print(f"VRAM: used={telemetry.used_mb}MiB, free={telemetry.free_mb}MiB, trigger={router.occupied_trigger_mb}MiB")
+            print(f"VRAM: used={telemetry.used_mb}MiB, free={telemetry.free_mb}MiB (telemetry only)")
         print(f"Backend Selection -> {backend.name} ({backend.device} {backend.compute_type})")
         print(f"Reason: {reason}")
 
@@ -3350,7 +3742,7 @@ def cmd_backend(args: list[str]) -> None:
             print(f"- {name:<14} (device={info['device']}, vram={info['vram_mb']}MiB): {avail}")
 
     else:
-        print(f"usage: dictate backend [status|set|trigger|test|list] (got {subcommand!r})", file=sys.stderr)
+        print(f"usage: dictate backend [status|set|test|list] (got {subcommand!r})", file=sys.stderr)
         sys.exit(2)
 
 
@@ -3443,22 +3835,41 @@ def main() -> None:
             active = not is_brain_active()
             brain.set_active(active)
             if active:
-                notify("🧠 Cognitive Brain active: listening for dictation chunks", "process-working-symbolic")
+                if not is_brain_loaded():
+                    notify("🧠 Cognitive Brain: cargando modelo en VRAM... (rojo)", "process-working-symbolic")
+                    ready = await_brain_model_ready(brain, timeout_sec=90.0)
+                    if ready:
+                        notify("🧠 Cognitive Brain activo: listo para dictar", "emblem-ok-symbolic")
+                    else:
+                        notify("🧠 Cognitive Brain: timeout cargando modelo", "dialog-warning-symbolic")
+                else:
+                    notify("🧠 Cognitive Brain activo: listo para dictar", "process-working-symbolic")
             else:
-                notify("🧠 Cognitive Brain deactivated", "process-stop-symbolic")
+                notify("🧠 Cognitive Brain desactivado (modelo descargado)", "process-stop-symbolic")
             print(f"brain_active: {active}")
         elif subcommand in ("on", "1", "enable", "start"):
             brain.set_active(True)
-            notify("🧠 Cognitive Brain active: listening for dictation chunks", "process-working-symbolic")
+            if not is_brain_loaded():
+                notify("🧠 Cognitive Brain: cargando modelo en VRAM... (rojo)", "process-working-symbolic")
+                ready = await_brain_model_ready(brain, timeout_sec=90.0)
+                if ready:
+                    notify("🧠 Cognitive Brain activo: listo para dictar", "emblem-ok-symbolic")
+                else:
+                    notify("🧠 Cognitive Brain: timeout cargando modelo", "dialog-warning-symbolic")
+            else:
+                notify("🧠 Cognitive Brain activo: listo para dictar", "process-working-symbolic")
             print("brain_active: True")
         elif subcommand in ("off", "0", "disable", "stop"):
             brain.set_active(False)
-            notify("🧠 Cognitive Brain deactivated", "process-stop-symbolic")
+            notify("🧠 Cognitive Brain desactivado (modelo descargado)", "process-stop-symbolic")
             print("brain_active: False")
         elif subcommand in ("status", "st"):
             print(json.dumps(brain.get_state_dict(), ensure_ascii=False, indent=2))
+        elif subcommand in ("clear-error", "clear", "reset"):
+            brain.clear_error()
+            print("brain_error: cleared to standby")
         else:
-            print(f"usage: dictate brain [toggle|on|off|status] (got {subcommand!r})", file=sys.stderr)
+            print(f"usage: dictate brain [toggle|on|off|status|clear-error] (got {subcommand!r})", file=sys.stderr)
             sys.exit(2)
         return
 
