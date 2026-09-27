@@ -44,6 +44,8 @@ TRIXIE_PKGS=(
   libgtk-3-dev libgtk-layer-shell-dev libgtk-4-dev libgtk4-layer-shell-dev
   libwireplumber-0.5-dev libjson-glib-dev wayland-protocols
   golang-go gjs npm
+  # hyprland (bpo) pulls libxkbcommon0 1.13 from backports → -dev must match
+  libxkbcommon-dev/trixie-backports
 )
 
 # Stremio: no official trixie .deb (official Linux shell v1.2.0 = flatpak only).
