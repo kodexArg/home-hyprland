@@ -3,7 +3,8 @@
 #
 # Topology (this host):
 #   AOC landscape  → NVIDIA TU106  — only output we may DPMS-on
-#   ASUS portrait  → amdgpu Renoir — ANY dpms (on or off) can kill CRTC
+#   ASUS landscape (was portrait) → amdgpu Renoir — ANY dpms on/off can kill CRTC
+# Dual landscape layout SSOT: ~/.config/hypr/hyprland.lua (transform 0, ASUS -1920x0, AOC 0x0)
 # Connector names move when GPU probe order changes. Resolve by EDID model.
 #
 # HARD RULES (verified live 2026-07-27):
@@ -37,8 +38,10 @@ PORTRAIT_SYS="$(sysfs_for_model VA27EHF || true)"
 LANDSCAPE_SYS="$(sysfs_for_model G2790G4 || true)"
 PORTRAIT_SYS="${PORTRAIT_SYS:-/sys/class/drm/card1-HDMI-A-2}"
 LANDSCAPE_SYS="${LANDSCAPE_SYS:-/sys/class/drm/card0-HDMI-A-1}"
-TRANSFORM=1
-MODE="1920x1080@60"
+TRANSFORM=0
+MODE_ASUS="1920x1080@100.05"
+MODE_AOC="1920x1080@99.93"
+MODE="1920x1080@100.05"  # legacy alias
 GAP_SEC=0.55
 WALLPAPER=/home/kodex/home-hyprland/wallpapers/disco-elysium-thought-cabinet-art-cropped.avif
 REASON="${1:-manual}"
@@ -200,17 +203,18 @@ is_dense_phase() {
 }
 
 reapply_layout() {
-  # Portrait first (the fragile one), then landscape. Never batch.
+  # ASUS (amdgpu) first — fragile CRTC — then AOC. Never batch.
+  # Dual landscape: match hyprland.lua. Dense = ASUS scale 1.5, x≈-1280.
   if is_dense_phase; then
-    log "reapply dense"
-    apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE}\", position = \"-720x0\", scale = 1.5, transform = ${TRANSFORM} })" || return 1
-    apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE}\", position = \"0x100\", scale = 1, transform = 0 })" || return 1
+    log "reapply dense (dual landscape)"
+    apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE_ASUS}\", position = \"-1280x0\", scale = 1.5, transform = ${TRANSFORM} })" || return 1
+    apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE_AOC}\", position = \"0x0\", scale = 1, transform = 0 })" || return 1
   else
-    log "reapply roomy"
-    apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE}\", position = \"-1080x0\", scale = 1, transform = ${TRANSFORM} })" || return 1
-    apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE}\", position = \"0x420\", scale = 1, transform = 0 })" || return 1
+    log "reapply roomy (dual landscape)"
+    apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE_ASUS}\", position = \"-1920x0\", scale = 1, transform = ${TRANSFORM} })" || return 1
+    apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE_AOC}\", position = \"0x0\", scale = 1, transform = 0 })" || return 1
   fi
-  # Modeset can leave landscape DPMS-off on NVIDIA — wake it only.
+  # Modeset can leave AOC DPMS-off on NVIDIA — wake it only.
   wake_landscape
   return 0
 }
@@ -251,9 +255,18 @@ ensure_ags() {
 }
 
 portrait_needs_layout() {
+  # "portrait" name = ASUS panel role; expected dual-landscape geometry.
   local w h x y s t dis
   read -r w h x y s t dis <<<"$(hypr_portrait_json)"
-  [[ "$t" -ne "$TRANSFORM" || "$w" -eq 0 || "$h" -eq 0 ]]
+  [[ "$w" -eq 0 || "$h" -eq 0 ]] && return 0
+  [[ "$t" -ne "$TRANSFORM" ]] && return 0
+  # roomy: x near -1920; dense: x near -1280
+  if is_dense_phase; then
+    [[ "$x" -gt -1100 || "$x" -lt -1500 ]] && return 0
+  else
+    [[ "$x" -gt -1700 || "$x" -lt -2100 ]] && return 0
+  fi
+  return 1
 }
 
 # ─── main ────────────────────────────────────────────────────────────────────

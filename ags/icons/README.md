@@ -22,3 +22,6 @@ Adwaita symbolic shapes, fill `#2e3436` → `#F3EEE4`. Loaded via `image file=`.
 | brain-load.svg | brain amber (loading / VRAM headroom) | same path → #e6b84d |
 | brain-on.svg | brain orange (live, VRAM tight) | same path → #ff8c42 |
 | brain-unload.svg | brain red (unload / failed) | same path → #c45c4a |
+| resource-cpu.svg | CPU chip (RamTrack row) | Lucide cpu → white thin stroke #faf8f4 |
+| resource-ram.svg | RAM stick (RamTrack row) | Lucide memory-stick → white thin stroke #faf8f4 |
+| resource-vram.svg | GPU card (RamTrack row) | Lucide gpu → white thin stroke #faf8f4 |

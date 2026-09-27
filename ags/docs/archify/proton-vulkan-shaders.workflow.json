@@ -1,0 +1,208 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Por qué Proton muestra «Vulkan shaders»",
+    "quality_profile": "showcase",
+    "output": "docs/archify/proton-vulkan-shaders.html"
+  },
+  "lanes": [
+    {
+      "id": "capa",
+      "label": "Juego"
+    },
+    {
+      "id": "api",
+      "label": "Vulkan"
+    },
+    {
+      "id": "silicio",
+      "label": "GPU"
+    }
+  ],
+  "phases": [
+    {
+      "id": "juego",
+      "label": "Juego",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "traduccion",
+      "label": "Traducción",
+      "fromCol": 1,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "nativo",
+      "label": "Nativo",
+      "fromCol": 3,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "juego",
+    "proton",
+    "vkd3d",
+    "vulkan",
+    "driver",
+    "gpu",
+    "frames"
+  ],
+  "nodes": [
+    {
+      "id": "juego",
+      "lane": "capa",
+      "col": 0,
+      "type": "frontend",
+      "label": "Juego",
+      "sublabel": "Hell Let Loose · DX12",
+      "tag": "-dx12",
+      "width": 140
+    },
+    {
+      "id": "proton",
+      "lane": "capa",
+      "col": 1,
+      "type": "backend",
+      "label": "Proton / Wine",
+      "sublabel": "GE-Proton11-5",
+      "width": 140
+    },
+    {
+      "id": "vkd3d",
+      "lane": "capa",
+      "col": 2,
+      "type": "backend",
+      "label": "VKD3D-Proton",
+      "sublabel": "DX12 → Vulkan",
+      "width": 140
+    },
+    {
+      "id": "vulkan",
+      "lane": "api",
+      "col": 3,
+      "type": "messagebus",
+      "label": "API Vulkan",
+      "sublabel": "~1.4.351",
+      "width": 132
+    },
+    {
+      "id": "cache",
+      "lane": "silicio",
+      "col": 3,
+      "type": "database",
+      "label": "Caché shaders",
+      "sublabel": "Steam · JIT 1ª vez",
+      "width": 140
+    },
+    {
+      "id": "driver",
+      "lane": "silicio",
+      "col": 4,
+      "type": "backend",
+      "label": "Driver NVIDIA",
+      "sublabel": "615.71.09",
+      "width": 132
+    },
+    {
+      "id": "gpu",
+      "lane": "silicio",
+      "col": 5,
+      "type": "external",
+      "label": "GPU",
+      "sublabel": "RTX 2060 SUPER",
+      "width": 140
+    },
+    {
+      "id": "frames",
+      "lane": "api",
+      "col": 5,
+      "type": "frontend",
+      "label": "Fotogramas",
+      "sublabel": "salida",
+      "width": 120
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-juego-proton",
+      "from": "juego",
+      "to": "proton",
+      "label": "DX12"
+    },
+    {
+      "id": "e-proton-vkd3d",
+      "from": "proton",
+      "to": "vkd3d"
+    },
+    {
+      "id": "e-vkd3d-vulkan",
+      "from": "vkd3d",
+      "to": "vulkan",
+      "label": "DX12→VK",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-vulkan-driver",
+      "from": "vulkan",
+      "to": "driver",
+      "label": "draw"
+    },
+    {
+      "id": "e-driver-gpu",
+      "from": "driver",
+      "to": "gpu"
+    },
+    {
+      "id": "e-gpu-frames",
+      "from": "gpu",
+      "to": "frames",
+      "label": "imagen",
+      "role": "return"
+    },
+    {
+      "id": "e-vulkan-cache",
+      "from": "vulkan",
+      "to": "cache",
+      "label": "miss · JIT",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-cache-driver",
+      "from": "cache",
+      "to": "driver",
+      "label": "hit",
+      "variant": "dashed",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Por qué «Vulkan shaders»",
+      "items": [
+        "Steam cuenta pipelines Vulkan: VKD3D-Proton traduce el DX12 del juego a la API Vulkan",
+        "Esta máquina lanza Hell Let Loose con GE-Proton11-5 y -dx12"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Caché JIT",
+      "items": [
+        "La 1ª vez, o si falta caché, el driver compila pipelines Vulkan",
+        "Steam shader cache guarda ese resultado para las siguientes partidas"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Si fuera DX11",
+      "items": [
+        "Un título DX11 pasaría por DXVK, no por VKD3D-Proton",
+        "HLL aquí va DX12 → VKD3D → Vulkan"
+      ]
+    }
+  ]
+}

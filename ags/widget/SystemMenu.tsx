@@ -19,6 +19,13 @@ import {
   warpTip,
   toggleWarp,
 } from "./warp"
+import {
+  bluetoothIconOn,
+  bluetoothLabel,
+  bluetoothRowClass,
+  bluetoothTip,
+  toggleBluetooth,
+} from "./bluetooth"
 
 import {
   castMic,
@@ -48,6 +55,8 @@ const ICON_VPN = `${ICON_DIR}/vpn.svg`
 const ICON_VPN_OFF = `${ICON_DIR}/vpn-off.svg`
 const ICON_WARP = `${ICON_DIR}/warp.svg`
 const ICON_WARP_OFF = `${ICON_DIR}/warp-off.svg`
+const ICON_BLUETOOTH = `${ICON_DIR}/bluetooth.svg`
+const ICON_BLUETOOTH_OFF = `${ICON_DIR}/bluetooth-off.svg`
 const ICON_CAST = `${ICON_DIR}/cast.svg`
 const ICON_TARGET = `${ICON_DIR}/target-set.svg`
 const ICON_STREAM = `${ICON_DIR}/stream-signal.svg`
@@ -189,6 +198,22 @@ function WarpRow() {
       tip={warpTip}
       rowClass={warpRowClass}
       onClicked={() => toggleWarp()}
+    />
+  )
+}
+
+function BluetoothRow() {
+  const iconFile = createComputed(() =>
+    bluetoothIconOn() ? ICON_BLUETOOTH : ICON_BLUETOOTH_OFF,
+  )
+
+  return (
+    <MenuRow
+      iconFile={iconFile}
+      label={bluetoothLabel}
+      tip={bluetoothTip}
+      rowClass={bluetoothRowClass}
+      onClicked={() => toggleBluetooth()}
     />
   )
 }
@@ -563,13 +588,14 @@ function MenuList() {
         class="SystemMenu-status"
         label="SYSTEM"
         xalign={0}
-        tooltipText={`${L2TP_CONN} · WARP · Cast · Logs · Restart · Power off · outside/Esc closes`}
+        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Restart · Power off · outside/Esc closes`}
       />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 
       <VpnRow />
       <WarpRow />
+      <BluetoothRow />
       <CastRow />
       <LogsRow />
 

@@ -850,6 +850,32 @@ function readBrainState(): BrainSnapshot {
   return { state: readBrainActive() ? "standby" : "off", pile: 0 }
 }
 
+
+/** If API is ready but JSON stuck on model_loading/error, promote to standby (orphan CLI exit). */
+function healStaleModelLoading(): void {
+  try {
+    if (!readBrainActive()) return
+    if (!probeApiReady()) return
+    const snap = readBrainState()
+    if (snap.state !== "error") return
+    const detail = snap.detail || ""
+    if (detail && detail !== "model_loading") return
+    const payload = JSON.stringify({
+      state: "standby",
+      pile: 0,
+      detail: "standby_ready",
+      timestamp: Date.now() / 1000,
+    })
+    Gio.File.new_for_path(BRAIN_STATE_FILE).replace_contents(
+      new TextEncoder().encode(payload),
+      null,
+      false,
+      Gio.FileCreateFlags.REPLACE_DESTINATION,
+      null,
+    )
+  } catch {}
+}
+
 export default function LocalLlm({
   gdkmonitor,
 }: {
@@ -862,7 +888,10 @@ export default function LocalLlm({
   const brainStatePoll = createPoll(
     { state: "off", pile: 0 } as BrainSnapshot,
     500,
-    () => readBrainState(),
+    () => {
+      healStaleModelLoading()
+      return readBrainState()
+    },
   )
 
   const tone = createComputed((): BrainTone => {
@@ -877,6 +906,10 @@ export default function LocalLlm({
     }
     const bs = brainStatePoll()
     const st = bs.state
+    // Stale model_loading after API ready → standby (heal also rewrites JSON)
+    if (st === "error" && (!bs.detail || bs.detail === "model_loading")) {
+      return "standby"
+    }
     if (st === "thinking" || st === "queued" || st === "running" || st === "error") {
       return st
     }

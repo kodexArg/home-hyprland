@@ -16,6 +16,8 @@ import {
 } from "./widget/cluster-menu"
 import { getRamStatus } from "./widget/ram"
 import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
+import { refreshCredits, openRouterSnap } from "./widget/openrouter"
+import { refreshCursorUsage, cursorUsageSnap } from "./widget/cursor"
 import GLib from "gi://GLib"
 
 const BAR_MODEL = "VA27EHF"
@@ -41,27 +43,28 @@ function isBarMonitor(mon: {
 }
 
 function trySpawnBar(reason: string) {
-  if (spawnedFor && !app.get_window("bar")) {
-    spawnedFor = null
-  }
-
+  // house default: only ASUS VA27EHF (left landscape). No bar on AOC.
+  if (spawnedFor) return
   for (const mon of app.get_monitors()) {
     if (!isBarMonitor(mon)) continue
-    const c = connectorOf(mon) || modelOf(mon) || "asus"
-    if (spawnedFor === c && app.get_window("bar")) return
     Bar(mon)
-    spawnedFor = c
-    printerr(`ags: bar on ${c} model=${modelOf(mon)} (${reason})`)
+    spawnedFor = connectorOf(mon) || BAR_MODEL
+    printerr(`ags: bar on ${spawnedFor} model=${modelOf(mon)} (${reason})`)
     return
   }
   printerr(
-    `ags: no bar panel ${BAR_MODEL} yet (${reason}); monitors=` +
+    `ags: no bar monitor yet (${reason}); want model=${BAR_MODEL}; monitors=` +
       app.get_monitors().map((m) => `${connectorOf(m) || "?"}:${modelOf(m) || "?"}`).join(","),
   )
 }
 
+function sanitizeCss(input: unknown): string {
+  const raw = typeof input === "string" ? input : (input as { default?: string })?.default ?? ""
+  return raw.replace(/@charset[^;]*;/gi, "").replace(/@use[^;]*;/gi, "").trim()
+}
+
 app.start({
-  css: style,
+  css: sanitizeCss(style),
   main() {
     trySpawnBar("main")
 
@@ -132,6 +135,26 @@ app.start({
     }
     if (cmd === "warp-status") {
       res(`warp: phase=${getWarpPhase()} active=${getWarpActive()}`)
+      return
+    }
+    if (cmd === "openrouter" || cmd === "credits" || cmd === "openrouter-status") {
+      const s = openRouterSnap()
+      res(JSON.stringify(s))
+      return
+    }
+    if (cmd === "openrouter-refresh" || cmd === "credits-refresh") {
+      refreshCredits()
+      res("refreshing openrouter credits...")
+      return
+    }
+    if (cmd === "cursor" || cmd === "cursor-usage" || cmd === "cursor-status") {
+      const s = cursorUsageSnap()
+      res(JSON.stringify(s))
+      return
+    }
+    if (cmd === "cursor-refresh") {
+      refreshCursorUsage()
+      res("refreshing cursor usage...")
       return
     }
     res(`unknown request: ${argv.join(" ")}`)

@@ -20,3 +20,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# host runtime state written by hypr-monitor-heal / ags
+ags/.monitor-left-right.json*

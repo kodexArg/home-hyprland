@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# hypr-bluetooth-toggle: Gestor y toggle ordenado de Bluetooth integrado con Hyprland / AGS / notify-send
+set -euo pipefail
+
+LOCKFILE="/tmp/hypr-bluetooth-toggle.lock"
+exec 200>"$LOCKFILE"
+flock -n 200 || {
+    echo "hypr-bluetooth-toggle: ya se encuentra una instancia en ejecución." >&2
+    exit 0
+}
+
+is_bt_powered() {
+    if bluetoothctl show 2>/dev/null | grep -q "Powered: yes"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+get_connected_devices() {
+    bluetoothctl devices Connected 2>/dev/null | sed 's/^Device [^ ]* //' || true
+}
+
+get_paired_devices() {
+    bluetoothctl devices Paired 2>/dev/null | awk '{print $2}' || true
+}
+
+turn_off() {
+    bluetoothctl power off >/dev/null 2>&1 || true
+    notify-send -u normal -t 3000 -i bluetooth-disabled "Bluetooth" "DESACTIVADO\nControlador apagado" 2>/dev/null || true
+    echo "bluetooth: off"
+}
+
+turn_on() {
+    bluetoothctl power on >/dev/null 2>&1 || true
+    
+    # Intentar autoconexión en background a dispositivos emparejados de confianza (ej. auriculares)
+    local paired
+    paired=$(get_paired_devices)
+    if [ -n "$paired" ]; then
+        (
+            exec 200>&-
+            sleep 1
+            for mac in $paired; do
+                bluetoothctl connect "$mac" >/dev/null 2>&1 || true
+            done
+        ) &
+    fi
+
+    notify-send -u normal -t 3000 -i bluetooth "Bluetooth" "ACTIVADO\nControlador encendido" 2>/dev/null || true
+    echo "bluetooth: on"
+}
+
+connect_paired() {
+    if ! is_bt_powered; then
+        turn_on
+    fi
+    local paired
+    paired=$(get_paired_devices)
+    if [ -z "$paired" ]; then
+        notify-send -u normal -t 3000 -i dialog-warning "Bluetooth" "Sin dispositivos emparejados" 2>/dev/null || true
+        return
+    fi
+    for mac in $paired; do
+        bluetoothctl connect "$mac" >/dev/null 2>&1 || true
+    done
+    local connected
+    connected=$(get_connected_devices)
+    if [ -n "$connected" ]; then
+        notify-send -u normal -t 3500 -i audio-headphones "Bluetooth" "CONECTADO\n$connected" 2>/dev/null || true
+    else
+        notify-send -u normal -t 3000 -i bluetooth "Bluetooth" "Buscando conexión con dispositivos vinculados..." 2>/dev/null || true
+    fi
+}
+
+action="${1:-toggle}"
+
+case "$action" in
+    on)
+        turn_on
+        ;;
+    off)
+        turn_off
+        ;;
+    connect)
+        connect_paired
+        ;;
+    status)
+        if is_bt_powered; then
+            connected=$(get_connected_devices)
+            if [ -n "$connected" ]; then
+                echo "on (connected: $connected)"
+            else
+                echo "on (idle)"
+            fi
+        else
+            echo "off"
+        fi
+        ;;
+    toggle)
+        if is_bt_powered; then
+            turn_off
+        else
+            turn_on
+        fi
+        ;;
+    *)
+        echo "Uso: $0 {toggle|on|off|connect|status}" >&2
+        exit 1
+        ;;
+esac

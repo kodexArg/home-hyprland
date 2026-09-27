@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Toggle HDMI-A-2 (portrait ASUS) scale 1.0 (default/roomy) ↔ 1.5 (dense).
+# Toggle ASUS (left) scale 1.0 (roomy) ↔ 1.5 (dense) in dual-landscape layout.
 #
 # Default session layout is roomy (scale 1) in hyprland.lua.
 # Super+Ctrl+Z flips to dense 1.5 and back.
@@ -16,10 +16,12 @@ set -euo pipefail
 
 PORTRAIT="$(/home/kodex/.local/bin/hypr-output portrait)"
 LANDSCAPE="$(/home/kodex/.local/bin/hypr-output landscape)"
-TRANSFORM=1
+TRANSFORM=0
 # NVIDIA + dual HDMI: need real settle between modesets
 GAP_SEC=0.55
-MODE="1920x1080@60"
+# Per-panel ~100Hz (ASUS max 100.05; AOC nearest 99.93). Was @60 and reset refresh on every zoom.
+MODE_PORTRAIT="1920x1080@100.05"
+MODE_LANDSCAPE="1920x1080@99.93"
 # Must match ~/.config/hypr/hyprpaper.conf (hyprpaper does not re-anchor after scale)
 WALLPAPER=/home/kodex/home-hyprland/wallpapers/disco-elysium-thought-cabinet-art-cropped.avif
 LOG="${XDG_RUNTIME_DIR:-/tmp}/hypr-zoom.log"
@@ -92,42 +94,42 @@ apply_one() {
 
 set_portrait() {
   local pos="$1" scale="$2"
-  apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE}\", position = \"${pos}\", scale = ${scale}, transform = ${TRANSFORM} })"
+  apply_one "hl.monitor({ output = \"${PORTRAIT}\", mode = \"${MODE_PORTRAIT}\", position = \"${pos}\", scale = ${scale}, transform = ${TRANSFORM} })"
 }
 
 set_landscape() {
   local pos="$1"
-  apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE}\", position = \"${pos}\", scale = 1, transform = 0 })"
+  apply_one "hl.monitor({ output = \"${LANDSCAPE}\", mode = \"${MODE_LANDSCAPE}\", position = \"${pos}\", scale = 1, transform = 0 })"
 }
 
 apply_roomy() {
-  set_portrait "-1080x0" 1 || return 1
-  set_landscape "0x420" || return 1
+  set_portrait "-1920x0" 1 || return 1
+  set_landscape "0x0" || return 1
   local s x y
   read -r s x y <<<"$(portrait_geo)"
   if is_dense_scale "$s"; then
     log "verify roomy FAIL scale=$s pos=${x}x${y}"
     return 1
   fi
-  # expected x near -1080
-  if [[ "$x" -gt -1000 ]]; then
-    log "verify roomy pos suspicious x=$x (want ~-1080)"
+  # expected x near -1920
+  if [[ "$x" -gt -1700 ]]; then
+    log "verify roomy pos suspicious x=$x (want ~-1920)"
     return 1
   fi
   return 0
 }
 
 apply_dense() {
-  set_portrait "-720x0" 1.5 || return 1
-  set_landscape "0x100" || return 1
+  set_portrait "-1280x0" 1.5 || return 1
+  set_landscape "0x0" || return 1
   local s x y
   read -r s x y <<<"$(portrait_geo)"
   if ! is_dense_scale "$s"; then
     log "verify dense FAIL scale=$s pos=${x}x${y}"
     return 1
   fi
-  if [[ "$x" -lt -900 ]]; then
-    log "verify dense pos suspicious x=$x (want ~-720)"
+  if [[ "$x" -lt -1500 || "$x" -gt -1100 ]]; then
+    log "verify dense pos suspicious x=$x (want ~-1280)"
     return 1
   fi
   return 0
@@ -137,10 +139,10 @@ apply_dense() {
 heal_if_inconsistent() {
   local s x y
   read -r s x y <<<"$(portrait_geo)"
-  if is_dense_scale "$s" && [[ "$x" -lt -900 ]]; then
+  if is_dense_scale "$s" && [[ "$x" -lt -1500 ]]; then
     log "heal: dense scale but roomy x=$x → re-dense"
     apply_dense || true
-  elif ! is_dense_scale "$s" && [[ "$x" -gt -1000 ]]; then
+  elif ! is_dense_scale "$s" && [[ "$x" -gt -1700 ]]; then
     log "heal: roomy scale but dense x=$x → re-roomy"
     apply_roomy || true
   fi

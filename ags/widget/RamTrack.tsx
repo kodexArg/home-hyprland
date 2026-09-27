@@ -2,19 +2,16 @@ import { Gtk } from "ags/gtk4"
 import { createComputed } from "ags"
 import {
   CELLS_PER_ROW,
+  SCALE_CPU,
   SCALE_RAM,
-  SCALE_SWAP,
   SCALE_VRAM,
   startRamTrack,
+  trackCpuCells,
+  trackCpuRatio,
   trackRamAvailGiB,
   trackRamCells,
   trackRamTotalGiB,
   trackRamUsedGiB,
-  trackSwapCells,
-  trackSwapTotalGiB,
-  trackSwapUsedGiB,
-  trackZswapPoolGiB,
-  trackZswappedGiB,
   trackVramCells,
   trackVramTotalGiB,
   trackVramUsedGiB,
@@ -24,7 +21,7 @@ startRamTrack()
 
 const CELL_IDX = [0, 1, 2, 3, 4] as const
 
-type RowKey = "vram" | "ram" | "swap"
+type RowKey = "cpu" | "ram" | "vram"
 
 function Row({
   rowKey,
@@ -48,7 +45,6 @@ function Row({
       <label
         class="RamTrack-label"
         label={label}
-        xalign={1}
         halign={Gtk.Align.END}
         valign={Gtk.Align.CENTER}
         hexpand={true}
@@ -75,6 +71,8 @@ function Row({
 
 export default function RamTrack() {
   const tip = createComputed(() => {
+    const cu = trackCpuRatio()
+    const cc = trackCpuCells()
     const vu = trackVramUsedGiB()
     const vt = trackVramTotalGiB()
     const vc = trackVramCells()
@@ -82,24 +80,13 @@ export default function RamTrack() {
     const ra = trackRamAvailGiB()
     const rt = trackRamTotalGiB()
     const rc = trackRamCells()
-    const su = trackSwapUsedGiB()
-    const st = trackSwapTotalGiB()
-    const sc = trackSwapCells()
-    const zp = trackZswapPoolGiB()
-    const zs = trackZswappedGiB()
     const vf = Math.max(0, vt - vu)
-    const sf = Math.max(0, st - su)
-    const zline =
-      zp > 0 || zs > 0
-        ? `zswap pool ${zp.toFixed(2)} GiB · ${zs.toFixed(2)} uncompressed (still in SwapUsed)\n`
-        : `zswap on · pool empty (new pages compress here; disk swap still counts)\n`
     return (
-      `VRAM  ${vu.toFixed(2)} / ${vt.toFixed(2)} GiB · free ${vf.toFixed(2)} · ${vc}/${CELLS_PER_ROW}\n` +
+      `CPU   ${(cu * 100).toFixed(0)}% · ${cc}/${CELLS_PER_ROW}\n` +
       `RAM   ${ru.toFixed(2)} / ${rt.toFixed(2)} GiB · free ${ra.toFixed(2)} · ${rc}/${CELLS_PER_ROW}\n` +
-      `SWAP  ${su.toFixed(2)} / ${st.toFixed(2)} GiB · free ${sf.toFixed(2)} · ${sc}/${CELLS_PER_ROW}\n` +
-      zline +
-      `0 cells = 0 GiB used · 5th cell (red) = warning before full\n` +
-      `red warning: VRAM ≥${Math.round(SCALE_VRAM.redAt * 100)}% · RAM ≥${Math.round(SCALE_RAM.redAt * 100)}% · SWAP ≥${Math.round(SCALE_SWAP.redAt * 100)}%`
+      `VRAM  ${vu.toFixed(2)} / ${vt.toFixed(2)} GiB · free ${vf.toFixed(2)} · ${vc}/${CELLS_PER_ROW}\n` +
+      `0 cells = idle/empty · 5th cell (red) = warning before full\n` +
+      `red warning: CPU ≥${Math.round(SCALE_CPU.redAt * 100)}% · RAM ≥${Math.round(SCALE_RAM.redAt * 100)}% · VRAM ≥${Math.round(SCALE_VRAM.redAt * 100)}%`
     )
   })
 
@@ -114,9 +101,9 @@ export default function RamTrack() {
       hexpand={false}
       vexpand={false}
     >
-      <Row rowKey="vram" label="VRAM" lit={trackVramCells} />
+      <Row rowKey="cpu" label="CPU" lit={trackCpuCells} />
       <Row rowKey="ram" label="RAM" lit={trackRamCells} />
-      <Row rowKey="swap" label="SWAP" lit={trackSwapCells} />
+      <Row rowKey="vram" label="VRAM" lit={trackVramCells} />
     </box>
   )
 }
