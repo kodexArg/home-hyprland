@@ -8,8 +8,8 @@ const ORDER: BarMode[] = ["always", "temp", "hidden"]
 const TEMP_MS = 2500
 const BAR_MODEL = "VA27EHF"
 const EDGE_PX = 12
-const POLL_MS = 80
-const MONITOR_GEOMETRY_TTL_MS = 2000
+const POLL_MS = 200
+const MONITOR_GEOMETRY_TTL_MS = 5000
 
 const [mode, setMode] = createState<BarMode>("always")
 const [tempShown, setTempShown] = createState(true)

@@ -1,10 +1,4 @@
-/**
- * Gabriel-L2TP FSM — SSOT = NetworkManager active connections.
- * Toggle: nmcli connection up|down id "Gabriel-L2TP"
- *
- * Phases: off | connecting | on | disconnecting | failed
- * UI: cream vpn.svg when on; grey vpn-off.svg otherwise.
- */
+
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createComputed, createState } from "ags"
@@ -16,7 +10,6 @@ export type L2tpPhase =
   | "disconnecting"
   | "failed"
 
-/** Only VPN profile on this host (nmcli connection show). */
 export const L2TP_CONN = "Gabriel-L2TP"
 
 const TICK_SETTLED_MS = 2500
@@ -45,7 +38,6 @@ function enter(p: L2tpPhase): void {
   ensureTick()
 }
 
-/** True when Gabriel-L2TP is among NM active connections. */
 export function probeL2tpActive(): boolean {
   try {
     const proc = Gio.Subprocess.new(
@@ -55,7 +47,6 @@ export function probeL2tpActive(): boolean {
     const [, stdout] = proc.communicate_utf8(null, null)
     const lines = (stdout ?? "").trim().split("\n").filter(Boolean)
     for (const line of lines) {
-      // NAME:TYPE — NAME may contain colons rarely; match exact name + vpn type
       const idx = line.lastIndexOf(":")
       if (idx < 0) continue
       const name = line.slice(0, idx)
@@ -138,7 +129,6 @@ function reconcile(): void {
     return
   }
 
-  // settled: follow reality (external nmcli / GNOME panel)
   if (live && p !== "on") enter("on")
   else if (!live && p !== "off") enter("off")
 }
@@ -157,7 +147,6 @@ function ensureTick(): void {
   tickIntervalMs = want
   tickSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, want, () => {
     reconcile()
-    // interval may need to change after reconcile
     const stillBusy =
       phase.peek() === "connecting" ||
       phase.peek() === "disconnecting" ||
@@ -183,7 +172,6 @@ export function startL2tpWatch(): void {
   ensureTick()
 }
 
-/** Toggle from UI reality, not from a cached bool. */
 export function toggleL2tp(): void {
   startL2tpWatch()
   const live = probeL2tpActive()
@@ -197,7 +185,6 @@ export function toggleL2tp(): void {
     enter("disconnecting")
     runNmcli("down", (ok, err) => {
       if (!ok) {
-        // still up?
         if (probeL2tpActive()) {
           setLastError(err || "nmcli down failed")
           enter("failed")
@@ -206,13 +193,11 @@ export function toggleL2tp(): void {
           enter("off")
         }
       }
-      // success: wait for reconcile to see inactive
       reconcile()
     })
     return
   }
 
-  // off / failed → connect
   setLastError("")
   enter("connecting")
   runNmcli("up", (ok, err) => {
@@ -294,5 +279,4 @@ export const l2tpRowClass = createComputed(() => {
   }
 })
 
-// boot watch as soon as module loads (bar import)
 startL2tpWatch()

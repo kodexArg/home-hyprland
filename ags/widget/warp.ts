@@ -1,10 +1,3 @@
-/**
- * Cloudflare WARP FSM — SSOT = warp-cli status.
- * Toggle: warp-cli --accept-tos connect|disconnect
- *
- * Normal/Default: connected -> "CloudFlare WARP" (sin resaltar, opaque icon)
- * Paused/Disconnected: "WARP Paused" (resaltado / highlighted, grey icon)
- */
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createComputed, createState } from "ags"
@@ -16,7 +9,7 @@ export type WarpPhase =
   | "disconnecting"
   | "failed"
 
-const TICK_SETTLED_MS = 2500
+const TICK_SETTLED_MS = 5000
 const TICK_BUSY_MS = 400
 const CONNECT_TIMEOUT_SEC = 30
 const DISCONNECT_TIMEOUT_SEC = 15
@@ -42,7 +35,6 @@ function enter(p: WarpPhase): void {
   ensureTick()
 }
 
-/** True when Cloudflare WARP is Connected. */
 export function probeWarpActive(): boolean {
   try {
     const proc = Gio.Subprocess.new(
@@ -137,7 +129,6 @@ function reconcile(): void {
     return
   }
 
-  // settled: follow reality
   if (live && p !== "connected") enter("connected")
   else if (!live && p !== "disconnected") enter("disconnected")
 }
@@ -181,7 +172,6 @@ export function startWarpWatch(): void {
   ensureTick()
 }
 
-/** Toggle via hypr-warp-toggle (SSOT orchestrator). */
 export function toggleWarp(): void {
   startWarpWatch()
   const live = probeWarpActive()
@@ -287,5 +277,4 @@ export const warpRowClass = createComputed(() => {
   }
 })
 
-// boot watch as soon as module loads (bar import)
 startWarpWatch()

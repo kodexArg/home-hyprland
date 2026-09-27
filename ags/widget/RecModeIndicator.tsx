@@ -3,7 +3,6 @@ import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createPoll } from "ags/time"
 
-/** Super+M REC mode (under construction) — UI chip only. */
 const STATE_FILE = "/tmp/kdx_rec_mode.json"
 const FLAG_FILE = "/tmp/kdx_rec_mode"
 const ICON_MIC_RECORD = `${GLib.get_user_config_dir()}/ags/icons/mic-record.svg`

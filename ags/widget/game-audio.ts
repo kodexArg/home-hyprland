@@ -189,7 +189,6 @@ export function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   )
 }
 
-// Reactive state
 export const [hasGameStream, setHasGameStream] = createState(false)
 export const [gameTitle, setGameTitle] = createState("Steam Game")
 export const [gameVolume, setGameVolumeState] = createState(1.0)
@@ -242,7 +241,6 @@ export function syncGameStreams() {
 
     for (const s of trackedStreams) {
       try {
-        // En tándem con la salida del sistema: liberar cualquier endpoint fijo
         s.set_target_endpoint(null)
       } catch (_) {}
 
@@ -317,7 +315,7 @@ export function startGameAudioMonitor() {
     wp.connect("notify::audio", () => connectAudio())
   }
 
-  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
     syncGameStreams()
     return GLib.SOURCE_CONTINUE
   })

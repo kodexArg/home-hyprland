@@ -14,6 +14,61 @@ type WinBox = {
   y: number
   w: number
   h: number
+  appClass: string
+  title: string
+}
+
+type ColorRGBA = [number, number, number, number]
+
+// Base de referencia original del monitor con contenido: gris claro neutro [0.93, 0.91, 0.88, 0.18]
+const DEFAULT_COLOR: ColorRGBA = [0.93, 0.91, 0.88, 0.18]
+
+/**
+ * Paleta armónica integrada en la gama del gris claro de AGS.
+ * Mantiene la luminosidad y translucidez de la base, modulando el tinte
+ * exacto según la identidad de la aplicación o su wallpaper real:
+ *
+ * - kitty:     Derivado de Makima-dark.png (RGB 35, 15, 10 -> vino/óxido cálido sobre base gris)
+ * - agy-cli:   Derivado de agy-bg.jpg (RGB 17, 11, 3 -> ámbar/sepia oscuro dorado sobre base gris)
+ * - codium:    Gris azulado / celeste pizarra
+ * - grok-bot:  Gris carbón neutro limpio
+ * - spotify:   Verde tenue atenuado
+ * - whatsapp:  Verde esmeralda / turquesa suave
+ */
+const APP_COLORS: Record<string, ColorRGBA> = {
+  // Kitty: Makima-dark (tinte vino / carmesí oscuro cálido sobre base gris)
+  kitty: [0.92, 0.62, 0.58, 0.28],
+
+  // Antigravity CLI: agy-bg (tinte sepia / ámbar dorado profundo sobre base gris)
+  "agy-cli": [0.92, 0.76, 0.48, 0.28],
+
+  // Codium: gris azulado / índigo tenue
+  codium: [0.60, 0.78, 0.96, 0.26],
+
+  // Grok Bot / Web / CLI: gris blanco neutro de alta legibilidad
+  "grok-bot": [0.95, 0.95, 0.95, 0.24],
+  "grok-cli": [0.95, 0.95, 0.95, 0.24],
+
+  // Spotify: verde sutil en la gama del gris
+  spotify: [0.45, 0.86, 0.58, 0.26],
+
+  // WhatsApp Web: verde esmeralda suave
+  whatsapp: [0.42, 0.84, 0.65, 0.26],
+}
+
+function resolveAppColor(appClass: string, title: string): ColorRGBA {
+  const c = appClass.toLowerCase()
+  const t = title.toLowerCase()
+
+  if (APP_COLORS[c]) return APP_COLORS[c]
+  if (t.includes("whatsapp") || c.includes("whatsapp")) return APP_COLORS["whatsapp"]
+  if (t.includes("grok") || c.includes("grok")) return APP_COLORS["grok-bot"]
+  if (c.includes("spotify") || t.includes("spotify")) return APP_COLORS["spotify"]
+  if (c.includes("codium")) return APP_COLORS["codium"]
+  if (c.includes("kitty")) return APP_COLORS["kitty"]
+  if (c.includes("agy")) return APP_COLORS["agy-cli"]
+
+  return DEFAULT_COLOR
 }
 
 type Screen = {
@@ -55,6 +110,9 @@ function readScreens(): Screen[] {
       size?: [number, number]
       workspace?: { id: number }
       monitor?: number
+      class?: string
+      initialClass?: string
+      title?: string
     }>
 
     const idsByMonitor = new Map<string, number[]>()
@@ -100,6 +158,8 @@ function readScreens(): Screen[] {
         y: clamp01((ay - g.y) / g.h),
         w: rw,
         h: rh,
+        appClass: c.class || c.initialClass || "",
+        title: c.title || "",
       })
       winsByMonWs.set(key, list)
     }
@@ -192,20 +252,24 @@ function WsRect({
               const pad = 1
               const bw = Math.max(1, width - pad * 2)
               const bh = Math.max(1, height - pad * 2)
-              const rects = last.map((win) => ({
-                x: pad + win.x * bw,
-                y: pad + win.y * bh,
-                w: Math.max(2, win.w * bw),
-                h: Math.max(2, win.h * bh),
-              }))
-              cr.setSourceRGBA(0.93, 0.91, 0.88, 0.16)
-              for (const r of rects) {
+
+              for (const win of last) {
+                const r = {
+                  x: pad + win.x * bw,
+                  y: pad + win.y * bh,
+                  w: Math.max(2, win.w * bw),
+                  h: Math.max(2, win.h * bh),
+                }
+                const color = resolveAppColor(win.appClass, win.title)
+
+                // Relleno uniforme del cuadro (tono derivado del gris claro)
+                cr.setSourceRGBA(...color)
                 cr.rectangle(r.x, r.y, r.w, r.h)
                 cr.fill()
-              }
-              cr.setLineWidth(0.5)
-              cr.setSourceRGBA(14 / 255, 13 / 255, 11 / 255, 1)
-              for (const r of rects) {
+
+                // Borde oscuro sutil original para definir el perímetro
+                cr.setLineWidth(0.5)
+                cr.setSourceRGBA(14 / 255, 13 / 255, 11 / 255, 1)
                 cr.rectangle(r.x + 0.25, r.y + 0.25, r.w - 0.5, r.h - 0.5)
                 cr.stroke()
               }

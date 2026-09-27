@@ -1,14 +1,3 @@
-/**
- * Memory track — left of LocalLlm brain.
- *
- * KISS 5×3 grid (rows top→bottom):
- *   VRAM · RAM · SWAP labels (very light cream / brain color)
- *   + 5 cells fill L→R by used/total
- * cell gap 1px · row gap 2px · cell 6px
- * Color bands (first two green): b0–b1 green · b2 yellow · b3 orange · b4 red
- * Fill: 0 cells below floor; red (5) at redAt < 100% — see SCALE_* in ram.ts.
- * Logic: ./ram.ts only. This file is pure projection.
- */
 import { Gtk } from "ags/gtk4"
 import { createComputed } from "ags"
 import {

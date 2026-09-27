@@ -8,20 +8,16 @@ import {
   setBarMode,
   type BarMode,
 } from "./widget/bar-mode"
-// Caffeine parked (UI off). Restore handlers + import with ClockCaffeine in Bar.tsx.
-// import {
-//   getCaffeineStatus,
-//   getCaffeineToken,
-//   requestCaffeineOff,
-//   requestCaffeineOn,
-//   toggleCaffeine,
-// } from "./widget/caffeine"
 import { toggleRecMenu } from "./widget/RecMenu"
+import {
+  toggleBrainMenu,
+  toggleMicMenu,
+  toggleDictatorMenu,
+} from "./widget/cluster-menu"
 import { getRamStatus } from "./widget/ram"
 import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
 import GLib from "gi://GLib"
 
-// Left panel = ASUS VA27EHF (HDMI-A-2 / portrait/landscape).
 const BAR_MODEL = "VA27EHF"
 
 let spawnedFor: string | null = null
@@ -41,7 +37,6 @@ function isBarMonitor(mon: {
 }): boolean {
   const model = modelOf(mon).toUpperCase()
   const desc = (mon.description ?? "").toUpperCase()
-  // HDMI-A-N flips; bind by panel model, not connector.
   return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
 }
 
@@ -99,27 +94,6 @@ app.start({
         return
       }
     }
-    // parked caffeine requests — restore with widget/caffeine import above
-    // if (cmd === "caffeine-toggle" || cmd === "caffeine") {
-    //   const snap = toggleCaffeine()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
-    // if (cmd === "caffeine-status" || cmd === "caffeine-get") {
-    //   const snap = getCaffeineStatus()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
-    // if (cmd === "caffeine-on") {
-    //   const snap = requestCaffeineOn()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
-    // if (cmd === "caffeine-off") {
-    //   const snap = requestCaffeineOff()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
     if (
       cmd === "caffeine-toggle" ||
       cmd === "caffeine" ||
@@ -133,6 +107,18 @@ app.start({
     }
     if (cmd === "rec-menu" || cmd === "rec-toggle") {
       res(toggleRecMenu())
+      return
+    }
+    if (cmd === "mic-menu" || cmd === "mic-toggle-menu") {
+      res(toggleMicMenu())
+      return
+    }
+    if (cmd === "dictator-menu" || cmd === "dictator-toggle-menu") {
+      res(toggleDictatorMenu())
+      return
+    }
+    if (cmd === "brain-menu" || cmd === "local-llm-menu") {
+      res(toggleBrainMenu())
       return
     }
     if (cmd === "ram-status" || cmd === "ram") {

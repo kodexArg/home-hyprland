@@ -2,27 +2,31 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
+import Pango from "gi://Pango"
 import { createComputed, createState, For } from "ags"
 import { createPoll } from "ags/time"
 import { execAsync } from "ags/process"
 import { barVisible, setOverBar } from "./bar-mode"
+import {
+  brainMenuOpen,
+  setBrainMenuOpen,
+  openBrainMenu,
+  closeAllClusterMenus,
+  readLastLogLine,
+  FSM3_LOG,
+} from "./cluster-menu"
 
 const HOME = GLib.get_home_dir()
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
-const ICON_BRAIN = `${ICON_DIR}/brain.svg` // monochrome (currentColor) — state via CSS color
+const ICON_BRAIN = `${ICON_DIR}/brain.svg`
 const GGUF_DIR = `${HOME}/Services/local-llm/models/gguf`
 const CONFIG_FILE = `${HOME}/.config/local-llm/selected-model`
 const SERVICE = "local-llm.service"
 const API_MODELS = "http://127.0.0.1:28000/v1/models"
-// Color SSOT v1 (clients paint busy/feedback; AGS owns readiness green/gray):
-//   $XDG_RUNTIME_DIR/local-llm-color.json
-//     {v:1, busy:N, feedback:null|"unknown", feedback_until:epoch|null}
-// Priority: busy>0 → orange · feedback unknown (timed) → red · else readiness.
-// Legacy: local-llm-thinking presence = busy (orange).
 const COLOR_FILE = `${GLib.get_user_runtime_dir()}/local-llm-color.json`
 const THINKING_FILE = `${GLib.get_user_runtime_dir()}/local-llm-thinking`
 const PANEL_GAP = 4
-const TICK_MS = 400
+const TICK_MS = 800
 
 const LOAD_BUDGET_SEC = 45
 const LOAD_TIMEOUT_SEC = LOAD_BUDGET_SEC * 2
@@ -43,7 +47,8 @@ type Tx = {
 
 const IDLE: Tx = { phase: "idle", from: null, to: null, since: 0 }
 
-const [menuOpen, setMenuOpen] = createState(false)
+const menuOpen = brainMenuOpen
+const setMenuOpen = setBrainMenuOpen
 const [tx, setTx] = createState<Tx>(IDLE)
 const [liveModel, setLiveModel] = createState("")
 const [svcSnap, setSvcSnap] = createState<SvcState>("stopped")
@@ -70,6 +75,7 @@ export function readBrainActive(): boolean {
 
 export function toggleBrainActive(): void {
   try {
+    const willBeActive = !readBrainActive()
     const bin =
       GLib.find_program_in_path("kdx-dictator") ??
       `${GLib.get_home_dir()}/.local/bin/kdx-dictator`
@@ -77,6 +83,14 @@ export function toggleBrainActive(): void {
       [bin, "brain", "toggle"],
       Gio.SubprocessFlags.STDERR_SILENCE,
     )
+    if (willBeActive && !apiReady.peek()) {
+      const s = probeSvc()
+      if (s !== "running" && s !== "starting") {
+        ctl("start")
+      }
+    } else if (!willBeActive) {
+      ctl("stop")
+    }
     GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => {
       setBrainActive(readBrainActive())
       return GLib.SOURCE_REMOVE
@@ -533,7 +547,7 @@ function LocalLlmClickaway(gdkmonitor: Gdk.Monitor) {
       $={(self: Gtk.Window) => {
         const click = new Gtk.GestureClick()
         click.set_button(0)
-        click.connect("pressed", () => setMenuOpen(false))
+        click.connect("pressed", () => closeAllClusterMenus())
         self.add_controller(click)
       }}
     >
@@ -611,6 +625,20 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
       : "🧠 Escucha de Dictador: INACTIVO"
   })
 
+  const lastFsm3Log = createPoll(readLastLogLine(FSM3_LOG), 1000, () =>
+    readLastLogLine(FSM3_LOG),
+  )
+
+  const fsm3Badge = createComputed(() => {
+    void brainActive()
+    void apiReady()
+    void tx()
+    if (!brainActive()) return "[OFF]"
+    if (!apiReady()) return "[CARGANDO VRAM]"
+    const bs = readBrainState()
+    return `[${(bs.state || "STANDBY").toUpperCase()}]`
+  })
+
   return (
     <window
       visible={panelVisible}
@@ -629,7 +657,7 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
         const key = new Gtk.EventControllerKey()
         key.connect("key-pressed", (_c, keyval) => {
           if (keyval === Gdk.KEY_Escape) {
-            setMenuOpen(false)
+            closeAllClusterMenus()
             return true
           }
           return false
@@ -657,7 +685,23 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
           tooltipText={`timeout ${LOAD_TIMEOUT_SEC}s (2×${LOAD_BUDGET_SEC}s densenet budget @ 8GB) · ready=/v1/models · click outside or Esc to close`}
         />
 
+        <box class="LocalLlm-log-box" orientation={Gtk.Orientation.VERTICAL}>
+          <box spacing={6} valign={Gtk.Align.CENTER}>
+            <label class="LocalLlm-log-title" label="📋 ÚLTIMO ESTADO FSM3" hexpand xalign={0} />
+            <label class="LocalLlm-log-title" label={fsm3Badge} xalign={1} />
+          </box>
+          <label
+            class="LocalLlm-log-content"
+            label={lastFsm3Log}
+            xalign={0}
+            wrap
+            wrapMode={Pango.WrapMode.WORD_CHAR}
+          />
+        </box>
+
         <box class="LocalLlm-sep" heightRequest={1} hexpand />
+
+        <label class="LocalLlm-section-title" label="INTERACCIÓN CEREBRO" xalign={0} />
 
         <button
           class={brainListenerClass}
@@ -676,6 +720,8 @@ function LocalLlmPanel(gdkmonitor: Gdk.Monitor) {
         </button>
 
         <box class="LocalLlm-sep" heightRequest={1} hexpand />
+
+        <label class="LocalLlm-section-title" label="MODELOS LLM (GGUF)" xalign={0} />
 
         <For each={models}>
           {(id) => {
@@ -764,6 +810,33 @@ interface BrainSnapshot {
   detail?: string
 }
 
+export function clearBrainError(): void {
+  try {
+    const payload = JSON.stringify({
+      state: "standby",
+      pile: 0,
+      detail: "standby_ready",
+      timestamp: Date.now() / 1000,
+    })
+    Gio.File.new_for_path(BRAIN_STATE_FILE).replace_contents(
+      new TextEncoder().encode(payload),
+      null,
+      false,
+      Gio.FileCreateFlags.REPLACE_DESTINATION,
+      null,
+    )
+    const bin =
+      GLib.find_program_in_path("kdx-dictator") ??
+      `${GLib.get_home_dir()}/.local/bin/kdx-dictator`
+    Gio.Subprocess.new(
+      [bin, "brain", "clear-error"],
+      Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+  } catch (e) {
+    printerr(`local-llm: clearBrainError failed: ${e}`)
+  }
+}
+
 function readBrainState(): BrainSnapshot {
   try {
     const f = Gio.File.new_for_path(BRAIN_STATE_FILE)
@@ -788,7 +861,7 @@ export default function LocalLlm({
   const brainPoll = createPoll(false, 250, () => readBrainActive())
   const brainStatePoll = createPoll(
     { state: "off", pile: 0 } as BrainSnapshot,
-    80,
+    500,
     () => readBrainState(),
   )
 
@@ -799,6 +872,9 @@ export default function LocalLlm({
     void brainPoll()
     void brainStatePoll()
     if (!brainPoll()) return "off"
+    if (!apiReady()) {
+      return "error"
+    }
     const bs = brainStatePoll()
     const st = bs.state
     if (st === "thinking" || st === "queued" || st === "running" || st === "error") {
@@ -815,13 +891,6 @@ export default function LocalLlm({
     return parts.join(" ")
   })
 
-  // Baked-color icon variants matching user FSM:
-  // - off: dark gray
-  // - standby: light gray (waiting for input)
-  // - thinking: green (receiving / thinking)
-  // - queued: yellow (receiving while thinking, pile 1..5)
-  // - running: orange (executing action wtype lockout)
-  // - error: red
   const iconFile = createComputed(() => {
     const t = tone()
     if (t === "error") return `${ICON_DIR}/brain-red.svg`
@@ -847,37 +916,76 @@ export default function LocalLlm({
     const t = tone()
     const bs = brainStatePoll()
     const base = statusLine()
-    const stateDesc =
-      t === "off"
-        ? "OFF (inactivo)"
-        : t === "standby"
-          ? "ESCUCHANDO (esperando cortes del dictador)"
-          : t === "thinking"
-            ? "PENSANDO (interpretando intención...)"
-            : t === "queued"
-              ? `EN COLA (Pila ${bs.pile ?? 1}/5 — acumulando frases)`
-              : t === "running"
-                ? "EJECUTANDO (bloqueo de escucha activo)"
-                : "ERROR (recuperando en 3s...)"
-    return `🧠 Cerebro: ${stateDesc}\n${base}\nClic: alternar escucha · Clic secundario: modelos`
+
+    let badgeText = "INACTIVO (OFF)"
+    let badgeColor = "#9a9a9a"
+    let action = "Clic: Iniciar cerebro  ·  Clic secundario: Modelos"
+
+    if (t === "off") {
+      badgeText = "INACTIVO (OFF)"
+      badgeColor = "#9a9a9a"
+      action = "Clic: Iniciar cerebro  ·  Clic secundario: Modelos"
+    } else if (!apiReady()) {
+      badgeText = "CARGANDO MODELO"
+      badgeColor = "#e6b84d"
+      action = "Cargando pesos en GPU VRAM...  ·  Clic secundario: Menú"
+    } else if (t === "standby") {
+      badgeText = "ESCUCHANDO CORTES"
+      badgeColor = "#7bc96f"
+      action = "Clic: Pausar escucha  ·  Clic secundario: Modelos y VRAM"
+    } else if (t === "thinking") {
+      badgeText = "INTERPRETANDO"
+      badgeColor = "#ff8c42"
+      action = "Procesando intención...  ·  Clic secundario: Menú"
+    } else if (t === "queued") {
+      badgeText = `EN COLA (${bs.pile ?? 1}/5)`
+      badgeColor = "#e6b84d"
+      action = "Acumulando frases...  ·  Clic secundario: Menú"
+    } else if (t === "running") {
+      badgeText = "EJECUTANDO ACCIÓN"
+      badgeColor = "#7bc96f"
+      action = "Ejecutando orden en curso..."
+    } else {
+      badgeText = "ERROR"
+      badgeColor = "#c45c4a"
+      const errDetail = bs.detail ? GLib.markup_escape_text(bs.detail, -1) : "Error en ejecución"
+      action = `⚠️ <b>${errDetail}</b>\n<i>(Pasá el mouse por acá para volver a GRIS CLARO)</i>`
+    }
+
+    const safeBase = GLib.markup_escape_text(base || "Off", -1)
+
+    return [
+      `<b><span size="small" letter_spacing="1500" foreground="#ff8c42">🧠 CEREBRO LOCAL</span></b>   <span size="small" weight="bold" foreground="${badgeColor}">[${badgeText}]</span>`,
+      `Estado: <b>${safeBase}</b>`,
+      `<span size="smaller" alpha="75%">${action}</span>`,
+    ].join("\n")
   })
 
   return (
     <button
       class={cls}
-      tooltipText={tip}
+      tooltipMarkup={tip}
       $={(self: Gtk.Button) => {
         const click = new Gtk.GestureClick()
         click.set_button(0)
         click.connect("pressed", (_g, _n, _x, _y) => {
           const btn = click.get_current_button()
           if (btn === 3) {
-            setMenuOpen(!menuOpen.peek())
+            openBrainMenu()
           } else if (btn === 1) {
             toggleBrainActive()
           }
         })
         self.add_controller(click)
+
+        const motion = new Gtk.EventControllerMotion()
+        motion.connect("enter", () => {
+          const bs = readBrainState()
+          if (bs.state === "error" || tone.peek() === "error") {
+            clearBrainError()
+          }
+        })
+        self.add_controller(motion)
       }}
     >
       <image file={iconFile} pixelSize={16} />
@@ -890,6 +998,6 @@ export function getLocalLlmMenuOpen(): boolean {
 }
 
 export function toggleLocalLlmMenu(): string {
-  setMenuOpen(!menuOpen.peek())
+  openBrainMenu()
   return menuOpen.peek() ? "local-llm-open" : "local-llm-closed"
 }

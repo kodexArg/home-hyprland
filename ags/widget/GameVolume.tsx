@@ -107,7 +107,6 @@ export default function GameVolume() {
         self.add_controller(scroll)
       }}
     >
-      {/* Ícono de Steam: clic para silenciar/reactivar juego en tándem */}
       <button
         class="GameVolume-steam"
         tooltipText={steamTip}

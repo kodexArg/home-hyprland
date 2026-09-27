@@ -11,20 +11,6 @@ export type CastTarget =
   | "window-geom"
   | null
 
-/**
- * Cast FSM (caffeine-family: external SSOT + derived UI).
- *
- *   idle ──set target──► target_set ──click REC──► starting ──hypr-record──► recording
- *     ▲                      │                       │                         │
- *     │                   clear │                 timeout/fail              click stop
- *     │                      ▼                       ▼                         ▼
- *     └────────────────── failed ◄───────────────────┴────────────────── stopping
- *                              │                                              │
- *                              └──── target kept? → target_set : idle ◄───────┘
- *
- * SSOT while live: `hypr-record status` (string contains "recording").
- * Yellow chip = transitional (starting | stopping) — "thinking".
- */
 export type CastPhase =
   | "idle"
   | "target_set"
@@ -58,7 +44,6 @@ const [windowGeom, setWindowGeom] = createState<string | null>(null)
 const [windowTitle, setWindowTitle] = createState<string>("")
 const [lastError, setLastError] = createState("")
 export const [castPopupOpen, setCastPopupOpen] = createState<boolean>(false)
-/** Include Brio (or default source) mixed with desktop audio. Cast default ON. */
 export const [castMic, setCastMic] = createState<boolean>(true)
 
 export const castPhase = phase
@@ -101,7 +86,6 @@ function readStateFilePath(): string {
     const [ok, contents] = f.load_contents(null)
     if (!ok) return ""
     const text = new TextDecoder().decode(contents).trim()
-    // mode|file|started_iso
     const parts = text.split("|")
     return parts[1]?.trim() ?? ""
   } catch {
@@ -152,7 +136,6 @@ function ensureReconcileLoop(): void {
   reconcileIntervalMs = want
   reconcileTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, want, () => {
     reconcile()
-    // interval may change after phase flip
     const nextWant = watchingPhases(phase.peek())
       ? RECONCILE_WATCHING_MS
       : RECONCILE_SETTLED_MS
@@ -166,7 +149,6 @@ function ensureReconcileLoop(): void {
   })
 }
 
-/** Last file path captured at stop request (SSOT may clear before finalize). */
 let pendingStopPath = ""
 
 function reconcile(): void {
@@ -187,7 +169,6 @@ function reconcile(): void {
 
     case "recording":
       if (!isRec) {
-        // External stop (hotkey / CLI)
         enterPhase(target.peek() ? "target_set" : "idle")
       }
       return
@@ -199,7 +180,6 @@ function reconcile(): void {
         }
         return
       }
-      // Encoder gone — finalize UX (clipboard already done by hypr-record; VLC here)
       {
         const path = pendingStopPath || readStateFilePath()
         pendingStopPath = ""
@@ -219,18 +199,15 @@ function reconcile(): void {
 
     case "idle":
     case "target_set":
-      // External start (hotkey) while we had a target or not
       if (isRec) enterPhase("recording")
       return
   }
 }
 
-// Boot reconcile loop
 ensureReconcileLoop()
 
 export const hasCastTarget = createComputed(() => target() !== null)
 
-/** Visible: any non-idle phase, or target armed. */
 export const castChipVisible = createComputed(() => {
   const t = target()
   const p = phase()
@@ -238,10 +215,8 @@ export const castChipVisible = createComputed(() => {
   return p === "starting" || p === "recording" || p === "stopping" || p === "failed"
 })
 
-/** Gray — target selected, settled, ready to click. */
 export const castChipArmed = createComputed(() => phase() === "target_set")
 
-/** Yellow — transitional thinking (starting encoder / stopping+finalize). */
 export const castChipThinking = createComputed(() => {
   const p = phase()
   return p === "starting" || p === "stopping"
@@ -251,7 +226,6 @@ export const isRecording = createComputed(() => phase() === "recording")
 
 export const isFailed = createComputed(() => phase() === "failed")
 
-/** Chip CSS modifier from FSM phase only. */
 export const castChipClass = createComputed(() => {
   const p = phase()
   switch (p) {
@@ -417,7 +391,6 @@ function audioArgs(): string[] {
   return [castMic.peek() ? "--both" : "--system-audio"]
 }
 
-/** Immediate start — no artificial delay (REC click is the commit). */
 export function launchRecord(args: string[]): void {
   setCastPopupOpen(false)
   enterPhase("starting")
@@ -429,10 +402,8 @@ export function launchRecord(args: string[]): void {
   } catch (e) {
     enterPhase("failed", String(e))
   }
-  // Phase stays "starting" until reconcile sees hypr-record status=recording
 }
 
-/** @deprecated use launchRecord — kept name for any external callers */
 export function launchRecordWithDelay(args: string[]): void {
   launchRecord(args)
 }
@@ -464,7 +435,6 @@ export function stopCastRecord(): void {
   } catch (e) {
     enterPhase("failed", String(e))
   }
-  // Finalize + VLC happens in reconcile when SSOT goes idle
 }
 
 export function toggleCastRecord(): void {
@@ -474,7 +444,6 @@ export function toggleCastRecord(): void {
     return
   }
   if (p === "starting" || p === "stopping") {
-    // Transitional — ignore click (yellow thinking)
     return
   }
   startCastRecord()

@@ -6,7 +6,7 @@ STATE="${KDX_REC_MODE_STATE:-/tmp/kdx_rec_mode.json}"
 FLAG="${KDX_REC_MODE_FLAG:-/tmp/kdx_rec_mode}"
 PID_FILE="${KDX_REC_MODE_PID:-/tmp/kdx_rec_mode.pid}"
 LOG="${KDX_REC_MODE_LOG:-/tmp/kdx_rec_mode.worker.log}"
-ROOT="${KDX_HOME_VOICE:-/home/kodex/Dev/this-computer/kdx-home-voice}"
+ROOT="${KDX_HOME_VOICE:-/home/kodex/Dev/Kodex/this-computer/kdx-home-voice}"
 WORKER="${ROOT}/Scripts/rec.py"
 
 is_on() {

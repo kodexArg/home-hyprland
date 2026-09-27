@@ -3,10 +3,6 @@ import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createPoll } from "ags/time"
 
-/**
- * Super+L LIVE chip — pure projection of /tmp/kdx_live_mode.json.
- * Python worker writes ui.color (orange|green); we never call Python.
- */
 const STATE_FILE = "/tmp/kdx_live_mode.json"
 const FLAG_FILE = "/tmp/kdx_live_mode"
 const MIC_ICON = `${GLib.get_user_config_dir()}/ags/icons/mic-record.svg`

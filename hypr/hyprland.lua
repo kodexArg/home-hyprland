@@ -309,6 +309,25 @@ hl.window_rule({
     workspace = "6",
 })
 
+-- Counter-Strike 2: competitive gaming surface on AOC (right landscape)
+hl.window_rule({
+    name    = "cs2-class-right",
+    match   = { class = "^(cs2)$" },
+    monitor = aoc,
+})
+
+hl.window_rule({
+    name    = "cs2-steam-right",
+    match   = { class = ".*steam_app_730.*" },
+    monitor = aoc,
+})
+
+hl.window_rule({
+    name    = "cs2-title-right",
+    match   = { title = ".*Counter-Strike 2.*" },
+    monitor = aoc,
+})
+
 -- Super+K tags the active window; this rule confines the pointer while tagged.
 local pointerConfineTag = "pointer-confine"
 hl.window_rule({
@@ -438,8 +457,16 @@ hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(recMode .. " toggle"))
 
 -- FREE 2026-08-01: Super+L liberada — reservada para una futura versión de kodexBot.
 -- (era: hl.bind(mainMod .. " + L", hl.dsp.exec_cmd(liveMode .. " toggle")))
-local dictator = "/home/kodex/.local/bin/kdx-dictator"
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(dictator .. " toggle"))
+local dictator  = "/home/kodex/.local/bin/kdx-dictator"
+local micToggle = "/home/kodex/.local/bin/kdx-mic-toggle"
+
+-- Toggles de Audio, Dictado y Cerebro Cognitivo:
+-- 1. Super + D: Micrófono (FSM 1 Hardware Gate)
+-- 2. Super + Ctrl + D: Dictador (FSM 2 Speech Dictation)
+-- 3. Super + Ctrl + Alt + D: Cerebro Cognitivo (FSM 3 Action Router)
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(micToggle))
+hl.bind(mainMod .. " + CTRL + D", hl.dsp.exec_cmd(dictator .. " toggle"))
+hl.bind(mainMod .. " + CTRL + ALT + D", hl.dsp.exec_cmd(dictator .. " brain toggle"))
 
 -- Close vs kill (same key family): Super+C polite close · Super+Ctrl+C force kill.
 -- Super+Ctrl+X kept as alias for muscle memory.
