@@ -6,7 +6,7 @@ STATE="${KDX_LIVE_MODE_STATE:-/tmp/kdx_live_mode.json}"
 FLAG="${KDX_LIVE_MODE_FLAG:-/tmp/kdx_live_mode}"
 PID_FILE="${KDX_LIVE_MODE_PID:-/tmp/kdx_live_mode.pid}"
 LOG="${KDX_LIVE_MODE_LOG:-/tmp/kdx_live_mode.worker.log}"
-ROOT="${KDX_HOME_VOICE:-/home/kodex/Dev/this-computer/kdx-home-voice}"
+ROOT="${KDX_HOME_VOICE:-/home/kodex/Dev/Kodex/this-computer/kdx-home-voice}"
 WORKER="${ROOT}/Scripts/live.py"
 # Prefer host stack that already has faster-whisper + CUDA pip libs
 VENV_PY="${KDX_HOME_VOICE_PYTHON:-}"
@@ -14,7 +14,7 @@ if [[ -z "$VENV_PY" ]]; then
   for c in \
     "${ROOT}/.venv/bin/python" \
     "/home/kodex/Services/voice-dictation/.venv/bin/python" \
-    "/home/kodex/Dev/this-computer/kdx-voice-live/.venv/bin/python"
+    "/home/kodex/Dev/Kodex/this-computer/kdx-voice-live/.venv/bin/python"
   do
     if [[ -x "$c" ]]; then VENV_PY="$c"; break; fi
   done

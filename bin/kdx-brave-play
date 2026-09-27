@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Drive the live Brave window on this Hyprland session (not Cursor's browser).
+"""Drive a mapped Brave window on this Hyprland session (not Cursor's browser).
 
 Playwright-style: screenshot the window, then click in window-local pixels.
 Clicks go through Hyprland Lua (cursor.move + mouse:272). No CDP, no restart.
+
+Targets class `brave-browser` only (never Brave PWAs like YouTube).
+Prefers titles matching playground / geojson / eudr (override with KDX_BRAVE_TITLE_RE).
 
   kdx-brave-play status
   kdx-brave-play shot [path]
@@ -16,12 +19,33 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 CLASS = "brave-browser"
+DEFAULT_TITLE_RE = r"(?i)EUDR"  # Cotton/midraed; override with KDX_BRAVE_TITLE_RE
+
+
+def ensure_hypr_env() -> None:
+    uid = os.getuid()
+    os.environ.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    os.environ.setdefault("WAYLAND_DISPLAY", "wayland-1")
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return
+    hypr = Path(os.environ["XDG_RUNTIME_DIR"]) / "hypr"
+    if not hypr.is_dir():
+        raise SystemExit(f"kdx-brave-play: no hypr dir at {hypr}")
+    subs = sorted(
+        (p for p in hypr.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not subs:
+        raise SystemExit(f"kdx-brave-play: empty hypr dir {hypr}")
+    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = subs[0].name
 
 
 def hypr_j(cmd: str) -> object:
@@ -34,6 +58,11 @@ def hypr_eval(code: str) -> str:
     return subprocess.check_output(["hyprctl", "eval", code], text=True).strip()
 
 
+def title_re() -> re.Pattern[str]:
+    raw = os.environ.get("KDX_BRAVE_TITLE_RE") or DEFAULT_TITLE_RE
+    return re.compile(raw)
+
+
 def find_brave() -> dict:
     clients = hypr_j("clients")
     assert isinstance(clients, list)
@@ -44,8 +73,14 @@ def find_brave() -> dict:
     ]
     if not matches:
         raise SystemExit("kdx-brave-play: no mapped brave-browser window")
-    matches.sort(key=lambda c: int(c.get("focusHistoryID") or 99))
-    return matches[0]
+    pat = title_re()
+    preferred = [c for c in matches if pat.search(c.get("title") or "")]
+    if not preferred and pat.pattern == r"(?i)EUDR":
+        fallback = re.compile(r"(?i)(playground|geojson)")
+        preferred = [c for c in matches if fallback.search(c.get("title") or "")]
+    pool = preferred if preferred else matches
+    pool.sort(key=lambda c: int(c.get("focusHistoryID") or 99))
+    return pool[0]
 
 
 def status() -> None:
@@ -56,6 +91,7 @@ def status() -> None:
     x, y = win["at"]
     w, h = win["size"]
     payload = {
+        "rail": "kdx-brave-play",
         "title": win.get("title"),
         "pid": win.get("pid"),
         "address": win.get("address"),
@@ -67,6 +103,8 @@ def status() -> None:
         },
         "box": {"x": x, "y": y, "w": w, "h": h},
         "xwayland": win.get("xwayland"),
+        "title_re": os.environ.get("KDX_BRAVE_TITLE_RE") or DEFAULT_TITLE_RE,
+        "hypr": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"),
     }
     json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
@@ -74,21 +112,21 @@ def status() -> None:
 
 def focus_brave() -> dict:
     win = find_brave()
-    # Window objects from get_windows(), not address strings (0.56).
+    title = (win.get("title") or "").replace("\\", "\\\\").replace('"', '\\"')
+    # Prefer exact title among brave-browser windows (avoids YouTube PWAs + wrong Brave).
     result = hypr_eval(
-        'local ws = hl.get_windows({ class = "brave-browser" }); '
+        "local ws = hl.get_windows({ class = \"brave-browser\" }); "
         "if #ws == 0 then error('no brave') end; "
-        "hl.dispatch(hl.dsp.focus({ window = ws[1] })); "
-        "return ws[1].title"
+        f'local want = "{title}"; '
+        "local pick = ws[1]; "
+        "for _, w in ipairs(ws) do if w.title == want then pick = w break end end; "
+        "hl.dispatch(hl.dsp.focus({ window = pick })); "
+        "return pick.title"
     )
-    if result not in {"ok", win.get("title", "")} and "error" in result.lower():
+    if "error" in result.lower() and result not in {"ok", win.get("title", "")}:
         raise SystemExit(f"kdx-brave-play focus failed: {result}")
     time.sleep(0.08)
     return win
-
-
-def restore_last() -> None:
-    hypr_eval("hl.dispatch(hl.dsp.focus({ last = true }))")
 
 
 def shot(path: Path | None) -> Path:
@@ -143,6 +181,7 @@ def usage() -> None:
 
 
 def main(argv: list[str]) -> None:
+    ensure_hypr_env()
     if not argv:
         usage()
     cmd = argv[0]

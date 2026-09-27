@@ -1,47 +1,28 @@
-/**
- * Memory track FSM — three rows (VRAM · RAM · Swap), 5 cells each.
- *
- * SSOT:
- *   VRAM  nvidia-smi memory.used / memory.total  (2060 OC ≈ 8 GiB)
- *   RAM   MemTotal − MemAvailable                (/proc/meminfo)
- *   Swap  SwapTotal − SwapFree                   (/proc/meminfo)
- *         Zswap / Zswapped are tooltip-only (compressed pool vs
- *         uncompressed pages sitting in zswap; still counted in SwapUsed)
- *
- * Fill is warn-ahead, not linear 0–100%:
- *   used/total < floor → 0 cells (idle compositor / residual swap stay empty)
- *   used/total ≥ redAt → 5 cells (red) with headroom still left
- *   between: 1..4
- * Color (per lit cell index):
- *   0–1 green · 2 yellow · 3 orange · 4 red
- *
- * Contract: caffeine template (external SSOT · derived UI · tick reconcile · IPC).
- */
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createState } from "ags"
 
 const MEMINFO = "/proc/meminfo"
-const TICK_MS = 2000
+const STAT = "/proc/stat"
+const TICK_MS = 3000
 const GIB = 1024 * 1024 * 1024
 
-/** Cells per row (5×3 grid). */
 export const CELLS_PER_ROW = 5
 
-/** Fallback when nvidia-smi total is missing (RTX 2060 OC). */
 const VRAM_TOTAL_FALLBACK_GIB = 8
 
-/** used/total floor → 0 cells; redAt → 5th (red) cell. Both < 1 so red is a warning. */
 export type WarnScale = { floor: number; redAt: number }
 
-/** VRAM 8 GiB: red at 70% (~5.6 GiB, 2.4 left). */
 export const SCALE_VRAM: WarnScale = { floor: 0, redAt: 0.7 }
 
-/** RAM ~15 GiB: 4 GB (~27%) lights 2 green cells; red at 88% (~13.2 used, ~1.8 avail before OOM). */
 export const SCALE_RAM: WarnScale = { floor: 0, redAt: 0.88 }
 
-/** Swap 8 GiB: 0 when empty; red at 35% (~2.8 GiB) — paging already hurts. */
+export const SCALE_CPU: WarnScale = { floor: 0, redAt: 0.9 }
+
 export const SCALE_SWAP: WarnScale = { floor: 0, redAt: 0.35 }
+
+const [cpuRatio, setCpuRatio] = createState(0)
+const [cpuCells, setCpuCells] = createState(0)
 
 const [vramUsedGiB, setVramUsedGiB] = createState(0)
 const [vramTotalGiB, setVramTotalGiB] = createState(VRAM_TOTAL_FALLBACK_GIB)
@@ -64,15 +45,14 @@ const [ok, setOk] = createState(true)
 let tickSource: number | null = null
 let started = false
 let since = 0
+let prevCpuIdle = 0
+let prevCpuTotal = 0
+let prevCpuOk = false
 
 function nowSec(): number {
   return GLib.get_monotonic_time() / 1_000_000
 }
 
-/**
- * How many of 5 cells are lit for used/total on a warn-ahead scale.
- * Tiny usage (below floor) is 0 — never light green from ceil(epsilon).
- */
 export function cellsFromRatio(
   used: number,
   total: number,
@@ -85,7 +65,7 @@ export function cellsFromRatio(
   if (r >= scale.redAt) return CELLS_PER_ROW
   const span = scale.redAt - scale.floor
   if (!(span > 0)) return CELLS_PER_ROW
-  const t = (r - scale.floor) / span // (0, 1)
+  const t = (r - scale.floor) / span
   return 1 + Math.floor(t * (CELLS_PER_ROW - 1))
 }
 
@@ -95,10 +75,37 @@ export type MemSnap = {
   ramUsedB: number
   swapTotalB: number
   swapUsedB: number
-  /** Compressed zswap pool in RAM (0 if unused / old kernel). */
   zswapPoolB: number
-  /** Uncompressed size of pages stored in zswap. */
   zswappedB: number
+}
+
+
+export function readCpuRatio(): number | null {
+  try {
+    const [okRead, bytes] = Gio.File.new_for_path(STAT).load_contents(null)
+    if (!okRead) return null
+    const line = new TextDecoder().decode(bytes).split("\n")[0] ?? ""
+    if (!line.startsWith("cpu ")) return null
+    const parts = line.trim().split(/\s+/).slice(1).map((s) => parseInt(s, 10))
+    if (parts.length < 4 || parts.some((n) => !Number.isFinite(n) || n < 0)) return null
+    const idle = parts[3] + (parts[4] ?? 0)
+    const total = parts.reduce((a, b) => a + b, 0)
+    if (!(total > 0)) return null
+    if (!prevCpuOk) {
+      prevCpuIdle = idle
+      prevCpuTotal = total
+      prevCpuOk = true
+      return 0
+    }
+    const dIdle = idle - prevCpuIdle
+    const dTotal = total - prevCpuTotal
+    prevCpuIdle = idle
+    prevCpuTotal = total
+    if (!(dTotal > 0)) return 0
+    return Math.min(1, Math.max(0, 1 - dIdle / dTotal))
+  } catch {
+    return null
+  }
 }
 
 export function readMeminfo(): MemSnap | null {
@@ -146,7 +153,6 @@ export function readMeminfo(): MemSnap | null {
   }
 }
 
-/** VRAM used/total in GiB from nvidia-smi. null on failure. */
 export function readVramGiB(): { used: number; total: number } | null {
   try {
     const proc = Gio.Subprocess.new(
@@ -175,6 +181,12 @@ export function readVramGiB(): { used: number; total: number } | null {
 }
 
 function reconcile(): void {
+  const cpu = readCpuRatio()
+  if (cpu !== null) {
+    setCpuRatio(cpu)
+    setCpuCells(cellsFromRatio(cpu, 1, SCALE_CPU))
+  }
+
   const mem = readMeminfo()
   if (!mem) {
     setLastError("meminfo read failed")
@@ -207,9 +219,8 @@ function reconcile(): void {
     setLastError("")
     setOk(true)
   } else {
-    // Keep last VRAM numbers; still show RAM/Swap. Mark soft error.
     setLastError("nvidia-smi vram failed")
-    setOk(true) // mem path ok
+    setOk(true)
     setVramCells(
       cellsFromRatio(
         vramUsedGiB(),
@@ -241,6 +252,7 @@ export function getRamStatus(): string {
   const err = lastError()
   const errPart = err ? ` err=${err}` : ""
   return (
+    `cpu=${(cpuRatio() * 100).toFixed(0)}% cells=${cpuCells()} ` +
     `vram=${vramUsedGiB().toFixed(2)}/${vramTotalGiB().toFixed(2)} cells=${vramCells()} ` +
     `ram=${ramUsedGiB().toFixed(2)}/${ramTotalGiB().toFixed(2)} avail=${ramAvailGiB().toFixed(2)} cells=${ramCells()} ` +
     `swap=${swapUsedGiB().toFixed(2)}/${swapTotalGiB().toFixed(2)} cells=${swapCells()} ` +
@@ -249,7 +261,8 @@ export function getRamStatus(): string {
   )
 }
 
-/** Reactive accessors for the widget. */
+export const trackCpuRatio = cpuRatio
+export const trackCpuCells = cpuCells
 export const trackVramUsedGiB = vramUsedGiB
 export const trackVramTotalGiB = vramTotalGiB
 export const trackVramCells = vramCells

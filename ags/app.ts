@@ -8,14 +8,6 @@ import {
   setBarMode,
   type BarMode,
 } from "./widget/bar-mode"
-// Caffeine parked (UI off). Restore handlers + import with ClockCaffeine in Bar.tsx.
-// import {
-//   getCaffeineStatus,
-//   getCaffeineToken,
-//   requestCaffeineOff,
-//   requestCaffeineOn,
-//   toggleCaffeine,
-// } from "./widget/caffeine"
 import { toggleRecMenu } from "./widget/RecMenu"
 import {
   toggleBrainMenu,
@@ -24,9 +16,11 @@ import {
 } from "./widget/cluster-menu"
 import { getRamStatus } from "./widget/ram"
 import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
+import { refreshCredits, openRouterSnap } from "./widget/openrouter"
+import { refreshCursorUsage, cursorUsageSnap } from "./widget/cursor"
 import GLib from "gi://GLib"
 
-// Desktop PC: ASUS VA27EHF. Laptop TUF (kdxsid): eDP — set KDX_BAR_MODEL or match connector.
+// Desktop Sid: ASUS VA27EHF (default). Laptops (kdxsid, zensid): KDX_BAR_MODEL=EDP.
 const BAR_MODEL = GLib.getenv("KDX_BAR_MODEL") || "VA27EHF"
 
 let spawnedFor: string | null = null
@@ -46,37 +40,34 @@ function isBarMonitor(mon: {
 }): boolean {
   const model = modelOf(mon).toUpperCase()
   const desc = (mon.description ?? "").toUpperCase()
-  // HDMI-A-N flips on desktop; on laptop prefer eDP-1 when BAR_MODEL is eDP/CMN/BUILTIN.
+  // HDMI-A-N flips on desktop; on laptops prefer eDP when BAR_MODEL is EDP/BUILTIN.
   const c = connectorOf(mon).toUpperCase()
-  if (BAR_MODEL.toUpperCase() === "EDP" || BAR_MODEL.toUpperCase() === "BUILTIN") {
+  const want = BAR_MODEL.toUpperCase()
+  if (want === "EDP" || want === "BUILTIN") {
     return c.includes("EDP") || model.includes("CMN") || desc.includes("BUILT-IN")
   }
-  return model.includes(BAR_MODEL.toUpperCase()) || desc.includes(BAR_MODEL.toUpperCase()) || c.includes(BAR_MODEL.toUpperCase())
+  return model.includes(want) || desc.includes(want) || c.includes(want)
+}
+
+function trySpawnBar(reason: string) {
+  // house default: only ASUS VA27EHF (left landscape). No bar on AOC.
+  if (spawnedFor) return
+  for (const mon of app.get_monitors()) {
+    if (!isBarMonitor(mon)) continue
+    Bar(mon)
+    spawnedFor = connectorOf(mon) || BAR_MODEL
+    printerr(`ags: bar on ${spawnedFor} model=${modelOf(mon)} (${reason})`)
+    return
+  }
+  printerr(
+    `ags: no bar monitor yet (${reason}); want model=${BAR_MODEL}; monitors=` +
+      app.get_monitors().map((m) => `${connectorOf(m) || "?"}:${modelOf(m) || "?"}`).join(","),
+  )
 }
 
 function sanitizeCss(input: unknown): string {
   const raw = typeof input === "string" ? input : (input as { default?: string })?.default ?? ""
   return raw.replace(/@charset[^;]*;/gi, "").replace(/@use[^;]*;/gi, "").trim()
-}
-
-function trySpawnBar(reason: string) {
-  if (spawnedFor && !app.get_window("bar")) {
-    spawnedFor = null
-  }
-
-  for (const mon of app.get_monitors()) {
-    if (!isBarMonitor(mon)) continue
-    const c = connectorOf(mon) || modelOf(mon) || "asus"
-    if (spawnedFor === c && app.get_window("bar")) return
-    Bar(mon)
-    spawnedFor = c
-    printerr(`ags: bar on ${c} model=${modelOf(mon)} (${reason})`)
-    return
-  }
-  printerr(
-    `ags: no bar panel ${BAR_MODEL} yet (${reason}); monitors=` +
-      app.get_monitors().map((m) => `${connectorOf(m) || "?"}:${modelOf(m) || "?"}`).join(","),
-  )
 }
 
 app.start({
@@ -113,27 +104,6 @@ app.start({
         return
       }
     }
-    // parked caffeine requests — restore with widget/caffeine import above
-    // if (cmd === "caffeine-toggle" || cmd === "caffeine") {
-    //   const snap = toggleCaffeine()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
-    // if (cmd === "caffeine-status" || cmd === "caffeine-get") {
-    //   const snap = getCaffeineStatus()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
-    // if (cmd === "caffeine-on") {
-    //   const snap = requestCaffeineOn()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
-    // if (cmd === "caffeine-off") {
-    //   const snap = requestCaffeineOff()
-    //   res(`${getCaffeineToken()} | ${snap}`)
-    //   return
-    // }
     if (
       cmd === "caffeine-toggle" ||
       cmd === "caffeine" ||
@@ -149,6 +119,18 @@ app.start({
       res(toggleRecMenu())
       return
     }
+    if (cmd === "mic-menu" || cmd === "mic-toggle-menu" || cmd === "mic") {
+      res(toggleMicMenu())
+      return
+    }
+    if (cmd === "dictator-menu" || cmd === "dictator-toggle-menu" || cmd === "dictator") {
+      res(toggleDictatorMenu())
+      return
+    }
+    if (cmd === "brain-menu" || cmd === "local-llm-menu" || cmd === "brain") {
+      res(toggleBrainMenu())
+      return
+    }
     if (cmd === "ram-status" || cmd === "ram") {
       res(getRamStatus())
       return
@@ -162,20 +144,26 @@ app.start({
       res(`warp: phase=${getWarpPhase()} active=${getWarpActive()}`)
       return
     }
-
-    if (cmd === "mic-menu" || cmd === "mic") {
-      res(toggleMicMenu())
+    if (cmd === "openrouter" || cmd === "credits" || cmd === "openrouter-status") {
+      const s = openRouterSnap()
+      res(JSON.stringify(s))
       return
     }
-    if (cmd === "dictator-menu" || cmd === "dictator") {
-      res(toggleDictatorMenu())
+    if (cmd === "openrouter-refresh" || cmd === "credits-refresh") {
+      refreshCredits()
+      res("refreshing openrouter credits...")
       return
     }
-    if (cmd === "brain-menu" || cmd === "brain") {
-      res(toggleBrainMenu())
+    if (cmd === "cursor" || cmd === "cursor-usage" || cmd === "cursor-status") {
+      const s = cursorUsageSnap()
+      res(JSON.stringify(s))
       return
     }
-
+    if (cmd === "cursor-refresh") {
+      refreshCursorUsage()
+      res("refreshing cursor usage...")
+      return
+    }
     res(`unknown request: ${argv.join(" ")}`)
   },
 })

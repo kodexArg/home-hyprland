@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <mask id="grok-bot-eyes">
+      <rect width="24" height="24" fill="white" />
+      <!-- Left Eye -->
+      <rect x="-1.1" y="-2.5" width="2.2" height="5.0" rx="1.1" ry="1.1" fill="black" transform="translate(11.06, 14.48) rotate(-35.5)" />
+      <!-- Right Eye (perspective narrowed) -->
+      <rect x="-0.8" y="-2.5" width="1.6" height="5.0" rx="0.8" ry="0.8" fill="black" transform="translate(17.80, 11.33) rotate(-35.5)" />
+    </mask>
+  </defs>
+  <!-- Robot Head Dome -->
+  <circle cx="9.58" cy="19.18" r="14.39" fill="#b5b0a6" mask="url(#grok-bot-eyes)" />
+</svg>

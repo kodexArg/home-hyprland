@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""VAD on default mic → stdout "0\\n"/"1\\n". One parec child; killed on exit/signal."""
 import math
 import os
 import signal
@@ -14,8 +15,31 @@ CHUNK_SAMPLES = int(RATE * CHUNK_MS / 1000)
 CHUNK_BYTES = CHUNK_SAMPLES * BYTES_PER_SAMPLE
 MAX_HANGOVER = 5
 
+_parec = None
 
-def cleanup(*args):
+
+def _kill_parec():
+    global _parec
+    if _parec is None:
+        return
+    try:
+        if _parec.poll() is None:
+            _parec.terminate()
+            try:
+                _parec.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                _parec.kill()
+                _parec.wait(timeout=0.5)
+    except Exception:
+        try:
+            _parec.kill()
+        except Exception:
+            pass
+    _parec = None
+
+
+def cleanup(*_args):
+    _kill_parec()
     sys.exit(0)
 
 
@@ -46,6 +70,8 @@ def resolve_source() -> str:
 
 
 def stream_audio(source: str):
+    global _parec
+    _kill_parec()
     cmd = [
         "parec",
         f"--rate={RATE}",
@@ -55,7 +81,15 @@ def stream_audio(source: str):
         "-d",
         source,
     ]
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    # start_new_session: parent kill leaves us able to signal the session; we still
+    # track the Popen and terminate it explicitly (avoids orphan parec on SIGKILL of parent).
+    _parec = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return _parec
 
 
 def run_vad():
@@ -92,8 +126,7 @@ def run_vad():
                 sys.stdout.write(f"{state}\n")
                 sys.stdout.flush()
     finally:
-        if proc:
-            proc.terminate()
+        _kill_parec()
 
 
 def main():
@@ -101,6 +134,7 @@ def main():
         try:
             run_vad()
         except Exception:
+            _kill_parec()
             time.sleep(1)
 
 

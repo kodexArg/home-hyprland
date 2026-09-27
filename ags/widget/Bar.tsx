@@ -13,10 +13,15 @@ import KodexbotChip from "./KodexbotChip"
 import RecModeIndicator from "./RecModeIndicator"
 import CastRecChip from "./CastRecChip"
 import MicIndicator from "./MicIndicator"
+import OpenRouterMeter from "./OpenRouterMeter"
+import GrokBotMeter from "./GrokBotMeter"
+import CursorMeter from "./CursorMeter"
+import LanMouseMeter from "./LanMouseMeter"
 import GameVolume from "./GameVolume"
 import { ensureGameStreamsFollowDefault } from "./game-audio"
+import { isZoomDense } from "./zoom"
 
-const TRACK_W = 140
+const TRACK_W_BASE = 140
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_SPEAKERS = `${ICON_DIR}/speakers.svg`
@@ -256,9 +261,12 @@ function VolumeTrack() {
   const wp = AstalWp.get_default()!
   const speaker = () => wp.defaultSpeaker
   const vol = createBinding(wp, "defaultSpeaker", "volume")
+  const trackW = createComputed(() =>
+    isZoomDense() ? Math.round(TRACK_W_BASE / 2) : TRACK_W_BASE,
+  )
 
   const setFromX = (widget: Gtk.Widget, x: number) => {
-    const w = widget.get_allocated_width() || TRACK_W
+    const w = widget.get_allocated_width() || trackW()
     const v = Math.max(0, Math.min(1, x / w))
     speaker().set_volume(v)
   }
@@ -268,14 +276,16 @@ function VolumeTrack() {
     s.set_volume(Math.max(0, Math.min(1, s.volume + delta)))
   }
 
-  const fillW = vol((v) =>
-    Math.max(0, Math.round(Math.max(0, Math.min(1, v)) * TRACK_W)),
-  )
+  const fillW = createComputed(() => {
+    const tw = trackW()
+    const v = Number(vol()) // track speaker volume accessor
+    return Math.max(0, Math.round(Math.max(0, Math.min(1, v)) * tw))
+  })
 
   return (
     <box
       class="Volume-track"
-      widthRequest={TRACK_W}
+      widthRequest={trackW}
       heightRequest={16}
       valign={Gtk.Align.CENTER}
       tooltipText="Drag / click / scroll"
@@ -517,11 +527,12 @@ function attachMotion(
 
 export default function Bar(gdkmonitor: Gdk.Monitor) {
   const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
+  const conn = gdkmonitor.connector ?? "bar"
 
   return (
     <window
-      visible={barVisible}
-      name="bar"
+      visible={true}
+      name={`bar-${conn}`}
       namespace="ags-bar"
       class={barModeClass}
       gdkmonitor={gdkmonitor}
@@ -550,7 +561,11 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           <KodexbotChip />
           <RecModeIndicator />
           <CastRecChip />
-          <box spacing={2} class="BrainCluster" valign={Gtk.Align.CENTER}>
+          <box spacing={4} class="BrainCluster" valign={Gtk.Align.CENTER}>
+            <GrokBotMeter />
+            <CursorMeter />
+            <OpenRouterMeter />
+            <LanMouseMeter />
             <MicIndicator gdkmonitor={gdkmonitor} />
           </box>
           <RamTrack />

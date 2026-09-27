@@ -13,3 +13,13 @@ ags/@girs/
 __pycache__/
 *.pyc
 .ruff_cache/
+
+# secrets / host-local credentials (never commit)
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# host runtime state written by hypr-monitor-heal / ags
+ags/.monitor-left-right.json*

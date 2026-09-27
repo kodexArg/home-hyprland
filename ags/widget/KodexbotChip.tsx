@@ -1,21 +1,3 @@
-// kodexBot chip — AGS widget (ags v3, GTK4).
-// Pattern per kdx-hypr-control: FSM + external SSOT + derived UI.
-// SSOT: $XDG_RUNTIME_DIR/kodexbot_state.json published by the daemon
-// (src/kodexbot/state.py). Poll 150 ms. File absent = system off = invisible.
-//
-// Color contract (user spec 2026-08-01):
-//   BOX (the chip container) = the MODE:
-//     off → invisible · listening → orange · dictating (typing) → green
-//   MIC (the icon) = the AUDIO PATH:
-//     off → gray 50% · active, no voice → orange · voice heard → green
-//     mic muted (daemon detects digital silence) → black
-//     lane error / stale (not processing, don't bother speaking) → red
-//
-// State fields (parsed defensively):
-//   phase "listening"|"dictating" · voice bool (?? false)
-//   mic "ok"|"muted" (?? "ok") · lane "ok"|"error"|"disabled" (?? "ok")
-//   detail string · ts epoch · pid number
-
 import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
@@ -25,8 +7,6 @@ const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const STATE_FILE = `${GLib.get_user_runtime_dir()}/kodexbot_state.json`
 const STALE_SEC = 10
 
-// Baked-color icon variants: GTK does not tint file SVGs via CSS `color`
-// (currentColor resolves to black), so the mic tone is carried by the file.
 const ICON_BY_TONE: Record<string, string> = {
   "tone-idle": `${ICON_DIR}/mic-orange.svg`,
   "tone-voice": `${ICON_DIR}/mic-green.svg`,
@@ -37,11 +17,11 @@ const ICON_BY_TONE: Record<string, string> = {
 
 type Snap = {
   visible: boolean
-  phase: string // "listening" | "dictating" | "off"
+  phase: string
   voice: boolean
   muted: boolean
   error: boolean
-  fallback: boolean // last action came from the LLM fallback (ochre box)
+  fallback: boolean
   tooltip: string
 }
 
@@ -120,7 +100,6 @@ export default function KodexbotChip() {
   const cls = snap((s) => {
     const parts = ["KodexbotChip"]
     if (!s.visible) return parts.join(" ")
-    // box: mode color, or ochre when the last action was an LLM fallback
     parts.push(s.fallback ? "fallback" : s.phase)
     return parts.join(" ")
   })

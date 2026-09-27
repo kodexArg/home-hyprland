@@ -19,6 +19,13 @@ import {
   warpTip,
   toggleWarp,
 } from "./warp"
+import {
+  bluetoothIconOn,
+  bluetoothLabel,
+  bluetoothRowClass,
+  bluetoothTip,
+  toggleBluetooth,
+} from "./bluetooth"
 
 import {
   castMic,
@@ -48,6 +55,8 @@ const ICON_VPN = `${ICON_DIR}/vpn.svg`
 const ICON_VPN_OFF = `${ICON_DIR}/vpn-off.svg`
 const ICON_WARP = `${ICON_DIR}/warp.svg`
 const ICON_WARP_OFF = `${ICON_DIR}/warp-off.svg`
+const ICON_BLUETOOTH = `${ICON_DIR}/bluetooth.svg`
+const ICON_BLUETOOTH_OFF = `${ICON_DIR}/bluetooth-off.svg`
 const ICON_CAST = `${ICON_DIR}/cast.svg`
 const ICON_TARGET = `${ICON_DIR}/target-set.svg`
 const ICON_STREAM = `${ICON_DIR}/stream-signal.svg`
@@ -58,10 +67,9 @@ const ICON_AREA = `${ICON_DIR}/area.svg`
 const ICON_PANEL = `${ICON_DIR}/panel.svg`
 const ICON_LOGS = `${ICON_DIR}/logs.svg`
 
-/** Fixed label column width — keeps icon | text columns aligned across rows. */
 const LABEL_W = 120
 const PANEL_GAP = 4
-/** Sandwich glyph 1.25× base 16px icons; hitbox stays 22×22. */
+
 const MENU_ICON_PX = 20
 
 type PowerAction = "reboot" | "poweroff"
@@ -133,7 +141,6 @@ function SystemClickaway(gdkmonitor: Gdk.Monitor) {
   )
 }
 
-/** One row: [icon] [fixed-width text button]. Whole row is the hit target. */
 function MenuRow({
   iconFile,
   label,
@@ -163,7 +170,6 @@ function MenuRow({
   )
 }
 
-/** Gabriel-L2TP — cream when up, grey when down; click toggles via nmcli. */
 function VpnRow() {
   const iconFile = createComputed(() =>
     l2tpIconOn() ? ICON_VPN : ICON_VPN_OFF,
@@ -180,7 +186,6 @@ function VpnRow() {
   )
 }
 
-/** Cloudflare WARP — cream when connected, grey when disconnected; click toggles via warp-cli. */
 function WarpRow() {
   const iconFile = createComputed(() =>
     warpIconOn() ? ICON_WARP : ICON_WARP_OFF,
@@ -193,6 +198,22 @@ function WarpRow() {
       tip={warpTip}
       rowClass={warpRowClass}
       onClicked={() => toggleWarp()}
+    />
+  )
+}
+
+function BluetoothRow() {
+  const iconFile = createComputed(() =>
+    bluetoothIconOn() ? ICON_BLUETOOTH : ICON_BLUETOOTH_OFF,
+  )
+
+  return (
+    <MenuRow
+      iconFile={iconFile}
+      label={bluetoothLabel}
+      tip={bluetoothTip}
+      rowClass={bluetoothRowClass}
+      onClicked={() => toggleBluetooth()}
     />
   )
 }
@@ -288,17 +309,14 @@ function rebuildPanelList(self: Gtk.Box): void {
   }
 
   const list = fetchHyprlandPanels()
-  // Physical: HDMI-A-2 ASUS LEFT, HDMI-A-1 AOC RIGHT
   const left = list.filter(
     (p) => p.monitorName.includes("HDMI-A-2") || p.monitorName.includes("ASUS"),
   )
   const right = list.filter(
     (p) => p.monitorName.includes("HDMI-A-1") || p.monitorName.includes("AOC"),
   )
-  // Fallback if name map failed: use remaining by monitor id heuristic
   const used = new Set([...left, ...right].map((p) => p.address))
   const leftover = list.filter((p) => !used.has(p.address))
-  // Prefer x coord: negative x → left
   for (const p of leftover) {
     if (p.at[0] < 0) left.push(p)
     else right.push(p)
@@ -407,7 +425,7 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
           <label class="CastPopup-title" label="Cast & Screen Capture" />
           <label class="CastPopup-sub-header" label={targetHint} />
 
-          {/* Section 1: Screen (whole outputs) */}
+          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_SCREEN} pixelSize={14} />
@@ -438,7 +456,7 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
             </box>
           </box>
 
-          {/* Audio: mic mixed into the mp4 (desktop stays). Default ON. */}
+          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_MIC} pixelSize={14} />
@@ -465,7 +483,7 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
             </box>
           </box>
 
-          {/* Section 2: Area */}
+          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_AREA} pixelSize={14} />
@@ -482,7 +500,7 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
             </box>
           </box>
 
-          {/* Section 3: Window panels */}
+          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.FILL} hexpand>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_PANEL} pixelSize={14} />
@@ -500,7 +518,6 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
                   if (!castPopupOpen.peek()) return
                   rebuildPanelList(self)
                 }
-                // Immediate if already open when $ mounts; every open thereafter
                 if (castPopupOpen.peek()) refresh()
                 castPopupOpen.subscribe((isOpen) => {
                   if (isOpen) refresh()
@@ -571,19 +588,20 @@ function MenuList() {
         class="SystemMenu-status"
         label="SYSTEM"
         xalign={0}
-        tooltipText={`${L2TP_CONN} · WARP · Cast · Logs · Restart · Power off · outside/Esc closes`}
+        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Restart · Power off · outside/Esc closes`}
       />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 
       <VpnRow />
       <WarpRow />
+      <BluetoothRow />
       <CastRow />
       <LogsRow />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 
-      {/* Bottom: restart | poweroff — icon only, side by side */}
+      {}
       <box
         class="SystemMenu-power"
         spacing={6}
@@ -658,7 +676,7 @@ function SystemPanel(gdkmonitor: Gdk.Monitor) {
           )
         }
       >
-        {/* Both views stay mounted; CSS/visible toggles which is shown */}
+        {}
         <box
           visible={createComputed(() => !pending())}
           orientation={Gtk.Orientation.VERTICAL}

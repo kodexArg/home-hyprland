@@ -8,7 +8,6 @@ const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_REC_IDLE = `${ICON_DIR}/rec.svg`
 const ICON_REC_ON = `${ICON_DIR}/rec-on.svg`
 
-/** Mock rows — replace labels/actions later; keep structure. */
 const MOCK_OPTIONS = [
   { id: "opt-1", label: "Option 1" },
   { id: "opt-2", label: "Option 2" },
@@ -39,7 +38,6 @@ function closeMenu() {
 
 function onPick(id: string) {
   setSelectedId(id)
-  // Mock: select only. Wire real actions later; menu stays open so you can inspect.
 }
 
 function RecClickaway(gdkmonitor: Gdk.Monitor) {
@@ -169,7 +167,6 @@ export default function RecMenu({
     return parts.join(" ")
   })
 
-  // Same visual language as a camcorder REC lamp: cream idle, red when armed.
   const iconFile = createComputed(() =>
     selectedId() || menuOpen() ? ICON_REC_ON : ICON_REC_IDLE,
   )
