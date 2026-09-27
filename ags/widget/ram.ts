@@ -9,6 +9,9 @@ const GIB = 1024 * 1024 * 1024
 
 export const CELLS_PER_ROW = 5
 
+// Hosts without NVIDIA (zensid: Intel HD 5500) set KDX_NO_NVIDIA=1 → no nvidia-smi spawns.
+export const NO_NVIDIA = GLib.getenv("KDX_NO_NVIDIA") === "1"
+
 const VRAM_TOTAL_FALLBACK_GIB = 8
 
 export type WarnScale = { floor: number; redAt: number }
@@ -154,6 +157,7 @@ export function readMeminfo(): MemSnap | null {
 }
 
 export function readVramGiB(): { used: number; total: number } | null {
+  if (NO_NVIDIA) return null
   try {
     const proc = Gio.Subprocess.new(
       [
