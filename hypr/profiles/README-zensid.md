@@ -21,8 +21,19 @@ HyprControl skills), **own system**: Debian 13 trixie + trixie-backports only.
 1. Root part (Gabriel, once sudo exists): `sudo ~/home-hyprland/bin/kdx-bootstrap-zensid`
    (steps: `apt` → trixie-backports Hyprland stack + trixie deps; `build` → astal io/gtk3/gtk4/wireplumber + ags;
    `dropins` → `/etc/systemd/user/*/hyprland-only.conf`; `stremio`; `nosleep`; `session`). Idempotent.
-2. User part (printed at the end of the script): link `profiles/zensid.lua` to `~/.config/hypr/hyprland.lua`,
-   copy hypridle/hyprpaper, rsync `ags/`, install `bin/*`, enable `ags-hyprland.service`.
+2. User part (done 2026-09-27, all symlinks into the repo so `git pull` updates them):
+   ```sh
+   R=~/home-hyprland; mkdir -p ~/.config/hypr ~/.config/systemd/user ~/.local/bin
+   ln -sfn $R/hypr/profiles/zensid.lua          ~/.config/hypr/hyprland.lua
+   ln -sfn $R/hypr/profiles/zensid.hypridle.conf ~/.config/hypr/hypridle.conf
+   ln -sfn $R/hypr/hyprpaper.conf                ~/.config/hypr/hyprpaper.conf
+   ln -sfn $R/ags ~/.config/ags
+   for f in $R/bin/*; do ln -sfn "$f" ~/.local/bin/; done
+   cp $R/systemd/user/ags-hyprland.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable ags-hyprland.service
+   # ags needs dart-sass for style.scss (same as Sid):
+   PATH=~/.local/node/bin:$PATH npm install -g --prefix ~/.local sass@1.101.0
+   Hyprland --verify-config -c ~/.config/hypr/hyprland.lua   # -> config ok
+   ```
 3. First Hyprland login: `hyprctl monitors` → replace `tv = "HDMI-A-1"` with `desc:<exact description>`.
 
 ## Optional (user-level, not installed)
@@ -30,7 +41,7 @@ HyprControl skills), **own system**: Debian 13 trixie + trixie-backports only.
 - ydotool: package installed by bootstrap; ydotoold needs `/dev/uinput` access (group/udev) — decide later.
 
 ## API check
-Profile validated offline against Hyprland v0.55.2 sources (hl.* names + `hl.config` keys from
+`Hyprland --verify-config` exists in 0.55.2 and reports `config ok` for this profile. Also validated offline against Hyprland v0.55.2 sources (hl.* names + `hl.config` keys from
 `src/config/lua/bindings/*` and `src/config/values/ConfigValues.cpp`).
 
 ## Stremio options checked (2026-09-27)
