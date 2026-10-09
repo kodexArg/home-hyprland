@@ -50,6 +50,7 @@ description: >
 4. After Hypr edits: reload via **hyprmcp** when connected, else `hyprctl reload`. After AGS edits: `ags quit &&` re-run (or restart session). **Permissions** need full Hypr restart.
 5. Register standing host decisions with `kdx-register-this-configuration` → `~/Documents/System/ADRs/`.
 6. **Live compositor state → hyprmcp first** (global strong default MCP). Shell `hyprctl` only when MCP is down, for bulk JSON pipes the tools don't cover, or when the skill explicitly says so.
+7. **Room to play:** facts in `references/` and ADRs are load-bearing (portrait CRTC, `desc:` binds, Lua, GNOME fallback); how you get there is open — prefer a sharp experiment on this host over a safe no-op. If you break the portrait monitor, heal it (`hypr-monitor-heal`) and write down what you learned.
 
 ## hyprmcp (preferred for inspect / dispatch)
 
@@ -114,6 +115,8 @@ Shared MCP server `hyprmcp` (`~/.local/bin/hyprmcp`). Discover schema with `sear
 | Monitors, env, NVIDIA, devices, autostart, look | `references/this-machine.md` |
 | Upstream Hyprland 0.55 Lua API / wiki | `references/hyprland-docs.md` |
 | **AGS bar (docs + our bar)** | `references/ags.md` ← special section |
+| Host ADR catalog (one line each) | `references/adrs.md` then the ADR file |
+| Debian sid quirks (DKMS, AGS build, user units) | `references/debian.md` |
 
 Do **not** paste hyprlang from old blogs. Translate to `hl.*` using `references/hyprland-docs.md`.
 
