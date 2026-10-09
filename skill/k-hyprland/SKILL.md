@@ -2,10 +2,10 @@
 name: k-hyprland
 description: >
   This-machine Hyprland + AGS operator for kodex debian-sid (not a general
-  Hyprland tutorial). Two monitors: left ASUS often rotated 90°, right AOC
-  landscape. Catalog of host ADRs, Lua config, and Debian quirks. Use when
+  Hyprland tutorial). Two 1080p landscape monitors: left ASUS, right
+  AOC. Catalog of host ADRs, Lua config, and Debian quirks. Use when
   the user runs /k-hyprland, mentions hyprland, hypr, hyprctl, hyprland.lua,
-  AGS bar, portrait monitor, hypr-monitor-heal, kdx-share, or this desktop
+  AGS bar, monitors/panels, hypr-monitor-heal, kdx-share, or this desktop
   session. On every invoke, version-check the skill catalog against
   ~/home-hyprland; if they diverge, refresh from the repo and wiki, then
   still solve the task with whatever knowledge remains if the net fails.
@@ -21,7 +21,7 @@ Sibling runbooks (deeper): `~/home-hyprland/skill/kdx-hypr-control/`. Grok-facin
 
 ## Room to play
 
-Facts in `references/` and ADRs are load-bearing (portrait CRTC, `desc:` binds, Lua, GNOME stays). How you get there is open: new AGS chips, zoom variants, workspace theatre, scripts in `~/.local/bin`. Prefer a sharp experiment on this host over a safe no-op. If you break the portrait monitor, heal it (`hypr-monitor-heal`) and write down what you learned.
+Facts in `references/` and ADRs are load-bearing (`desc:` binds, Lua, GNOME stays). How you get there is open: new AGS chips, zoom variants, workspace theatre, scripts in `~/.local/bin`. Prefer a sharp experiment on this host over a safe no-op. If you break a monitor, heal it (`hypr-monitor-heal`) and write down what you learned.
 
 ## Spine (every invoke — then improvise)
 
@@ -51,7 +51,12 @@ Skill SSOT: `~/home-hyprland/skill/k-hyprland/`. Grok: `~/.grok/skills/k-hyprlan
 
 ## Hardware (load `references/hardware.md`)
 
-Two HDMI panels. **Left ASUS VA27EHF is often rotated 90°** (`transform 1`, logical 1080×1920 at `-1080x0`). Right AOC landscape. That portrait-left layout is **remembered** even when live lua is temporarily both-landscape (`transform 0`, `-1920x0` / `0x0` — see lua comments + git `1c209aa`).
+Two HDMI monitors, both **1920×1080 @ 100 Hz landscape** (`transform 0`, scale 1), read from `hyprctl monitors -j` on 2026-10-09:
+
+- **Left ASUS VA27EHF** at `-1920,0` — panel 1.
+- **Right AOC G2790G4** at `0,0` — panel 4.
+
+No monitor is in portrait. Old portrait-left notes (`transform 1`, `-1080x0`, git `1c209aa`) are history only. Caveat: `hyprland.lua` (live and repo profile `hypr/profiles/debian-sid.lua`) still declares ASUS `transform 1` at `-720x0` scale 1.5, so a reload/restart may bring portrait back — check `hyprctl monitors -j` after reloading.
 
 Bind `desc:ASUSTek COMPUTER INC VA27EHF` and `desc:AOC G2790G4`. Connector names move.
 
@@ -59,7 +64,7 @@ Bind `desc:ASUSTek COMPUTER INC VA27EHF` and `desc:AOC G2790G4`. Connector names
 
 | Need | File |
 |---|---|
-| Monitors, NVIDIA+AMD, portrait restore | `references/hardware.md` |
+| Monitors, NVIDIA+AMD, layout | `references/hardware.md` |
 | Host ADRs | `references/adrs.md` then the ADR file |
 | Lua / wiki / inspect | `references/hyprland.md` |
 | Debian sid, DKMS, AGS path | `references/debian.md` |
