@@ -46,8 +46,8 @@ Dedicated on-board hardware mouse profiles (Logitech G300s or any multi-button g
 * **G4 (Top-Left Button)** $\rightarrow$ Mapped to `KEY_MICMUTE` (toggles PipeWire microphone mute via compositor).
 * **G6 (Top-Right Button)** $\rightarrow$ Mapped to `KEY_LEFTMETA` (Super / Windows key modifier).
 
-### 🤖 6. Agent Skills Included (`skills/`)
-Contains standardized **Agent Skills** (`skills/k-hyprland` and `skills/kdx-hypr-control`) complying with the universal Agent Skills specification. When opening this repository with Antigravity, Claude Code, Cursor, or Copilot, the AI assistant automatically understands the architecture, keybindings, and system commands.
+### 🤖 6. Agent Skills Included (`skill/`)
+Contains standardized **Agent Skills** (`skill/k-hyprland` and `skill/kdx-hypr-control`) complying with the universal Agent Skills specification. When opening this repository with Antigravity, Claude Code, Cursor, or Copilot, the AI assistant automatically understands the architecture, keybindings, and system commands.
 
 ---
 
@@ -78,7 +78,7 @@ home-hyprland/
 │   ├── hypr-zoom-toggle      # Instant display scale toggle (1.0 <-> 1.5)
 │   └── kdx-share             # Display transmission picker
 ├── kitty/                    # Kitty terminal profiles
-├── skills/                   # AI Agent Skills (k-hyprland, kdx-hypr-control)
+├── skill/                    # AI Agent Skills (k-hyprland, kdx-hypr-control)
 └── wallpapers/               # Desktop background assets
 ```
 
@@ -205,9 +205,9 @@ ratbagctl <device_name> button 5 action set macro KEY_LEFTMETA
 
 ## 🤝 AI Agent Collaboration
 
-This repository includes custom agent skills in the [`skills/`](./skills) directory:
-* [`skills/k-hyprland`](./skills/k-hyprland/SKILL.md): ADRs, hardware map, and Debian quirks catalog.
-* [`skills/kdx-hypr-control`](./skills/kdx-hypr-control/SKILL.md): Direct operator instructions, bar widget contracts, and compositor rule management.
+This repository includes custom agent skills in the [`skill/`](./skill) directory:
+* [`skill/k-hyprland`](./skill/k-hyprland/SKILL.md): ADRs, hardware map, and Debian quirks catalog.
+* [`skill/kdx-hypr-control`](./skill/kdx-hypr-control/SKILL.md): Direct operator instructions, bar widget contracts, and compositor rule management.
 
 ---
 
