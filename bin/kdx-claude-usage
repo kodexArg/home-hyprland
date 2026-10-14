@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+import datetime
+import json
+import os
+import sys
+
+CACHE_FILE = "/tmp/kdx_claude_usage.json"
+
+
+def main():
+    res = {
+        "email": "gcavedal@alvsgroup.com",
+        "org": "Alvsgroup",
+        "tier": "Team",
+        "rate_limit_tier": "default_raven",
+        "five_hour_pct": 0,
+        "daily_pct": 0,
+        "claude_pct": 0,
+        "claude_formatted": "0%",
+        "tokens_today": 0,
+        "messages_today": 0,
+        "sessions_today": 0,
+        "reset_str": "5h móvil",
+        "updated_at": datetime.datetime.now().strftime("%H:%M"),
+        "error": None,
+    }
+
+    # 1. Read oauthAccount from ~/.claude.json or ~/.config/claude-env-02/.claude.json
+    for cjson_path in [
+        os.path.expanduser("~/.claude.json"),
+        os.path.expanduser("~/.config/claude-env-02/.claude.json"),
+    ]:
+        if os.path.exists(cjson_path):
+            try:
+                with open(cjson_path) as f:
+                    cdata = json.load(f)
+                    oauth = cdata.get("oauthAccount", {})
+                    if oauth.get("emailAddress"):
+                        res["email"] = oauth["emailAddress"]
+                    if oauth.get("organizationName"):
+                        res["org"] = oauth["organizationName"]
+                    if oauth.get("seatTier"):
+                        res["tier"] = oauth["seatTier"].replace("_", " ").title()
+                    if oauth.get("userRateLimitTier"):
+                        res["rate_limit_tier"] = oauth["userRateLimitTier"]
+                    break
+            except Exception:
+                pass
+
+    # 2. Read live plan usage from ~/.config/Claude/plan-usage-history.json
+    plan_history = os.path.expanduser("~/.config/Claude/plan-usage-history.json")
+    if os.path.exists(plan_history):
+        try:
+            with open(plan_history) as f:
+                data = json.load(f)
+                samples = data.get("samples", [])
+                if samples:
+                    latest = samples[-1]
+                    u = latest.get("u", {})
+                    res["five_hour_pct"] = round(u.get("fh", 0))
+                    res["daily_pct"] = round(u.get("sd", 0))
+                    max_pct = max(res["five_hour_pct"], res["daily_pct"])
+                    res["claude_pct"] = max_pct
+                    res["claude_formatted"] = f"{max_pct}%"
+                    sample_t = latest.get("t")
+                    if sample_t:
+                        sample_dt = datetime.datetime.fromtimestamp(sample_t / 1000)
+                        res["updated_at"] = sample_dt.strftime("%H:%M")
+        except Exception as e:
+            res["error"] = str(e)
+
+    # 3. Read today's activity from stats-cache.json
+    today_str = datetime.date.today().isoformat()
+    for stats_path in [
+        os.path.expanduser("~/.claude/stats-cache.json"),
+        os.path.expanduser("~/.config/claude-pykodex/stats-cache.json"),
+    ]:
+        if os.path.exists(stats_path):
+            try:
+                with open(stats_path) as f:
+                    sdata = json.load(f)
+                    for d in sdata.get("dailyActivity", []):
+                        if d.get("date") == today_str:
+                            res["messages_today"] += d.get("messageCount", 0)
+                            res["sessions_today"] += d.get("sessionCount", 0)
+                    for d in sdata.get("dailyModelTokens", []):
+                        if d.get("date") == today_str:
+                            for m, t in d.get("tokensByModel", {}).items():
+                                res["tokens_today"] += t
+            except Exception:
+                pass
+
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(res, f)
+    except Exception:
+        pass
+
+    print(json.dumps(res))
+
+
+if __name__ == "__main__":
+    main()

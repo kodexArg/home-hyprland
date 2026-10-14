@@ -59,6 +59,18 @@ def resolve_source() -> str:
             for line in output.splitlines()
             if len(line.split("\t")) >= 2 and not line.split("\t")[1].endswith(".monitor")
         ]
+        # Easy Effects OFF (kdx-ee-mode): escuchar la fuente real por defecto.
+        try:
+            import json, os
+            with open(os.path.expanduser("~/.cache/kdx/ee-mode")) as f:
+                if json.load(f).get("mode") == "off":
+                    d = subprocess.check_output(
+                        ["pactl", "get-default-source"], text=True, stderr=subprocess.DEVNULL
+                    ).strip()
+                    if d in sources and "easyeffects" not in d:
+                        return d
+        except Exception:
+            pass
         if "easyeffects_source" in sources:
             return "easyeffects_source"
         for src in sources:

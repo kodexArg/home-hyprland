@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""kdx-ee-mode — Easy Effects como interruptor (ON/OFF) sin tocar servicios.
+
+  kdx-ee-mode on|off|toggle|status
+  kdx-ee-mode select <fuente-real>   # entrada elegida en el panel
+
+ON  : default source = easyeffects_source (default sink como hoy: sink real; EE rutea
+      los streams solo). OFF: default sink = sink real, default source = mic real elegido,
+      bypass global de EE (easyeffects -b 1) y se intenta mover streams con pactl.
+NUNCA para/reinicia easyeffects, pipewire ni wireplumber. Estado: ~/.cache/kdx/ee-mode
+Nota: con processAllOutputs/Inputs activo EE re-captura al instante los streams que se
+muevan; se detecta con una sonda y se anota en el estado (reclaims=true).
+"""
+import fcntl, json, os, re, subprocess, sys, time
+
+HOME = os.path.expanduser("~")
+CACHE = os.path.join(HOME, ".cache", "kdx")
+STATE = os.path.join(CACHE, "ee-mode")
+RC = os.path.join(HOME, ".config", "easyeffects", "db", "easyeffectsrc")
+EE_SINK, EE_SRC = "easyeffects_sink", "easyeffects_source"
+HDMI_SINK = "alsa_output.pci-0000_01_00.1.hdmi-stereo"
+FALLBACK_MICS = ["realtek_mic_mono", "alsa_input.usb-046d_Brio_100_2545ZBK1FP68-02.mono-fallback"]
+GAME_RE = re.compile(r"hell ?let ?loose|steam|wine|proton|\.exe|pressure-vessel", re.I)
+
+
+def sh(argv, timeout=3):
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip()
+    except Exception:
+        return 1, ""
+
+
+def pactl(*a):
+    return sh(["pactl", *a])
+
+
+def jlist(kind):
+    rc, out = pactl("-f", "json", "list", kind)
+    try:
+        return json.loads(out) if rc == 0 else []
+    except Exception:
+        return []
+
+
+def is_ee(name):
+    return "easyeffects" in (name or "").lower()
+
+
+def sinks():
+    return [s["name"] for s in jlist("sinks") if not is_ee(s["name"])]
+
+
+def sources():
+    return [s["name"] for s in jlist("sources")
+            if not s["name"].endswith(".monitor") and not is_ee(s["name"])]
+
+
+def all_sources():
+    return [s["name"] for s in jlist("sources")]
+
+
+def all_sinks():
+    return [s["name"] for s in jlist("sinks")]
+
+
+def default(kind):
+    rc, out = pactl("get-default-" + kind)
+    return out if rc == 0 else ""
+
+
+def load():
+    try:
+        with open(STATE) as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save(st):
+    os.makedirs(CACHE, exist_ok=True)
+    st["ts"] = int(time.time())
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(st, f)
+    os.replace(tmp, STATE)
+
+
+def rc_input_device():
+    try:
+        with open(RC) as f:
+            m = re.search(r"^inputDevice=(.+)$", f.read(), re.M)
+            return m.group(1).strip() if m else ""
+    except Exception:
+        return ""
+
+
+def pick_real_sink(st):
+    avail = sinks()
+    for c in (default("sink"), st.get("prev_sink"), HDMI_SINK):
+        if c and not is_ee(c) and c in avail:
+            return c
+    return avail[0] if avail else ""
+
+
+def pick_real_source(st):
+    avail = sources()
+    for c in (st.get("real_source"), rc_input_device(), *FALLBACK_MICS):
+        if c and c in avail:
+            return c
+    return avail[0] if avail else ""
+
+
+def restart_vad():
+    """El VAD de AGS (kdx-mic-activity) elige la fuente al arrancar; AGS lo relanza solo (backoff 1 s)."""
+    sh(["pkill", "-TERM", "-f", r"python3 .*/kdx-mic-activity$"], 2)
+
+
+def notify(msg):
+    sh(["notify-send", "-t", "1500", "-a", "Easy Effects", "Easy Effects", msg], 2)
+
+
+def candidate_streams(kind, target_name):
+    """kind: sink-input | source-output. Returns streams worth moving."""
+    field = "sink" if kind == "sink-input" else "source"
+    names = {s["index"]: s["name"] for s in jlist("sinks" if kind == "sink-input" else "sources")}
+    out = []
+    for s in jlist(kind + "s"):
+        p = s.get("properties", {})
+        app = p.get("application.name")
+        node = p.get("node.name", "") or ""
+        if not app or is_ee(app) or is_ee(node) or node.startswith(("capture.", "ee_", "output.")):
+            continue
+        if names.get(s[field]) == target_name:
+            continue
+        blob = " ".join([app, p.get("application.process.binary", "") or "", p.get("media.name", "") or ""])
+        out.append((bool(GAME_RE.search(blob)), s["index"], s))
+    out.sort(key=lambda t: t[0])  # no-juego primero
+    return out
+
+
+def device_of(kind, idx):
+    field = "sink" if kind == "sink-input" else "source"
+    names = {s["index"]: s["name"] for s in jlist("sinks" if kind == "sink-input" else "sources")}
+    for s in jlist(kind + "s"):
+        if s["index"] == idx:
+            return names.get(s[field])
+    return None
+
+
+def move_streams(kind, target_name):
+    """Mueve con sonda: si EE re-captura el primero, no insiste. -> 'moved'|'reclaimed'|'none'|'skipped'"""
+    cands = candidate_streams(kind, target_name)
+    if not cands:
+        return "none"
+    is_game, idx, _ = cands[0]
+    if kind == "source-output" and is_game:
+        return "skipped"  # no se toca el mic de un juego (corte momentáneo)
+    pactl("move-" + kind, str(idx), target_name)
+    time.sleep(0.5)
+    if device_of(kind, idx) != target_name:
+        return "reclaimed"
+    for g, i, _s in cands[1:]:
+        if kind == "source-output" and g:
+            continue
+        pactl("move-" + kind, str(i), target_name)
+    return "moved"
+
+
+def apply_off(st):
+    cur_mode = st.get("mode", "on")
+    if cur_mode != "off":
+        st["prev_sink"] = default("sink")
+        st["prev_source"] = default("source")
+    rs, src = pick_real_sink(st), pick_real_source(st)
+    if not rs or not src:
+        print("sin sink/fuente real disponible; no se cambia nada", file=sys.stderr)
+        return 1
+    # defaults primero: el audio nunca queda sin sink
+    pactl("set-default-sink", rs)
+    pactl("set-default-source", src)
+    if sh(["which", "easyeffects"])[0] == 0:
+        sh(["easyeffects", "-b", "1"])
+    st.update(mode="off", real_sink=rs, real_source=src)
+    save(st)
+    r1 = move_streams("sink-input", rs)
+    r2 = move_streams("source-output", src)
+    st["reclaims"] = "reclaimed" in (r1, r2)
+    st["moves"] = {"sink": r1, "source": r2}
+    save(st)
+    restart_vad()
+    notify("OFF · directo: " + src)
+    return 0
+
+
+def apply_on(st):
+    if EE_SRC not in all_sources():
+        print("easyeffects_source no existe; no se cambia nada", file=sys.stderr)
+        return 1
+    if st.get("prev_sink") == EE_SINK and EE_SINK in all_sinks():
+        pactl("set-default-sink", EE_SINK)
+    elif not default("sink"):
+        pactl("set-default-sink", pick_real_sink(st))
+    pactl("set-default-source", EE_SRC)
+    if sh(["which", "easyeffects"])[0] == 0:
+        sh(["easyeffects", "-b", "2"])
+    st["mode"] = "on"
+    save(st)
+    r1 = move_streams("sink-input", EE_SINK) if EE_SINK in all_sinks() else "none"
+    r2 = move_streams("source-output", EE_SRC)
+    st["reclaims"] = False
+    st["moves"] = {"sink": r1, "source": r2}
+    save(st)
+    restart_vad()
+    notify("ON · todo por Easy Effects")
+    return 0
+
+
+def select(name):
+    st = load()
+    if name not in sources():
+        print(f"fuente real inválida: {name}", file=sys.stderr)
+        return 1
+    st["real_source"] = name
+    save(st)
+    if st.get("mode", "on") == "off":
+        pactl("set-default-source", name)
+        st["moves"] = {"source": move_streams("source-output", name)}
+        save(st)
+    return 0
+
+
+def status():
+    st = load()
+    st.setdefault("mode", "on")
+    st["default_sink"], st["default_source"] = default("sink"), default("source")
+    print(json.dumps(st))
+    return 0
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "status":
+        return status()
+    os.makedirs(CACHE, exist_ok=True)
+    lock = open(os.path.join(CACHE, "ee-mode.lock"), "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    st = load()
+    if cmd == "toggle":
+        cmd = "off" if st.get("mode", "on") == "on" else "on"
+    if cmd == "off":
+        return apply_off(st)
+    if cmd == "on":
+        return apply_on(st)
+    if cmd == "select" and len(sys.argv) > 2:
+        return select(sys.argv[2])
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
