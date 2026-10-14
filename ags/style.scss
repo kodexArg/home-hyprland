@@ -1528,8 +1528,7 @@ window.RecPanel {
 }
 
 @keyframes pulse-live-green {
-  0%,
-  100% {
+  0% {
     opacity: 0.88;
     border-color: rgba(80, 200, 120, 0.7);
     background: rgba(40, 140, 90, 0.16);
@@ -1539,11 +1538,15 @@ window.RecPanel {
     border-color: rgba(100, 240, 160, 0.95);
     background: rgba(50, 180, 120, 0.3);
   }
+  100% {
+    opacity: 0.88;
+    border-color: rgba(80, 200, 120, 0.7);
+    background: rgba(40, 140, 90, 0.16);
+  }
 }
 
 @keyframes pulse-live-yellow {
-  0%,
-  100% {
+  0% {
     opacity: 0.88;
     border-color: rgba(210, 170, 50, 0.65);
     background: rgba(160, 120, 20, 0.14);
@@ -1552,6 +1555,11 @@ window.RecPanel {
     opacity: 1;
     border-color: rgba(255, 220, 80, 0.95);
     background: rgba(200, 160, 40, 0.28);
+  }
+  100% {
+    opacity: 0.88;
+    border-color: rgba(210, 170, 50, 0.65);
+    background: rgba(160, 120, 20, 0.14);
   }
 }
 
