@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import { createComputed, createState } from "ags"
 import { execAsync } from "ags/process"
+import { meterIconPx, meterSpacing } from "./zoom"
 
 const ICON_LAN_MOUSE = `${GLib.get_user_config_dir()}/ags/icons/lan-mouse-gray.svg`
 const CONFIG = `${GLib.get_user_config_dir()}/lan-mouse/config.toml`
@@ -71,8 +72,12 @@ export default function LanMouseMeter() {
         self.add_controller(click)
       }}
     >
-      <box spacing={3} valign={Gtk.Align.CENTER} class="LanMouseMeter-inner">
-        <image file={ICON_LAN_MOUSE} pixelSize={13} class="LanMouse-icon" />
+      <box spacing={meterSpacing} valign={Gtk.Align.CENTER} class="LanMouseMeter-inner">
+        <image
+          file={ICON_LAN_MOUSE}
+          pixelSize={meterIconPx}
+          class="LanMouse-icon"
+        />
         <label class={valClass} label={valText} />
       </box>
     </button>

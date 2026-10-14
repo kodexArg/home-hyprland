@@ -5,6 +5,7 @@ import Pango from "gi://Pango"
 import { createComputed, For } from "ags"
 import { createPoll } from "ags/time"
 import { barVisible, setOverBar } from "./bar-mode"
+import { isZoomDense } from "./zoom"
 import {
   startMicWatch,
   toggleMicMute,
@@ -15,6 +16,11 @@ import {
   selectMicrophoneSource,
   turnOffMicrophone,
   probeEasyEffects,
+  eeEnabled,
+  eeBusy,
+  eeResync,
+  setEasyEffects,
+  eeReclaimsStreams,
   type MicTone,
   type MicSource,
   type EasyEffectsInfo,
@@ -73,7 +79,7 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
 
   MicClickaway(gdkmonitor)
 
-  const sourcesFp = createPoll("", 5000, () =>
+  const sourcesFp = createPoll("", 2000, () =>
     JSON.stringify(listMicrophoneSources()),
   )
   const sources = createComputed((): MicSource[] => {
@@ -127,7 +133,20 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
     return p ? `Preset: ${p}` : "Easy Effects"
   })
   const eeSourceReady = createComputed(() => Boolean(eeInfo().sourceName))
-  const eeBadge = createComputed(() => (eeSourceReady() ? "[LISTO]" : "[SIN SOURCE]"))
+  const eeBadge = createComputed(() => {
+    if (eeBusy()) return "[…]"
+    return eeEnabled() ? "ON" : "OFF"
+  })
+  const eeSwitchLabel = createComputed(() => `Easy Effects: ${eeEnabled() ? "ON" : "OFF"}`)
+  const eeModeLine = createComputed(() => {
+    if (eeEnabled()) return "Todo el audio pasa por Easy Effects."
+    return eeReclaimsStreams()
+      ? "Directo (defaults reales + bypass; EE re-captura streams abiertos)."
+      : "Audio directo, sin Easy Effects."
+  })
+  const inputSectionTitle = createComputed(() =>
+    eeEnabled() ? "ENTRADA (alimenta a Easy Effects)" : "ENTRADA DIRECTA (sin Easy Effects)",
+  )
 
   return (
     <window
@@ -189,15 +208,37 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
           spacing={2}
           visible={eeVisible}
         >
-          <box spacing={6} valign={Gtk.Align.CENTER}>
+          <box spacing={8} valign={Gtk.Align.CENTER}>
             <label class="LocalLlm-log-title" label="🎛 EASY EFFECTS" hexpand xalign={0} />
-            <label
-              class="LocalLlm-log-title"
-              label={eeBadge}
-              xalign={1}
+            <label class="LocalLlm-log-title" label={eeSwitchLabel} xalign={1} />
+            <box
+              $={(self: Gtk.Box) => {
+                const sw = new Gtk.Switch()
+                sw.set_valign(Gtk.Align.CENTER)
+                sw.set_tooltip_text("Easy Effects ON/OFF (clic central en el icono del micrófono)")
+                let syncing = false
+                const sync = () => {
+                  syncing = true
+                  sw.set_active(eeEnabled.peek())
+                  sw.set_sensitive(!eeBusy.peek())
+                  syncing = false
+                }
+                sw.connect("notify::active", () => {
+                  if (syncing) return
+                  if (sw.get_active() !== eeEnabled.peek()) {
+                    setEasyEffects(sw.get_active() ? "on" : "off")
+                  }
+                })
+                eeEnabled.subscribe(sync)
+                eeBusy.subscribe(sync)
+                eeResync.subscribe(sync)
+                sync()
+                self.append(sw)
+              }}
             />
           </box>
           <label class="Mic-ee-preset" label={eePreset} xalign={0} />
+          <label class="Mic-ee-summary" label={eeModeLine} xalign={0} />
           <label
             class="Mic-ee-summary"
             label={eeSummary}
@@ -205,30 +246,11 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
             wrap
             wrapMode={Pango.WrapMode.WORD_CHAR}
           />
-          <button
-            class="LocalLlm-model"
-            visible={eeSourceReady}
-            tooltipText="Usar Easy Effects como entrada predeterminada"
-            onClicked={() => {
-              const n = eeInfo.peek().sourceName
-              if (n) selectMicrophoneSource(n)
-            }}
-          >
-            <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
-              <label class="LocalLlm-mark" label="★" xalign={0.5} />
-              <label
-                class="LocalLlm-label"
-                label="Usar Easy Effects (preferido)"
-                xalign={0}
-                hexpand
-              />
-            </box>
-          </button>
         </box>
 
         <box class="LocalLlm-sep" heightRequest={1} hexpand />
 
-        <label class="LocalLlm-section-title" label="DISPOSITIVOS DE ENTRADA" xalign={0} />
+        <label class="LocalLlm-section-title" label={inputSectionTitle} xalign={0} />
 
         <For each={sources}>
           {(s) => {
@@ -242,16 +264,13 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
             const mark = createComputed(() => {
               void micName()
               if (s.isDefault) return "●"
-              if (s.isEasyEffects) return "★"
               return "○"
             })
-            const title = s.isEasyEffects
-              ? `${s.title} · preferido`
-              : s.title
+            const title = s.title
             return (
               <button
                 class={rowClass}
-                tooltipText={`Seleccionar ${s.description} como micrófono predeterminado`}
+                tooltipText={`Usar ${s.description} como entrada`}
                 onClicked={() => selectMicrophoneSource(s.name)}
               >
                 <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
@@ -343,7 +362,7 @@ export default function MicIndicator({
     return [
       `<b><span size="small" letter_spacing="1500" foreground="#ff8c42">🎙️ MICRÓFONO</span></b>   <span size="small" weight="bold" foreground="${badgeColor}">[${badgeText}]</span>`,
       stateLine,
-      `<span size="smaller" alpha="75%">Clic: ${action}  ·  Clic secundario: Selector de entrada</span>`,
+      `<span size="smaller" alpha="75%">Clic: ${action}  ·  Clic secundario: Selector de entrada  ·  Clic central: Easy Effects ${eeEnabled() ? "ON→OFF" : "OFF→ON"}</span>`,
     ].join("\n")
   })
 
@@ -366,12 +385,14 @@ export default function MicIndicator({
             openMicMenu()
           } else if (btn === 1) {
             toggleMicMute()
+          } else if (btn === 2) {
+            setEasyEffects("toggle")
           }
         })
         self.add_controller(click)
       }}
     >
-      <image file={iconFile} pixelSize={16} />
+      <image file={iconFile} pixelSize={isZoomDense() ? 11 : 16} />
     </button>
   )
 }

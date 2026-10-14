@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+  <!-- Firefox: luna creciente + brasa -->
+  <defs><mask id="m"><rect width="24" height="24" fill="#fff"/><circle cx="14.8" cy="9.2" r="7.4" fill="#000"/></mask></defs>
+  <circle cx="12" cy="12" r="10.2" mask="url(#m)"/><circle cx="15" cy="9" r="3"/>
+</svg>

@@ -9,12 +9,7 @@ local aoc     = samsung       -- external target for window rules (OBS/etc.)
 hl.monitor({ output = samsung, mode = "1920x1080@60.00", position = "0x0", scale = 1, transform = 0 })
 hl.monitor({ output = panel, mode = "1920x1080@144.003", position = "1920x0", scale = 1, transform = 0 })
 
-hl.workspace_rule({ workspace = "1", monitor = samsung, default = true, persistent = true })
-hl.workspace_rule({ workspace = "2", monitor = samsung, persistent = true })
-hl.workspace_rule({ workspace = "3", monitor = samsung, persistent = true })
-hl.workspace_rule({ workspace = "4", monitor = panel, persistent = true })
-hl.workspace_rule({ workspace = "5", monitor = panel, persistent = true })
-hl.workspace_rule({ workspace = "6", monitor = panel, persistent = true })
+dofile("/home/kodex/home-hyprland/hypr/panels.lua")
 
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")

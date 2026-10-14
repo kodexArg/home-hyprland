@@ -29,6 +29,60 @@ let activityBackoffMs = 1000
 let cachedSource = ""
 let cachedDescription = "Microphone"
 
+// ── Easy Effects toggle (ON/OFF) ──────────────────────────────────────────
+// Lógica en ~/.local/bin/kdx-ee-mode (pactl + bypass EE; no toca servicios).
+// Estado persistido en ~/.cache/kdx/ee-mode (JSON).
+const EE_MODE_BIN =
+  GLib.find_program_in_path("kdx-ee-mode") ??
+  `${GLib.get_home_dir()}/.local/bin/kdx-ee-mode`
+const EE_STATE_FILE = `${GLib.get_home_dir()}/.cache/kdx/ee-mode`
+const [eeEnabled, setEeEnabled] = createState(true)
+const [eeBusy, setEeBusy] = createState(false)
+/** Se incrementa para que el switch de la UI se re-sincronice con el estado real. */
+const [eeResync, setEeResync] = createState(0)
+let eeChosenInput = ""
+let eeReclaims = false
+
+function readEeState(): void {
+  try {
+    const [ok, bytes] = GLib.file_get_contents(EE_STATE_FILE)
+    if (!ok || !bytes) return
+    const st = JSON.parse(new TextDecoder().decode(bytes))
+    const on = st.mode !== "off"
+    if (on !== eeEnabled.peek()) setEeEnabled(on)
+    eeChosenInput = typeof st.real_source === "string" ? st.real_source : ""
+    eeReclaims = st.reclaims === true
+  } catch {
+    // sin archivo = ON (default)
+  }
+}
+
+/** ON/OFF/toggle de Easy Effects sin tocar servicios. */
+export function setEasyEffects(mode: "on" | "off" | "toggle"): void {
+  if (eeBusy.peek()) return
+  setEeBusy(true)
+  try {
+    const proc = Gio.Subprocess.new(
+      [EE_MODE_BIN, mode],
+      Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    proc.wait_async(null, () => {
+      readEeState()
+      setEeBusy(false)
+      setEeResync(eeResync.peek() + 1)
+      snap(true)
+    })
+  } catch (e) {
+    setEeBusy(false)
+    setEeResync(eeResync.peek() + 1)
+    printerr(`mic: kdx-ee-mode failed: ${e}`)
+  }
+}
+
+export function eeReclaimsStreams(): boolean {
+  return eeReclaims
+}
+
 function runSync(argv: string[]): string {
   try {
     const proc = Gio.Subprocess.new(
@@ -39,6 +93,115 @@ function runSync(argv: string[]): string {
     return (stdout ?? "").trim()
   } catch {
     return ""
+  }
+}
+
+// ── Global mute ────────────────────────────────────────────────────────────
+// The top-bar mute is GLOBAL: every non-monitor source and every capture
+// stream (source-output) gets mute=1, so apps with their own audio stack
+// (Discord, games) capture silence. While active, a `pactl subscribe` watcher
+// mutes any NEW source / source-output (debounced).
+const MUTE_WATCH_DEBOUNCE_MS = 150
+let muteWatchProc: Gio.Subprocess | null = null
+let muteWatchDebounce: number | null = null
+
+/** Names of all real inputs (monitors excluded). */
+function listInputSourceNames(): string[] {
+  const out = runSync(["pactl", "list", "short", "sources"])
+  const names: string[] = []
+  for (const line of out.split("\n")) {
+    const name = line.split("\t")[1]?.trim()
+    if (name && !name.endsWith(".monitor")) names.push(name)
+  }
+  return names
+}
+
+function listSourceOutputIds(): string[] {
+  const out = runSync(["pactl", "list", "short", "source-outputs"])
+  const ids: string[] = []
+  for (const line of out.split("\n")) {
+    const id = line.split("\t")[0]?.trim()
+    if (id && /^\d+$/.test(id)) ids.push(id)
+  }
+  return ids
+}
+
+/** Apply mute=1/0 to every input source and every capture stream. */
+function applyGlobalMute(mute: boolean): void {
+  const v = mute ? "1" : "0"
+  for (const name of listInputSourceNames()) {
+    runSync(["pactl", "set-source-mute", name, v])
+  }
+  for (const id of listSourceOutputIds()) {
+    runSync(["pactl", "set-source-output-mute", id, v])
+  }
+}
+
+function stopMuteWatch(): void {
+  if (muteWatchDebounce !== null) {
+    GLib.source_remove(muteWatchDebounce)
+    muteWatchDebounce = null
+  }
+  if (muteWatchProc !== null) {
+    try {
+      muteWatchProc.force_exit()
+    } catch {}
+    muteWatchProc = null
+  }
+}
+
+function startMuteWatch(): void {
+  if (muteWatchProc !== null) return
+  try {
+    const proc = Gio.Subprocess.new(
+      ["pactl", "subscribe"],
+      Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+    muteWatchProc = proc
+    const pipe = proc.get_stdout_pipe()
+    if (!pipe) return
+    const dis = Gio.DataInputStream.new(pipe)
+    const readNext = () => {
+      dis.read_line_async(GLib.PRIORITY_DEFAULT, null, (_src, res) => {
+        if (muteWatchProc !== proc) return
+        try {
+          const [line] = dis.read_line_finish_utf8(res)
+          if (line === null) {
+            if (muteWatchProc === proc) muteWatchProc = null
+            return
+          }
+          if (/'new' on (source-output|source) /.test(line)) {
+            if (muteWatchDebounce !== null) GLib.source_remove(muteWatchDebounce)
+            muteWatchDebounce = GLib.timeout_add(
+              GLib.PRIORITY_DEFAULT,
+              MUTE_WATCH_DEBOUNCE_MS,
+              () => {
+                muteWatchDebounce = null
+                if (muteWatchProc === proc) applyGlobalMute(true)
+                return GLib.SOURCE_REMOVE
+              },
+            )
+          }
+          readNext()
+        } catch {
+          if (muteWatchProc === proc) muteWatchProc = null
+        }
+      })
+    }
+    readNext()
+  } catch (e) {
+    printerr(`mic: mute watcher failed: ${e}`)
+  }
+}
+
+/** Global mute on/off: sources + capture streams + new-stream watcher. */
+function setGlobalMute(mute: boolean): void {
+  if (mute) {
+    startMuteWatch()
+    applyGlobalMute(true)
+  } else {
+    stopMuteWatch()
+    applyGlobalMute(false)
   }
 }
 
@@ -178,6 +341,8 @@ export function listMicrophoneSources(): MicSource[] {
   const defMatch = info.match(/^Default Source:\s*(.+)$/m)
   const defaultSource = defMatch?.[1]?.trim() ?? ""
 
+  readEeState()
+  const chosenInput = eeChosenInput || probeEasyEffects().inputDevice || ""
   const out = runSync(["pactl", "list", "sources"])
   const sources: MicSource[] = []
   const chunks = out.split(/Source #\d+\n/)
@@ -191,9 +356,14 @@ export function listMicrophoneSources(): MicSource[] {
       if (name.endsWith(".monitor")) continue
       const description = descMatch ? descMatch[1].trim() : name
       const isMuted = muteMatch ? /yes/i.test(muteMatch[1]) : false
-      const isDefault = name === defaultSource
       const kind = kindOfSource(name, c)
       const isEasyEffects = kind === "easyeffects"
+      // Easy Effects no es un dispositivo de la lista (se maneja con su switch).
+      if (isEasyEffects) continue
+      // ON: la entrada elegida es la que alimenta a EE; OFF: la default real.
+      const isDefault = eeEnabled.peek()
+        ? name === chosenInput
+        : name === defaultSource
       sources.push({
         name,
         description,
@@ -207,20 +377,23 @@ export function listMicrophoneSources(): MicSource[] {
     }
   }
 
-  // Prefer Easy Effects as first option when its source exists.
   sources.sort((a, b) => {
-    if (a.isEasyEffects !== b.isEasyEffects) return a.isEasyEffects ? -1 : 1
     if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1
     return a.title.localeCompare(b.title)
   })
   return sources
 }
 
+/** Elige la ENTRADA real: ON = alimenta a Easy Effects; OFF = fuente por defecto directa. */
 export function selectMicrophoneSource(name: string): void {
+  if (/easyeffects/i.test(name)) return
   try {
-    Gio.Subprocess.new(["pactl", "set-default-source", name], Gio.SubprocessFlags.STDERR_SILENCE)
+    Gio.Subprocess.new([EE_MODE_BIN, "select", name], Gio.SubprocessFlags.STDERR_SILENCE)
     Gio.Subprocess.new(["pactl", "set-source-mute", name, "0"], Gio.SubprocessFlags.STDERR_SILENCE)
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 60, () => {
+    eeChosenInput = name
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+      readEeState()
+      setEeResync(eeResync.peek() + 1)
       snap()
       return GLib.SOURCE_REMOVE
     })
@@ -229,20 +402,29 @@ export function selectMicrophoneSource(name: string): void {
   }
 }
 
-
 /** If EE source exists and is not default, set it as default (preferred input). */
 export function preferEasyEffectsSource(): boolean {
+  readEeState()
+  if (!eeEnabled.peek()) return false
   const ee = probeEasyEffects()
   if (!ee.available || !ee.sourceName) return false
   const cur = resolveSourceName()
   if (cur === ee.sourceName) return false
-  selectMicrophoneSource(ee.sourceName)
+  try {
+    Gio.Subprocess.new(["pactl", "set-default-source", ee.sourceName], Gio.SubprocessFlags.STDERR_SILENCE)
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 60, () => {
+      snap()
+      return GLib.SOURCE_REMOVE
+    })
+  } catch (e) {
+    printerr(`mic: prefer EE source failed: ${e}`)
+  }
   return true
 }
 
 export function turnOffMicrophone(): void {
   try {
-    Gio.Subprocess.new(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "1"], Gio.SubprocessFlags.STDERR_SILENCE)
+    setGlobalMute(true)
     setMicMuted(true)
     setMicHearing(false)
     stopDictationIfActive()
@@ -255,10 +437,22 @@ export function turnOffMicrophone(): void {
   }
 }
 
+/** Without argument: GLOBAL state (all non-monitor sources muted). With a source: that one only. */
 export function probeMicMuted(source?: string): boolean {
-  const src = source ?? resolveSourceName()
-  const out = runSync(["pactl", "get-source-mute", src])
-  return /Mute:\s*yes/i.test(out)
+  if (source !== undefined) {
+    const out = runSync(["pactl", "get-source-mute", source])
+    return /Mute:\s*yes/i.test(out)
+  }
+  const out = runSync(["pactl", "list", "sources"])
+  let total = 0
+  let muted = 0
+  for (const c of out.split(/Source #\d+\n/)) {
+    const nm = c.match(/Name:\s*(.+)/)
+    if (!nm || nm[1].trim().endsWith(".monitor")) continue
+    total++
+    if (/Mute:\s*yes/i.test(c)) muted++
+  }
+  return total > 0 && muted === total
 }
 
 export function probeMicDescription(source?: string): string {
@@ -290,8 +484,13 @@ function stopDictationIfActive(): void {
 }
 
 function snap(refreshName = false): void {
+  readEeState()
   const src = resolveSourceName()
-  const muted = probeMicMuted(src)
+  const muted = probeMicMuted()
+  // Keep the new-stream watcher in sync with the observed global state
+  // (also covers AGS restarting while already muted).
+  if (muted) startMuteWatch()
+  else stopMuteWatch()
   const prevMuted = micMuted.peek()
   setMicMuted(muted)
   if (refreshName || src !== cachedSource || cachedDescription === "Microphone") {
@@ -427,17 +626,14 @@ export function refreshMic(): void {
 }
 
 export function toggleMicMute(): void {
-  const src = resolveSourceName()
+  // Decide from the real global state, not the cached flag.
+  const next = !probeMicMuted()
   try {
-    Gio.Subprocess.new(
-      ["pactl", "set-source-mute", src, "toggle"],
-      Gio.SubprocessFlags.STDERR_SILENCE,
-    )
+    setGlobalMute(next)
   } catch (e) {
-    printerr(`mic: pactl set-source-mute failed: ${e}`)
+    printerr(`mic: global mute failed: ${e}`)
     return
   }
-  const next = !micMuted.peek()
   setMicMuted(next)
   if (next) {
     setMicHearing(false)
@@ -449,4 +645,4 @@ export function toggleMicMute(): void {
   })
 }
 
-export { micMuted, micName, micHearing }
+export { micMuted, micName, micHearing, eeEnabled, eeBusy, eeResync }

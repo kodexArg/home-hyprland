@@ -1,6 +1,7 @@
 import GLib from "gi://GLib"
 import { createState, createComputed } from "ags"
 import { exec } from "ags/process"
+import { isZoomDense } from "./zoom"
 
 export type BarMode = "always" | "temp" | "hidden"
 
@@ -224,7 +225,9 @@ export function getBarMode(): BarMode {
   return mode.peek()
 }
 
-export const barModeClass = createComputed(() => `Bar mode-${mode()}`)
+export const barModeClass = createComputed(
+  () => `Bar mode-${mode()}${isZoomDense() ? " zoom-dense" : ""}`,
+)
 
 export const barVisible = createComputed(() => {
   const m = mode()

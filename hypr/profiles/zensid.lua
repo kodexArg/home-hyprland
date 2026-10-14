@@ -20,13 +20,8 @@ hl.monitor({ output = tv,    mode = "1920x1080@60", position = "1280x0", scale =
 -- Anything else plugged in: preferred mode, to the right, scale 1.
 hl.monitor({ output = "",    mode = "preferred",    position = "auto",   scale = 1 })
 
--- Workspaces: 1–3 on the panel (left), 4–6 on the TV (right) — Sid convention.
-hl.workspace_rule({ workspace = "1", monitor = panel, default = true, persistent = true })
-hl.workspace_rule({ workspace = "2", monitor = panel, persistent = true })
-hl.workspace_rule({ workspace = "3", monitor = panel, persistent = true })
-hl.workspace_rule({ workspace = "4", monitor = tv,    default = true, persistent = true })
-hl.workspace_rule({ workspace = "5", monitor = tv,    persistent = true })
-hl.workspace_rule({ workspace = "6", monitor = tv,    persistent = true })
+-- Paneles por monitor: ~/home-hyprland/hypr/panels.lua (perfil por hostname).
+dofile("/home/kodex/home-hyprland/hypr/panels.lua")
 
 -- ── Environment (Intel iGPU only: no NVIDIA vars, no AQ_DRM_DEVICES) ──────────
 hl.env("XCURSOR_SIZE", "24")

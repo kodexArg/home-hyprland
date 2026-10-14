@@ -23,3 +23,9 @@ __pycache__/
 
 # host runtime state written by hypr-monitor-heal / ags
 ags/.monitor-left-right.json*
+ags/.bar-visibility.json
+
+# host-local settings (~/.config/kodex/local.env); only the example is versioned
+local.env
+*.local.env
+!local.env.example

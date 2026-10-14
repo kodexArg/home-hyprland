@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+  <!-- Grok: anillo con barra diagonal -->
+  <g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+    <circle cx="11.5" cy="12.5" r="7.5"/><path d="M5 21L20 3"/>
+  </g>
+</svg>

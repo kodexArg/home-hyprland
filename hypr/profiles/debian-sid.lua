@@ -4,19 +4,12 @@
 local asus = "desc:ASUSTek COMPUTER INC VA27EHF"
 local aoc  = "desc:AOC G2790G4"
 
--- Both landscape ~100Hz, ASUS left of AOC. Mixed portrait/landscape saved as
--- git 1c209aa — restore transform 1 / -1080x0 / 0x420 when going back.
+-- ASUS landscape left (-1920x0), AOC landscape right (0x0); both scale 1, transform 0.
 hl.monitor({ output = asus, mode = "1920x1080@100.05", position = "-1920x0", scale = 1, transform = 0 })
 hl.monitor({ output = aoc,  mode = "1920x1080@99.93",  position = "0x0",     scale = 1, transform = 0 })
 
--- Workspaces pinned to panels (ASUS left / AOC right; both landscape).
--- Defaults shown at login: 1 on ASUS, 4 on AOC.
-hl.workspace_rule({ workspace = "1", monitor = asus, default = true,  persistent = true })
-hl.workspace_rule({ workspace = "2", monitor = asus, persistent = true })
-hl.workspace_rule({ workspace = "3", monitor = asus, persistent = true })
-hl.workspace_rule({ workspace = "4", monitor = aoc,  default = true,  persistent = true })
-hl.workspace_rule({ workspace = "5", monitor = aoc,  persistent = true })
-hl.workspace_rule({ workspace = "6", monitor = aoc,  persistent = true })
+-- Paneles por monitor: ~/home-hyprland/hypr/panels.lua (perfil por hostname).
+dofile("/home/kodex/home-hyprland/hypr/panels.lua")
 
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
@@ -90,11 +83,26 @@ local cursorDefaultMonitor      = aoc
 local duckyPhantomPointer       = "ducky-ducky-one2-sf-rgb-1"
 local wirelessPhantomPointer    = "logitech-wireless-mouse-1"
 
+local function is_zoom_dense()
+    local xdg = os.getenv("XDG_RUNTIME_DIR") or "/tmp"
+    local f = io.open(xdg .. "/hypr-zoom.phase", "r")
+    if f then
+        local content = f:read("*a")
+        f:close()
+        if content and content:match("roomy") then
+            return false
+        end
+    end
+    return true
+end
+
+local zoomDense = is_zoom_dense()
+
 hl.config({
     general = {
         gaps_in          = 5,
         gaps_out         = 5,
-        border_size      = 2,
+        border_size      = zoomDense and 1 or 2,
         col              = {
             active_border   = { colors = { "rgba(ff8c4288)", "rgba(ffaa7077)" }, angle = 45 },
             inactive_border = "rgba(3a352faa)",
@@ -104,7 +112,7 @@ hl.config({
         layout           = "dwindle",
     },
     decoration = {
-        rounding         = 10,
+        rounding         = zoomDense and 7 or 10,
         rounding_power   = 2,
         active_opacity   = 1.0,
         inactive_opacity = 1.0,

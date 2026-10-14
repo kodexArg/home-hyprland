@@ -1,7 +1,6 @@
 import { Gtk } from "ags/gtk4"
 import { createComputed } from "ags"
 import {
-  NO_NVIDIA,
   CELLS_PER_ROW,
   SCALE_CPU,
   SCALE_RAM,
@@ -104,7 +103,7 @@ export default function RamTrack() {
     >
       <Row rowKey="cpu" label="CPU" lit={trackCpuCells} />
       <Row rowKey="ram" label="RAM" lit={trackRamCells} />
-      {!NO_NVIDIA && <Row rowKey="vram" label="VRAM" lit={trackVramCells} />}
+      <Row rowKey="vram" label="VRAM" lit={trackVramCells} />
     </box>
   )
 }

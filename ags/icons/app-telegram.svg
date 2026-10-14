@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+  <!-- Telegram: avion de papel con pliegue recortado -->
+  <defs><mask id="m"><rect width="24" height="24" fill="#fff"/><path d="M8.2 13L18 6.6" stroke="#000" stroke-width="1.3" stroke-linecap="round"/></mask></defs>
+  <path mask="url(#m)" d="M21.6 3.4L2.4 10.9L8 13L9.8 19.6L12.9 15.6L17.9 19.4Z"/>
+</svg>

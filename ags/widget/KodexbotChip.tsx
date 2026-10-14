@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createPoll } from "ags/time"
+import { isZoomDense } from "./zoom"
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const STATE_FILE = `${GLib.get_user_runtime_dir()}/kodexbot_state.json`
@@ -120,7 +121,7 @@ export default function KodexbotChip() {
       spacing={4}
       tooltipText={snap((s) => s.tooltip)}
     >
-      <image file={tone((t) => ICON_BY_TONE[t])} pixelSize={14} />
+      <image file={tone((t) => ICON_BY_TONE[t])} pixelSize={isZoomDense() ? 9 : 14} />
     </box>
   )
 }

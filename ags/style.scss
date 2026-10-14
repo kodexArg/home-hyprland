@@ -28,6 +28,17 @@ $fill-inactive:   $nautilus-bg;
 $border-active:   color.mix($orange-500, $nautilus-bg, 55%);
 $fill-active:     $nautilus-bg-hi;
 
+/* UsageBadge tones (fore color of the digits and of the tooltip bars) */
+$badge-tone: #b5b0a6;
+$badge-tones: (
+  "mint": #3ee0a0,
+  "blue": #89b4fa,
+  "claude": #d97757,
+  "green": #7bc96f,
+  "gemini": #a78bfa,
+  "agyother": #ff9f43,
+);
+
 window.BarEdge {
   background: rgba(12, 11, 9, 0.01);
 }
@@ -41,7 +52,7 @@ window.Bar {
     border-radius: 10px;
     border: 1px solid $border-inactive;
     margin: 5px;
-    padding: calc(4px + 0.5rem) 0.75rem;
+    padding: calc(2px + 0.25rem) 0.75rem; /* was calc(4px + 0.5rem) — vertical halved 20260929b */
     background: $fill-inactive;
   }
 
@@ -80,22 +91,25 @@ window.Bar {
   }
 
   .WsPeek {
-    margin: 0;
+    margin: 0 14px 0 10px;
     padding: 0;
   }
 
+  .WsPeek button,
   button.WsRect {
     margin: 0;
     padding: 0;
-    min-width: 12px;
-    min-height: 20px;
-    border-radius: 2px;
     border: none;
+    outline: none;
+    box-shadow: none;
+    min-width: 13px;
+    min-height: 22px;
+    border-radius: 2px;
     background: rgba(8, 7, 6, 0.55);
 
     &.rot {
-      min-width: 20px;
-      min-height: 12px;
+      min-width: 22px;
+      min-height: 13px;
     }
 
     &.occupied {
@@ -121,17 +135,13 @@ window.Bar {
     margin: 0;
     min-width: 0;
 
-    &-mute,
-    &-step {
-      min-height: 20px;
-      margin: 0;
-      padding: 0 2px;
-      border-width: 1px;
-    }
-
     &-mute {
-      min-width: 20px;
+      min-height: 0;
+      min-width: 0;
+      margin: 0;
       padding: 0 1px;
+      border: 1px solid transparent;
+      border-radius: 3px;
     }
 
     /* ASD output preview — icon tint yellow until settle (2s) */
@@ -156,67 +166,87 @@ window.Bar {
     }
 
     &-track {
-      /* length from widthRequest; zoom halves via isZoomDense */
       min-width: 0;
-      min-height: 14px;
-      margin: 0 1px;
-      border-radius: 5px;
-      border: 1px solid $ink-600;
-      background-color: $ink-600;
+      min-height: 2px;
+      margin: 0;
+      border-radius: 1px;
+      border: none;
+      background-color: rgba(255, 255, 255, 0.15);
     }
 
     &-fill {
-      min-height: 14px;
+      min-height: 2px;
       background: $orange-500;
-      border-radius: 3px;
+      border-radius: 1px;
     }
   }
 
   .GameVolume {
-    margin: 0 0 0 4px;
+    margin: 0;
     min-width: 0;
 
-    &-steam,
-    &-output,
-    &-mute,
-    &-step {
-      min-height: 20px;
+    &-steam {
+      min-height: 0;
+      min-width: 0;
       margin: 0;
-      padding: 0 2px;
-      border-width: 1px;
-    }
-
-    &-steam,
-    &-output,
-    &-mute {
-      min-width: 20px;
       padding: 0 1px;
-    }
-
-    &-step {
-      min-width: 16px;
-      padding: 0 1px;
-      font-size: 0.95em;
+      border: 1px solid transparent;
+      border-radius: 3px;
     }
 
     &-track {
-      /* length from widthRequest; zoom halves via isZoomDense */
       min-width: 0;
-      min-height: 14px;
-      margin: 0 1px;
-      border-radius: 5px;
-      border: 1px solid $ink-600;
-      background-color: $ink-600;
+      min-height: 2px;
+      margin: 0;
+      border-radius: 1px;
+      border: none;
+      background-color: rgba(255, 255, 255, 0.15);
     }
 
     &-fill {
-      min-height: 14px;
+      min-height: 2px;
       background: $status-yellow;
-      border-radius: 3px;
+      border-radius: 1px;
     }
 
     &.muted {
       .GameVolume-fill {
+        background: $status-gray;
+        opacity: 0.45;
+      }
+    }
+  }
+
+  .SpotifyVolume {
+    margin: 0;
+    min-width: 0;
+
+    &-btn {
+      min-height: 0;
+      min-width: 0;
+      margin: 0;
+      padding: 0 1px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+    }
+
+    &-track {
+      min-width: 0;
+      min-height: 2px;
+      margin: 0;
+      border-radius: 1px;
+      border: none;
+      background-color: rgba(255, 255, 255, 0.15);
+    }
+
+    &-fill {
+      min-height: 2px;
+      background: #1db954;
+      border-radius: 1px;
+    }
+
+    &.muted {
+      .SpotifyVolume-fill {
         background: $status-gray;
         opacity: 0.45;
       }
@@ -229,11 +259,20 @@ window.Bar {
     margin: 0; /* gap = Bar-end spacing only */
     min-height: 22px;
     min-width: 22px;
-    padding: 0 2px;
+    padding: 0 4px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(18, 20, 22, 0.6);
+    transition: background 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      background: rgba(32, 36, 40, 0.85);
+      border-color: rgba(255, 140, 66, 0.35);
+    }
 
     &.open {
-      border-color: $border-active;
-      background: $fill-active;
+      border-color: $orange-500;
+      background: color.mix($orange-500, $nautilus-bg, 20%);
     }
   }
 
@@ -343,10 +382,11 @@ window.Bar {
     background: transparent;
   }
 
-  /* OpenRouter Credits Odometer — digital display to the left of the mic */
-  .OpenRouterMeter {
+  /* UsageBadge — shared quota/credit chip (Grok, Cursor, Claude, OpenRouter).
+     Geometry and DSEG7 type are the OpenRouter reference; only the tone changes. */
+  .UsageBadge {
     margin: 0;
-    padding: 3px 5px 1px 4px;
+    padding: 0 3px 0 4px;
     min-height: 22px;
     border-radius: 4px;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -362,144 +402,52 @@ window.Bar {
       background: rgba(45, 52, 58, 0.95);
     }
 
-    .OpenRouterMeter-inner {
-      padding: 1px 0 0 0;
+    .UsageBadge-inner {
+      padding: 0;
       margin: 0;
     }
 
-    .OpenRouter-icon {
-      margin-right: 2px;
-      opacity: 0.85;
+    .UsageBadge-icon {
+      margin: 2px 2px -2px -2px; /* sits 2px left/down of center */
     }
 
-    .OpenRouter-val {
-      font-family: "DSEG7 Classic", monospace;
-      font-size: 0.80rem;
-      font-weight: bold;
-      letter-spacing: 0.04em;
-      color: #7bc96f;
-
-      &.low {
-        color: #ff8c42;
-      }
-
-      &.err {
-        color: #c45c4a;
-      }
-    }
-  }
-
-  /* Grok Bot Usage Odometer — digital display for Grok Bot weekly quota */
-  .GrokBotMeter {
-    margin: 0;
-    padding: 3px 5px 1px 4px;
-    min-height: 22px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(18, 20, 22, 0.6);
-    transition: background 0.15s ease, border-color 0.15s ease;
-
-    &:hover {
-      background: rgba(32, 36, 40, 0.85);
-      border-color: rgba(62, 224, 160, 0.35);
-    }
-
-    &:active {
-      background: rgba(45, 52, 58, 0.95);
-    }
-
-    .GrokBotMeter-inner {
-      padding: 1px 0 0 0;
-      margin: 0;
-    }
-
-    .GrokBot-icon {
-      margin-right: 2px;
-      opacity: 0.85;
-    }
-
-    .GrokBot-val {
-      font-family: "DSEG7 Classic", monospace;
-      font-size: 0.78rem;
-      font-weight: bold;
-      letter-spacing: 0.03em;
-      color: #3ee0a0;
-
-      &.warn {
-        color: #fab387;
-      }
-
-      &.high {
-        color: #f38ba8;
-      }
-
-      &.err {
-        color: #c45c4a;
-      }
-    }
-  }
-
-  /* Cursor Models Usage Odometer — digital display for cursor models & other models */
-  .CursorMeter {
-    margin: 0;
-    padding: 3px 5px 1px 4px;
-    min-height: 22px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(18, 20, 22, 0.6);
-    transition: background 0.15s ease, border-color 0.15s ease;
-
-    &:hover {
-      background: rgba(32, 36, 40, 0.85);
-      border-color: rgba(181, 176, 166, 0.35);
-    }
-
-    &:active {
-      background: rgba(45, 52, 58, 0.95);
-    }
-
-    .CursorMeter-inner {
-      padding: 1px 0 0 0;
-      margin: 0;
-    }
-
-    .Cursor-icon {
-      margin-right: 2px;
-      opacity: 0.85;
-    }
-
-    .Cursor-sep {
+    .UsageBadge-sep {
       font-family: monospace;
-      font-size: 0.72rem;
+      font-size: 0.84rem;
       font-weight: 500;
       color: rgba(255, 255, 255, 0.25);
       margin: 0 1px;
     }
 
-    .Cursor-val {
+    .UsageBadge-val {
       font-family: "DSEG7 Classic", monospace;
-      font-size: 0.78rem;
+      font-size: 0.94rem;
       font-weight: bold;
-      letter-spacing: 0.03em;
-      color: #89b4fa;
+      letter-spacing: 0.04em;
+      color: $badge-tone;
 
-      &.warn {
-        color: #fab387;
-      }
+      &.warn { color: #fab387; }
+      &.high { color: #f38ba8; }
+      &.err { color: #c45c4a; }
+    }
 
-      &.high {
-        color: #f38ba8;
-      }
+    .UsageBadge-unit {
+      font-family: sans-serif;
+      font-size: 0.62rem;
+      letter-spacing: 0;
+      margin-left: 1px;
+    }
 
-      &.err {
-        color: #c45c4a;
+    @each $tone, $color in $badge-tones {
+      &.tone-#{$tone} .UsageBadge-val:not(.warn):not(.high):not(.err) {
+        color: $color;
       }
     }
   }
 
   .LanMouseMeter {
     margin: 0;
-    padding: 3px 5px 1px 4px;
+    padding: 0 3px 0 4px; /* was 1.5px 5px 0.5px 4px — room goes to the digits */
     min-height: 22px;
     border-radius: 4px;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -516,18 +464,18 @@ window.Bar {
     }
 
     .LanMouseMeter-inner {
-      padding: 1px 0 0 0;
+      padding: 0;
       margin: 0;
     }
 
     .LanMouse-icon {
-      margin-right: 2px;
+      margin: 2px 2px -2px -2px; /* sits 2px left/down of center */
       opacity: 0.85;
     }
 
     .LanMouse-val {
       font-family: "DSEG7 Classic", monospace;
-      font-size: 0.78rem;
+      font-size: 0.92rem;
       font-weight: bold;
       letter-spacing: 0.03em;
       color: #3ee0a0;
@@ -749,6 +697,174 @@ window.Bar {
       font-size: 1.2rem;
       letter-spacing: 0.04em;
       color: #faf8f4;
+    }
+  }
+
+  /* ── Zoom mode (dense scale 1.5) proportional shrink ──────────────
+     Scales dimensions by ~1/1.5 (0.67x) so the bar and widgets maintain
+     approximately identical physical size on the screen as in roomy mode. */
+  &.zoom-dense {
+    > centerbox {
+      border-radius: 7px;
+      margin: 3px;
+      padding: calc(2px + 0.35rem) 0.5rem;
+    }
+
+    button {
+      border-radius: 4px;
+      padding: 0 3px;
+    }
+
+    .WsPeek {
+      margin: 0 12px 0 8px;
+    }
+
+    .WsPeek button,
+    .WsPeek button.WsRect {
+      margin: 0;
+      padding: 0;
+      border: none;
+      outline: none;
+      box-shadow: none;
+      min-width: 9px;
+      min-height: 14px;
+      border-radius: 1px;
+
+      &.rot {
+        min-width: 14px;
+        min-height: 9px;
+      }
+    }
+
+    .WsRect-under {
+      min-height: 1px;
+    }
+
+    .Volume {
+      &-mute {
+        min-height: 0;
+        min-width: 0;
+        padding: 0 1px;
+        margin: 0;
+        border: none;
+      }
+
+      &-step {
+        min-width: 11px;
+        font-size: 0.65em;
+      }
+
+      &-track {
+        min-height: 2px;
+        border-radius: 1px;
+      }
+
+      &-fill {
+        min-height: 2px;
+        border-radius: 1px;
+      }
+    }
+
+    .GameVolume {
+      &-steam {
+        min-height: 0;
+        min-width: 0;
+        padding: 0 1px;
+        margin: 0;
+        border: none;
+      }
+
+      &-track {
+        min-height: 2px;
+        border-radius: 1px;
+      }
+
+      &-fill {
+        min-height: 2px;
+        border-radius: 1px;
+      }
+    }
+
+    .SpotifyVolume {
+      &-btn {
+        min-height: 0;
+        min-width: 0;
+        padding: 0 1px;
+        margin: 0;
+        border: none;
+      }
+
+      &-track {
+        min-height: 2px;
+        border-radius: 1px;
+      }
+
+      &-fill {
+        min-height: 2px;
+        border-radius: 1px;
+      }
+    }
+
+    .SystemMenu {
+      min-height: 15px;
+      min-width: 15px;
+      padding: 0 1px;
+    }
+
+    .RamTrack {
+      margin: 0 3px 0 0;
+      min-height: 1rem;
+
+      &-label {
+        font-size: 0.22em;
+        min-width: 1.6em;
+      }
+
+      &-cell {
+        min-width: 4px;
+        min-height: 4px;
+      }
+    }
+
+    .LocalLlm,
+    .MicIndicator,
+    .DictatorIndicator,
+    .Rec {
+      min-height: 15px;
+      min-width: 15px;
+      padding: 0 1px;
+    }
+
+    .UsageBadge,
+    .LanMouseMeter {
+      min-height: 15px;
+      padding: 1px 3px 1px 2px;
+      border-radius: 3px;
+    }
+
+    .UsageBadge {
+      .UsageBadge-val {
+        font-size: 0.54rem;
+      }
+      .UsageBadge-sep {
+        font-size: 0.48rem;
+      }
+      .UsageBadge-unit {
+        font-size: 0.36rem;
+      }
+    }
+
+    .LanMouseMeter .LanMouse-val {
+      font-size: 0.52rem;
+    }
+
+    .Clock {
+      min-height: 1rem;
+      padding: 0 0.15rem 0 0;
+
+      .Clock-time {
+        font-size: 0.8rem;
+      }
     }
   }
 }
@@ -979,260 +1095,185 @@ window.SystemPanel {
   color: $panel-label;
 
   .SystemMenu-menu {
-    border-radius: 10px;
-    border: 1px solid $border-inactive;
-    background: $fill-inactive;
-    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: color.mix($nautilus-bg, $ink-1000, 15%);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    padding: 6px;
     margin: 0;
-    min-width: 168px;
+    min-width: 196px;
   }
 
   .SystemMenu-status {
-    font-size: 0.75em;
+    font-size: 0.68em;
     font-weight: 700;
     letter-spacing: 0.12em;
-    color: color.mix($cream-100, $warm-200, 40%);
-    padding: 2px 6px 4px;
+    color: color.mix($cream-100, $warm-200, 32%);
+    padding: 3px 6px 2px;
   }
 
   .SystemMenu-sep {
     min-height: 1px;
-    background: $nautilus-edge;
-    margin: 4px 2px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 3px 4px;
     opacity: 0.9;
   }
 
-  /* Row = [icon] [fixed-width text]. Whole button is the hit target. */
+  /* Row = [icon] [label] [ToggleChip / ActionBadge]. Whole button is hit target. */
   button.SystemMenu-row {
-    min-height: 32px;
-    padding: 5px 10px;
-    border-radius: 7px;
+    min-height: 26px;
+    padding: 3px 6px;
+    border-radius: 4px;
     color: $panel-label;
     border: 1px solid transparent;
     background: transparent;
+    transition: background 120ms ease, border-color 120ms ease;
 
     &:hover {
-      background: color.mix($cream-100, $ink-1000, 6%);
-      border-color: color.mix($orange-500, $ink-1000, 28%);
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.08);
+
+      .ActionBadge .ActionBadge-text {
+        color: $cream-100;
+      }
     }
 
     &:active {
-      background: color.mix($orange-500, $ink-1000, 12%);
+      background: rgba(255, 255, 255, 0.08);
     }
 
-    /* mic currently muted — dim + muted glyph already shows slash */
-    &.muted {
+    .SystemMenu-icon {
+      opacity: 0.85;
+      transition: opacity 120ms ease;
+    }
+
+    .SystemMenu-label {
+      font-size: 0.82em;
+      font-weight: 500;
+      color: color.mix($cream-100, $warm-200, 20%);
+      letter-spacing: 0.01em;
+    }
+
+    &.is-active {
+      .SystemMenu-icon {
+        opacity: 1;
+      }
       .SystemMenu-label {
-        color: color.mix($cream-100, $warm-200, 35%);
+        color: $cream-100;
+        font-weight: 600;
       }
     }
 
-    /* Gabriel-L2TP FSM: cream connected · grey disconnected */
-    &.vpn {
-      &.on {
-        border-color: color.mix($orange-500, $ink-1000, 40%);
-        background: color.mix($orange-500, $ink-1000, 12%);
-
-        .SystemMenu-label {
-          color: $cream-100;
-        }
+    &.is-inactive {
+      .SystemMenu-icon {
+        opacity: 0.45;
       }
-
-      &.busy {
-        border-color: color.mix(#e6b84d, $ink-1000, 40%);
-        background: color.mix(#e6b84d, $ink-1000, 10%);
-
-        .SystemMenu-label {
-          color: color.mix($cream-100, #e6b84d, 40%);
-        }
-      }
-
-      &.failed {
-        border-color: color.mix(#c45c4a, $ink-1000, 50%);
-        background: color.mix(#c45c4a, $ink-1000, 12%);
-
-        .SystemMenu-label {
-          color: color.mix($cream-100, #c45c4a, 35%);
-        }
-      }
-
-      &.off {
-        .SystemMenu-label {
-          color: color.mix($cream-100, $warm-200, 40%);
-        }
+      .SystemMenu-label {
+        color: color.mix($cream-100, $warm-200, 45%);
       }
     }
-
-    /* Cloudflare WARP FSM: default connected (sin resaltar), paused (resaltado) */
-    &.warp {
-      &.connected {
-        /* default: normal row, sin resaltar */
-        .SystemMenu-label {
-          color: $panel-label;
-        }
-      }
-
-      &.paused {
-        /* paused / disconnected: resaltado */
-        border-color: color.mix($orange-500, $ink-1000, 40%);
-        background: color.mix($orange-500, $ink-1000, 12%);
-
-        .SystemMenu-label {
-          color: $cream-100;
-        }
-      }
-
-      &.busy {
-        border-color: color.mix(#e6b84d, $ink-1000, 40%);
-        background: color.mix(#e6b84d, $ink-1000, 10%);
-
-        .SystemMenu-label {
-          color: color.mix($cream-100, #e6b84d, 40%);
-        }
-      }
-
-      &.failed {
-        border-color: color.mix(#c45c4a, $ink-1000, 50%);
-        background: color.mix(#c45c4a, $ink-1000, 12%);
-
-        .SystemMenu-label {
-          color: color.mix($cream-100, #c45c4a, 35%);
-        }
-      }
-    }
-
-    &.bluetooth {
-      &.connected {
-        .SystemMenu-label {
-          color: $panel-label;
-        }
-      }
-
-      &.on {
-        .SystemMenu-label {
-          color: color.mix($cream-100, $warm-200, 20%);
-        }
-      }
-
-      &.busy {
-        border-color: color.mix(#e6b84d, $ink-1000, 40%);
-        background: color.mix(#e6b84d, $ink-1000, 10%);
-
-        .SystemMenu-label {
-          color: color.mix($cream-100, #e6b84d, 40%);
-        }
-      }
-
-      &.off {
-        .SystemMenu-label {
-          color: color.mix($cream-100, $warm-200, 40%);
-        }
-      }
-    }
-
-    &.cast {
-      &.recording {
-        border-color: color.mix(#c45c4a, $ink-1000, 50%);
-        background: color.mix(#c45c4a, $ink-1000, 14%);
-
-        .SystemMenu-label {
-          color: color.mix($cream-100, #c45c4a, 20%);
-        }
-      }
-
-      &.ready {
-        .SystemMenu-label {
-          color: color.mix($cream-100, $orange-500, 20%);
-        }
-      }
-    }
-
   }
 
-  box.SystemMenu-row.cast {
-    min-height: 32px;
-    padding: 0;
-    border-radius: 7px;
-    color: $panel-label;
-    border: 1px solid transparent;
+  /* MiniSwitch — geometric rectangular micro-switch (sharp 2px/1px radii matching Hyprland & bar meters) */
+  .MiniSwitch {
+    min-width: 20px;
+    min-height: 10px;
+    padding: 1px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background 120ms ease, border-color 120ms ease;
+
+    .MiniSwitch-knob {
+      min-width: 8px;
+      min-height: 8px;
+      border-radius: 1px;
+      background: #6e6960;
+      margin-left: 0;
+      transition: background 120ms ease, margin-left 120ms ease;
+    }
+
+    &.on {
+      background: #d46820; /* warm terracotta/presentation orange, matte, zero neon */
+      border-color: rgba(255, 140, 66, 0.35);
+
+      .MiniSwitch-knob {
+        background: #f3eee4;
+        margin-left: 10px;
+      }
+    }
+
+    &.off {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.04);
+
+      .MiniSwitch-knob {
+        background: #6e6960;
+        margin-left: 0;
+      }
+    }
+
+    &.busy {
+      background: #9e7a2b; /* muted warm amber */
+      border-color: rgba(230, 184, 77, 0.35);
+
+      .MiniSwitch-knob {
+        background: #f3eee4;
+        margin-left: 5px;
+      }
+    }
+
+    &.failed {
+      background: #8c3226; /* muted brick red */
+      border-color: rgba(196, 92, 74, 0.4);
+
+      .MiniSwitch-knob {
+        background: #f3eee4;
+        margin-left: 0;
+      }
+    }
+  }
+
+  .ActionBadge {
+    min-height: 16px;
+    padding: 0 4px;
+    border-radius: 3px;
     background: transparent;
 
-    button.SystemMenu-row-icon-btn {
-      padding: 5px 8px 5px 10px;
-      border-radius: 7px 0 0 7px;
-      border: none;
-      background: transparent;
-
-      &:hover {
-        background: color.mix($cream-100, $ink-1000, 10%);
-      }
+    .ActionBadge-text {
+      font-size: 0.82em;
+      font-weight: 700;
+      color: rgba(181, 176, 166, 0.4);
     }
-
-    button.SystemMenu-row-text-btn {
-      padding: 5px 10px 5px 6px;
-      border-radius: 0 7px 7px 0;
-      border: none;
-      background: transparent;
-
-      &:hover {
-        background: color.mix($cream-100, $ink-1000, 10%);
-      }
-    }
-
-    &.recording {
-      border-color: color.mix(#c45c4a, $ink-1000, 50%);
-      background: color.mix(#c45c4a, $ink-1000, 14%);
-
-      .SystemMenu-label {
-        color: color.mix($cream-100, #c45c4a, 20%);
-      }
-    }
-
-    &.ready {
-      .SystemMenu-label {
-        color: color.mix($cream-100, $orange-500, 20%);
-      }
-    }
-  }
-
-  .SystemMenu-label {
-    font-size: 0.88em;
-    font-weight: 500;
-    color: $panel-label;
-    letter-spacing: 0.01em;
   }
 
   /* Bottom power strip: two icon-only buttons side by side */
   .SystemMenu-power {
-    margin-top: 2px;
-    padding: 2px 0 0;
+    margin-top: 3px;
+    padding: 2px 2px 0;
   }
 
   button.SystemMenu-power-btn {
-    min-height: 34px;
-    min-width: 48px;
-    padding: 6px 12px;
-    border-radius: 7px;
-    border: 1px solid transparent;
-    background: transparent;
+    min-height: 24px;
+    min-width: 40px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(18, 20, 22, 0.6);
+    transition: all 120ms ease;
 
     &:hover {
-      background: color.mix($cream-100, $ink-1000, 6%);
-      border-color: color.mix($orange-500, $ink-1000, 28%);
-    }
-
-    &:active {
-      background: color.mix($orange-500, $ink-1000, 12%);
+      background: rgba(32, 36, 40, 0.85);
     }
 
     &.reboot:hover {
-      border-color: color.mix(#e6b84d, $ink-1000, 45%);
-      background: color.mix(#e6b84d, $ink-1000, 14%);
+      border-color: rgba(230, 184, 77, 0.45);
+      background: rgba(230, 184, 77, 0.12);
     }
 
     &.poweroff:hover {
-      border-color: color.mix(#c45c4a, $ink-1000, 50%);
-      background: color.mix(#c45c4a, $ink-1000, 16%);
+      border-color: rgba(196, 92, 74, 0.5);
+      background: rgba(196, 92, 74, 0.14);
     }
   }
 
@@ -1968,3 +2009,62 @@ tooltip label {
 }
 
 
+
+
+
+/* UsageBadge tooltip — title, one bar per row, neutral bars for elapsed cycle time */
+tooltip .UsageTip {
+  padding: 4px 2px;
+  min-width: 200px;
+
+  label { padding: 0; }
+
+  .UsageTip-title {
+    font-weight: bold;
+    font-size: 0.95rem;
+  }
+
+  .UsageTip-subtitle,
+  .UsageTip-detail,
+  .UsageTip-hint {
+    font-size: 0.78rem;
+    color: rgba(237, 230, 218, 0.6);
+  }
+
+  .UsageTip-label { font-size: 0.85rem; }
+
+  .UsageTip-value {
+    font-size: 0.85rem;
+    font-weight: bold;
+    font-feature-settings: "tnum";
+  }
+
+  .UsageTip-track {
+    min-height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .UsageTip-fill {
+    min-height: 6px;
+    border-radius: 3px;
+    background: $badge-tone;
+  }
+
+  .UsageTip-track.time .UsageTip-fill { background: rgba(181, 176, 166, 0.45); }
+
+  .UsageTip-error {
+    font-size: 0.8rem;
+    color: #c45c4a;
+  }
+
+  .UsageTip-hint { margin-top: 2px; }
+
+  @each $tone, $color in $badge-tones {
+    &.tone-#{$tone} {
+      .UsageTip-title,
+      .UsageTip-value { color: $color; }
+      .UsageTip-track.usage .UsageTip-fill { background: $color; }
+    }
+  }
+}

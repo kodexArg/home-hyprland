@@ -8,6 +8,7 @@ import {
   isRecording,
   toggleCastRecord,
 } from "./cast"
+import { isZoomDense } from "./zoom"
 
 const ICON_REC_ON = `${GLib.get_user_config_dir()}/ags/icons/rec-on.svg`
 const ICON_REC_IDLE = `${GLib.get_user_config_dir()}/ags/icons/rec.svg`
@@ -30,7 +31,7 @@ export default function CastRecChip() {
     >
       <box spacing={0} valign={Gtk.Align.CENTER}>
         <label class="CastRecChip-bracket" label="[" />
-        <image file={iconFile} pixelSize={9} class="CastRecChip-dot" />
+        <image file={iconFile} pixelSize={isZoomDense() ? 6 : 9} class="CastRecChip-dot" />
         <label class="CastRecChip-text" label="REC]" />
       </box>
     </button>

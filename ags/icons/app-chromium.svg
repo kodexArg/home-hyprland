@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+  <!-- Chromium: rueda (anillo, centro y tres rayos) -->
+  <g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <circle cx="12" cy="12" r="9.6"/><path d="M12 12L12 2.4"/><path d="M12 12L20.3 16.8"/><path d="M12 12L3.7 16.8"/>
+  </g>
+  <circle cx="12" cy="12" r="4"/>
+</svg>

@@ -15,13 +15,27 @@ import CastRecChip from "./CastRecChip"
 import MicIndicator from "./MicIndicator"
 import OpenRouterMeter from "./OpenRouterMeter"
 import GrokBotMeter from "./GrokBotMeter"
+import GrokBuildMeter from "./GrokBuildMeter"
 import CursorMeter from "./CursorMeter"
+import ClaudeMeter from "./ClaudeMeter"
+import AgyMeter from "./AgyMeter"
+import AgyOtherMeter from "./AgyOtherMeter"
 import LanMouseMeter from "./LanMouseMeter"
 import GameVolume from "./GameVolume"
+import SpotifyVolume from "./SpotifyVolume"
 import { ensureGameStreamsFollowDefault } from "./game-audio"
 import { isZoomDense } from "./zoom"
+import { show } from "./local-env"
+import {
+  moneyVisible,
+  monitorsVisible,
+  ramVisible,
+  lanMouseVisible,
+} from "./bar-visibility"
 
-const TRACK_W_BASE = 140
+
+
+const TRACK_W_BASE = 54
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_SPEAKERS = `${ICON_DIR}/speakers.svg`
@@ -261,9 +275,8 @@ function VolumeTrack() {
   const wp = AstalWp.get_default()!
   const speaker = () => wp.defaultSpeaker
   const vol = createBinding(wp, "defaultSpeaker", "volume")
-  const trackW = createComputed(() =>
-    isZoomDense() ? Math.round(TRACK_W_BASE / 2) : TRACK_W_BASE,
-  )
+  const mute = createBinding(wp, "defaultSpeaker", "mute")
+  const trackW = createComputed(() => (isZoomDense() ? 16 : 24))
 
   const setFromX = (widget: Gtk.Widget, x: number) => {
     const w = widget.get_allocated_width() || trackW()
@@ -278,17 +291,20 @@ function VolumeTrack() {
 
   const fillW = createComputed(() => {
     const tw = trackW()
-    const v = Number(vol()) // track speaker volume accessor
-    return Math.max(0, Math.round(Math.max(0, Math.min(1, v)) * tw))
+    if (mute()) return 0
+    const v = Number(vol())
+    return Math.max(0, Math.min(tw, Math.round(Math.max(0, Math.min(1, v)) * tw)))
   })
 
   return (
     <box
       class="Volume-track"
       widthRequest={trackW}
-      heightRequest={16}
+      heightRequest={2}
+      hexpand={false}
+      vexpand={false}
+      halign={Gtk.Align.CENTER}
       valign={Gtk.Align.CENTER}
-      tooltipText="Drag / click / scroll"
       $={(self) => {
         const click = new Gtk.GestureClick()
         click.set_button(1)
@@ -323,7 +339,12 @@ function VolumeTrack() {
         self.add_controller(scroll)
       }}
     >
-      <box class="Volume-fill" widthRequest={fillW} hexpand={false} />
+      <box
+        class="Volume-fill"
+        widthRequest={fillW}
+        heightRequest={2}
+        hexpand={false}
+      />
     </box>
   )
 }
@@ -455,8 +476,11 @@ function Volume() {
   return (
     <box
       class="Volume"
-      spacing={1}
-      tooltipText={sinkDesc((d) => d || "Volume")}
+      orientation={Gtk.Orientation.VERTICAL}
+      spacing={isZoomDense() ? 4 : 5}
+      valign={Gtk.Align.CENTER}
+      halign={Gtk.Align.CENTER}
+      tooltipText="scroll mouse to change volume"
       $={(self) => {
         const scroll = new Gtk.EventControllerScroll({
           flags:
@@ -472,29 +496,15 @@ function Volume() {
     >
       <button
         class={muteBtnClass}
-        tooltipText={iconTip}
+        tooltipText="scroll mouse to change volume"
         onClicked={() => onOutputIconClick()}
+        hexpand={false}
+        halign={Gtk.Align.CENTER}
       >
-        <image file={outputIconFile} pixelSize={16} />
-      </button>
-
-      <button
-        class="Volume-step"
-        tooltipText="-5%"
-        onClicked={() => bump(-0.05)}
-      >
-        <label label="−" />
+        <image file={outputIconFile} pixelSize={isZoomDense() ? 10 : 13} />
       </button>
 
       <VolumeTrack />
-
-      <button
-        class="Volume-step"
-        tooltipText="+5%"
-        onClicked={() => bump(0.05)}
-      >
-        <label label="+" />
-      </button>
     </box>
   )
 }
@@ -550,27 +560,38 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
       }
     >
       <centerbox cssName="centerbox">
-        <box $type="start" spacing={8} class="Bar-start">
-          <Volume />
-          <GameVolume />
+        <box $type="start" spacing={isZoomDense() ? 5 : 8} class="Bar-start">
+          {show("volume") && <Volume />}
+          {show("game-volume") && <GameVolume />}
+          {show("spotify-volume") && <SpotifyVolume />}
         </box>
-        <box $type="center">
-          <WorkspacePeek />
+        <box $type="center" visible={monitorsVisible} valign={Gtk.Align.CENTER}>
+          {show("panels") && <WorkspacePeek />}
         </box>
-        <box $type="end" spacing={10} class="Bar-end">
-          <KodexbotChip />
-          <RecModeIndicator />
-          <CastRecChip />
-          <box spacing={4} class="BrainCluster" valign={Gtk.Align.CENTER}>
-            <GrokBotMeter />
-            <CursorMeter />
-            <OpenRouterMeter />
-            <LanMouseMeter />
-            <MicIndicator gdkmonitor={gdkmonitor} />
+        <box $type="end" spacing={isZoomDense() ? 6 : 10} class="Bar-end">
+          {show("kodexbot") && <KodexbotChip />}
+          {show("rec-mode") && <RecModeIndicator />}
+          {show("cast-rec") && <CastRecChip />}
+          <box spacing={isZoomDense() ? 2 : 4} class="BrainCluster" valign={Gtk.Align.CENTER}>
+            <box spacing={isZoomDense() ? 2 : 4} visible={moneyVisible} valign={Gtk.Align.CENTER}>
+              {show("grokbot") && <GrokBotMeter />}
+              {show("grokbuild") && <GrokBuildMeter />}
+              {show("cursor") && <CursorMeter />}
+              {show("claude") && <ClaudeMeter />}
+              {show("agy") && <AgyMeter />}
+              {show("agy-other") && <AgyOtherMeter />}
+              {show("openrouter") && <OpenRouterMeter />}
+            </box>
+            <box visible={lanMouseVisible} valign={Gtk.Align.CENTER}>
+              {show("lanmouse") && <LanMouseMeter />}
+            </box>
+            {show("mic") && <MicIndicator gdkmonitor={gdkmonitor} />}
           </box>
-          <RamTrack />
-          <Clock />
-          <SystemMenu gdkmonitor={gdkmonitor} />
+          <box visible={ramVisible} valign={Gtk.Align.CENTER}>
+            {show("ram") && <RamTrack />}
+          </box>
+          {show("clock") && <Clock />}
+          {show("menu") && <SystemMenu gdkmonitor={gdkmonitor} />}
         </box>
       </centerbox>
     </window>

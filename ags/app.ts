@@ -18,10 +18,27 @@ import { getRamStatus } from "./widget/ram"
 import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
 import { refreshCredits, openRouterSnap } from "./widget/openrouter"
 import { refreshCursorUsage, cursorUsageSnap } from "./widget/cursor"
+import {
+  moneyVisible,
+  setMoneyVisible,
+  toggleMoneyVisible,
+  toggleMoneyMenu,
+  monitorsVisible,
+  setMonitorsVisible,
+  toggleMonitorsVisible,
+  toggleMonitorsMenu,
+  ramVisible,
+  setRamVisible,
+  toggleRamVisible,
+  toggleRamMenu,
+  lanMouseVisible,
+  setLanMouseVisible,
+  toggleLanMouseVisible,
+} from "./widget/bar-visibility"
 import GLib from "gi://GLib"
 
-// Desktop Sid: ASUS VA27EHF (default). Laptops (kdxsid, zensid): KDX_BAR_MODEL=EDP.
-const BAR_MODEL = GLib.getenv("KDX_BAR_MODEL") || "VA27EHF"
+
+const BAR_MODEL = "VA27EHF"
 
 let spawnedFor: string | null = null
 
@@ -40,13 +57,7 @@ function isBarMonitor(mon: {
 }): boolean {
   const model = modelOf(mon).toUpperCase()
   const desc = (mon.description ?? "").toUpperCase()
-  // HDMI-A-N flips on desktop; on laptops prefer eDP when BAR_MODEL is EDP/BUILTIN.
-  const c = connectorOf(mon).toUpperCase()
-  const want = BAR_MODEL.toUpperCase()
-  if (want === "EDP" || want === "BUILTIN") {
-    return c.includes("EDP") || model.includes("CMN") || desc.includes("BUILT-IN")
-  }
-  return model.includes(want) || desc.includes(want) || c.includes(want)
+  return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
 }
 
 function trySpawnBar(reason: string) {
@@ -119,15 +130,15 @@ app.start({
       res(toggleRecMenu())
       return
     }
-    if (cmd === "mic-menu" || cmd === "mic-toggle-menu" || cmd === "mic") {
+    if (cmd === "mic-menu" || cmd === "mic-toggle-menu") {
       res(toggleMicMenu())
       return
     }
-    if (cmd === "dictator-menu" || cmd === "dictator-toggle-menu" || cmd === "dictator") {
+    if (cmd === "dictator-menu" || cmd === "dictator-toggle-menu") {
       res(toggleDictatorMenu())
       return
     }
-    if (cmd === "brain-menu" || cmd === "local-llm-menu" || cmd === "brain") {
+    if (cmd === "brain-menu" || cmd === "local-llm-menu") {
       res(toggleBrainMenu())
       return
     }
@@ -162,6 +173,90 @@ app.start({
     if (cmd === "cursor-refresh") {
       refreshCursorUsage()
       res("refreshing cursor usage...")
+      return
+    }
+    if (cmd === "money" || cmd === "money-toggle" || cmd === "credits-toggle") {
+      res(toggleMoneyVisible())
+      return
+    }
+    if (cmd === "money-status" || cmd === "credits-status") {
+      res(moneyVisible.peek() ? "visible" : "hidden")
+      return
+    }
+    if (cmd === "money-show") {
+      setMoneyVisible(true)
+      res("money-visible")
+      return
+    }
+    if (cmd === "money-hide") {
+      setMoneyVisible(false)
+      res("money-hidden")
+      return
+    }
+    if (cmd === "money-menu") {
+      res(toggleMoneyMenu())
+      return
+    }
+    if (cmd === "monitors" || cmd === "monitors-toggle" || cmd === "ws-toggle") {
+      res(toggleMonitorsVisible())
+      return
+    }
+    if (cmd === "monitors-status") {
+      res(monitorsVisible.peek() ? "visible" : "hidden")
+      return
+    }
+    if (cmd === "monitors-show") {
+      setMonitorsVisible(true)
+      res("monitors-visible")
+      return
+    }
+    if (cmd === "monitors-hide") {
+      setMonitorsVisible(false)
+      res("monitors-hidden")
+      return
+    }
+    if (cmd === "monitors-menu") {
+      res(toggleMonitorsMenu())
+      return
+    }
+    if (cmd === "ram-toggle" || cmd === "ram-track-toggle" || cmd === "cpu-ram-toggle") {
+      res(toggleRamVisible())
+      return
+    }
+    if (cmd === "ram-visibility" || cmd === "ram-track-status") {
+      res(ramVisible.peek() ? "visible" : "hidden")
+      return
+    }
+    if (cmd === "ram-show") {
+      setRamVisible(true)
+      res("ram-visible")
+      return
+    }
+    if (cmd === "ram-hide") {
+      setRamVisible(false)
+      res("ram-hidden")
+      return
+    }
+    if (cmd === "ram-menu") {
+      res(toggleRamMenu())
+      return
+    }
+    if (cmd === "lanmouse" || cmd === "lanmouse-toggle" || cmd === "lan-mouse-toggle") {
+      res(toggleLanMouseVisible())
+      return
+    }
+    if (cmd === "lanmouse-status" || cmd === "lan-mouse-status") {
+      res(lanMouseVisible.peek() ? "visible" : "hidden")
+      return
+    }
+    if (cmd === "lanmouse-show") {
+      setLanMouseVisible(true)
+      res("lanmouse-visible")
+      return
+    }
+    if (cmd === "lanmouse-hide") {
+      setLanMouseVisible(false)
+      res("lanmouse-hidden")
       return
     }
     res(`unknown request: ${argv.join(" ")}`)

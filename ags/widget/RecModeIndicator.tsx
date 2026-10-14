@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createPoll } from "ags/time"
+import { isZoomDense } from "./zoom"
 
 const STATE_FILE = "/tmp/kdx_rec_mode.json"
 const FLAG_FILE = "/tmp/kdx_rec_mode"
@@ -77,7 +78,7 @@ export default function RecModeIndicator() {
         (s) => s.tooltip || "REC mode (under construction)",
       )}
     >
-      <image file={ICON_MIC_RECORD} pixelSize={14} />
+      <image file={ICON_MIC_RECORD} pixelSize={isZoomDense() ? 9 : 14} />
       <label class="RecModeIndicator-label" label="REC" />
     </box>
   )

@@ -4,6 +4,7 @@ import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createComputed, createState } from "ags"
 import { barVisible, setOverBar } from "./bar-mode"
+import { isZoomDense } from "./zoom"
 import {
   L2TP_CONN,
   l2tpIconOn,
@@ -44,10 +45,24 @@ import {
   startMicWatch,
   toggleMicMute,
 } from "./mic"
+import {
+  moneyVisible,
+  toggleMoneyVisible,
+  monitorsVisible,
+  toggleMonitorsVisible,
+  ramVisible,
+  toggleRamVisible,
+  lanMouseVisible,
+  toggleLanMouseVisible,
+} from "./bar-visibility"
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_MENU = `${ICON_DIR}/menu.svg`
+const ICON_MONEY = `${ICON_DIR}/money.svg`
+const ICON_CPU = `${ICON_DIR}/cpu.svg`
+const ICON_LAN_MOUSE = `${ICON_DIR}/lan-mouse-gray.svg`
 const ICON_MIC = `${ICON_DIR}/mic.svg`
+
 const ICON_MIC_MUTED = `${ICON_DIR}/mic-muted.svg`
 const ICON_REBOOT = `${ICON_DIR}/reboot.svg`
 const ICON_POWEROFF = `${ICON_DIR}/poweroff.svg`
@@ -70,7 +85,7 @@ const ICON_LOGS = `${ICON_DIR}/logs.svg`
 const LABEL_W = 120
 const PANEL_GAP = 4
 
-const MENU_ICON_PX = 20
+const MENU_ICON_PX = 13
 
 type PowerAction = "reboot" | "poweroff"
 
@@ -141,30 +156,100 @@ function SystemClickaway(gdkmonitor: Gdk.Monitor) {
   )
 }
 
-function MenuRow({
+function MiniSwitch({
+  active,
+  busy,
+  failed,
+}: {
+  active: boolean | ReturnType<typeof createComputed<boolean>>
+  busy?: boolean | ReturnType<typeof createComputed<boolean>>
+  failed?: boolean | ReturnType<typeof createComputed<boolean>>
+}) {
+  const isActive = typeof active === "function" ? active : () => active
+  const isBusy = typeof busy === "function" ? busy : () => busy ?? false
+  const isFailed = typeof failed === "function" ? failed : () => failed ?? false
+
+  const cls = createComputed(() => {
+    if (isFailed()) return "MiniSwitch failed"
+    if (isBusy()) return "MiniSwitch busy"
+    return isActive() ? "MiniSwitch on" : "MiniSwitch off"
+  })
+
+  const knobCls = createComputed(() => {
+    if (isFailed()) return "MiniSwitch-knob failed"
+    if (isBusy()) return "MiniSwitch-knob busy"
+    return isActive() ? "MiniSwitch-knob on" : "MiniSwitch-knob off"
+  })
+
+  return (
+    <box class={cls} valign={Gtk.Align.CENTER} halign={Gtk.Align.END}>
+      <box class={knobCls} />
+    </box>
+  )
+}
+
+function ToggleRow({
   iconFile,
   label,
+  active,
   tip,
+  busy,
+  failed,
   rowClass,
   onClicked,
 }: {
   iconFile: string | ReturnType<typeof createComputed<string>>
   label: string | ReturnType<typeof createComputed<string>>
+  active: boolean | ReturnType<typeof createComputed<boolean>>
   tip: string | ReturnType<typeof createComputed<string>>
-  rowClass: string | ReturnType<typeof createComputed<string>>
+  busy?: boolean | ReturnType<typeof createComputed<boolean>>
+  failed?: boolean | ReturnType<typeof createComputed<boolean>>
+  rowClass?: string | ReturnType<typeof createComputed<string>>
   onClicked: () => void
 }) {
+  const isActive = typeof active === "function" ? active : () => active
+  const fullRowClass = createComputed(() => {
+    const extra = typeof rowClass === "function" ? rowClass() : rowClass ?? ""
+    return `SystemMenu-row ${isActive() ? "is-active" : "is-inactive"} ${extra}`.trim()
+  })
+
   return (
-    <button class={rowClass} tooltipText={tip} onClicked={onClicked}>
-      <box spacing={10} valign={Gtk.Align.CENTER} hexpand>
-        <image file={iconFile} pixelSize={16} />
+    <button class={fullRowClass} tooltipText={tip} onClicked={onClicked}>
+      <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
+        <image file={iconFile} pixelSize={14} class="SystemMenu-icon" />
         <label
           class="SystemMenu-label"
           label={label}
           xalign={0}
-          widthRequest={LABEL_W}
-          hexpand={false}
+          hexpand
         />
+        <MiniSwitch active={active} busy={busy} failed={failed} />
+      </box>
+    </button>
+  )
+}
+
+function ActionRow({
+  iconFile,
+  label,
+  tip,
+  badgeText,
+  onClicked,
+}: {
+  iconFile: string | ReturnType<typeof createComputed<string>>
+  label: string | ReturnType<typeof createComputed<string>>
+  tip: string | ReturnType<typeof createComputed<string>>
+  badgeText?: string
+  onClicked: () => void
+}) {
+  return (
+    <button class="SystemMenu-row action" tooltipText={tip} onClicked={onClicked}>
+      <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
+        <image file={iconFile} pixelSize={14} class="SystemMenu-icon" />
+        <label class="SystemMenu-label" label={label} xalign={0} hexpand />
+        <box class="ActionBadge" valign={Gtk.Align.CENTER} halign={Gtk.Align.END}>
+          <label class="ActionBadge-text" label={badgeText ?? "›"} />
+        </box>
       </box>
     </button>
   )
@@ -174,11 +259,16 @@ function VpnRow() {
   const iconFile = createComputed(() =>
     l2tpIconOn() ? ICON_VPN : ICON_VPN_OFF,
   )
+  const isBusy = createComputed(() => l2tpRowClass().includes("busy"))
+  const isFailed = createComputed(() => l2tpRowClass().includes("failed"))
 
   return (
-    <MenuRow
+    <ToggleRow
       iconFile={iconFile}
-      label={l2tpLabel}
+      label="Gabriel VPN"
+      active={l2tpIconOn}
+      busy={isBusy}
+      failed={isFailed}
       tip={l2tpTip}
       rowClass={l2tpRowClass}
       onClicked={() => toggleL2tp()}
@@ -190,11 +280,16 @@ function WarpRow() {
   const iconFile = createComputed(() =>
     warpIconOn() ? ICON_WARP : ICON_WARP_OFF,
   )
+  const isBusy = createComputed(() => warpRowClass().includes("busy"))
+  const isFailed = createComputed(() => warpRowClass().includes("failed"))
 
   return (
-    <MenuRow
+    <ToggleRow
       iconFile={iconFile}
-      label={warpLabel}
+      label="Cloudflare WARP"
+      active={warpIconOn}
+      busy={isBusy}
+      failed={isFailed}
       tip={warpTip}
       rowClass={warpRowClass}
       onClicked={() => toggleWarp()}
@@ -206,11 +301,19 @@ function BluetoothRow() {
   const iconFile = createComputed(() =>
     bluetoothIconOn() ? ICON_BLUETOOTH : ICON_BLUETOOTH_OFF,
   )
+  const label = createComputed(() =>
+    bluetoothLabel().startsWith("Connected:")
+      ? bluetoothLabel().replace("Connected: ", "BT: ")
+      : bluetoothLabel(),
+  )
+  const isBusy = createComputed(() => bluetoothRowClass().includes("busy"))
 
   return (
-    <MenuRow
+    <ToggleRow
       iconFile={iconFile}
-      label={bluetoothLabel}
+      label={label}
+      active={bluetoothIconOn}
+      busy={isBusy}
       tip={bluetoothTip}
       rowClass={bluetoothRowClass}
       onClicked={() => toggleBluetooth()}
@@ -540,11 +643,10 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
 
 function CastRow() {
   return (
-    <MenuRow
+    <ActionRow
       iconFile={ICON_CAST}
-      label="Cast"
-      tip="Cast & Screen Capture — click to select target & record"
-      rowClass="SystemMenu-row"
+      label="Cast & Rec"
+      tip="Cast & Screen Capture — selección de pantalla/área y grabación"
       onClicked={() => {
         closeAll()
         setCastPopupOpen(true)
@@ -555,11 +657,10 @@ function CastRow() {
 
 function LogsRow() {
   return (
-    <MenuRow
+    <ActionRow
       iconFile={ICON_LOGS}
-      label="Logs"
+      label="Logs Sistema"
       tip="System Logs — monitor de errores, servicios, kernel y audio"
-      rowClass="SystemMenu-row"
       onClicked={() => {
         closeAll()
         try {
@@ -581,17 +682,72 @@ function LogsRow() {
   )
 }
 
+function VisibilitySection() {
+  return (
+    <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
+      <label
+        class="SystemMenu-status"
+        label="BARRA"
+        xalign={0}
+        tooltipText="Alternar visibilidad de los módulos en la barra"
+      />
+      <ToggleRow
+        iconFile={ICON_MONEY}
+        label="Dinero (IA)"
+        active={moneyVisible}
+        tip={createComputed(() =>
+          moneyVisible()
+            ? "Badges IA (Grok, Cursor, Claude, OpenRouter) visibles · Clic para ocultar"
+            : "Badges IA ocultos de la barra · Clic para mostrar",
+        )}
+        onClicked={() => toggleMoneyVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_SCREEN}
+        label="Monitores"
+        active={monitorsVisible}
+        tip={createComputed(() =>
+          monitorsVisible()
+            ? "Preview de monitores y workspaces visible · Clic para ocultar"
+            : "Preview de monitores oculto · Clic para mostrar",
+        )}
+        onClicked={() => toggleMonitorsVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_CPU}
+        label="CPU & RAM"
+        active={ramVisible}
+        tip={createComputed(() =>
+          ramVisible()
+            ? "Medidor RamTrack de CPU, RAM y VRAM visible · Clic para ocultar"
+            : "Medidor RamTrack oculto · Clic para mostrar",
+        )}
+        onClicked={() => toggleRamVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_LAN_MOUSE}
+        label="Lan Mouse"
+        active={lanMouseVisible}
+        tip={createComputed(() =>
+          lanMouseVisible()
+            ? "Lan Mouse visible en la barra · Clic para ocultar"
+            : "Lan Mouse oculto de la barra · Clic para mostrar",
+        )}
+        onClicked={() => toggleLanMouseVisible()}
+      />
+    </box>
+  )
+}
+
 function MenuList() {
   return (
     <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
       <label
         class="SystemMenu-status"
-        label="SYSTEM"
+        label="SISTEMA"
         xalign={0}
-        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Restart · Power off · outside/Esc closes`}
+        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Reiniciar · Apagar`}
       />
-
-      <box class="SystemMenu-sep" heightRequest={1} hexpand />
 
       <VpnRow />
       <WarpRow />
@@ -601,26 +757,29 @@ function MenuList() {
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 
-      {}
+      <VisibilitySection />
+
+      <box class="SystemMenu-sep" heightRequest={1} hexpand />
+
       <box
         class="SystemMenu-power"
-        spacing={6}
+        spacing={8}
         halign={Gtk.Align.CENTER}
         hexpand
       >
         <button
           class="SystemMenu-power-btn reboot"
-          tooltipText="Restart — asks for confirmation"
+          tooltipText="Reiniciar equipo — pide confirmación"
           onClicked={() => requestConfirm("reboot")}
         >
-          <image file={ICON_REBOOT} pixelSize={18} />
+          <image file={ICON_REBOOT} pixelSize={16} />
         </button>
         <button
           class="SystemMenu-power-btn poweroff"
-          tooltipText="Power off — asks for confirmation"
+          tooltipText="Apagar equipo — pide confirmación"
           onClicked={() => requestConfirm("poweroff")}
         >
-          <image file={ICON_POWEROFF} pixelSize={18} />
+          <image file={ICON_POWEROFF} pixelSize={16} />
         </button>
       </box>
     </box>
@@ -732,7 +891,7 @@ export default function SystemMenu({
         }
       }}
     >
-      <image file={ICON_MENU} pixelSize={MENU_ICON_PX} />
+      <image file={ICON_MENU} pixelSize={isZoomDense() ? 13 : MENU_ICON_PX} />
     </button>
   )
 }

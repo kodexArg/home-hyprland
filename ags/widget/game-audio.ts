@@ -18,7 +18,13 @@ function inspectPid(pid: number, appName: string, binary: string): GameDetection
   if (
     lowerApp === "steam" ||
     lowerApp.includes("steamwebhelper") ||
-    lowerApp.includes("gameoverlayui") ||
+    lowerApp.includes("gameoverlayui")
+  ) {
+    const res: GameDetection = { isGame: true, title: "Steam" }
+    pidCache.set(pid, res)
+    return res
+  }
+  if (
     lowerApp.includes("brave") ||
     lowerApp.includes("chromium") ||
     lowerApp.includes("firefox") ||
@@ -108,7 +114,7 @@ export function isSteamGameStream(s: AstalWp.Stream): GameDetection {
   }
 
   if (/^steam$/i.test(appName) || /steamwebhelper/i.test(appName) || /steamwebhelper/i.test(binary)) {
-    return { isGame: false, title: "" }
+    return { isGame: true, title: "Steam" }
   }
 
   if (pidStr) {
@@ -189,8 +195,38 @@ export function findHeadphoneSink(wp: AstalWp.Wp): AstalWp.Endpoint | null {
   )
 }
 
+let cachedSteamPid: number | null = null
+
+export function isSteamRunning(): boolean {
+  if (cachedSteamPid !== null) {
+    if (GLib.file_test(`/proc/${cachedSteamPid}`, GLib.FileTest.EXISTS)) {
+      try {
+        const [ok, bytes] = GLib.file_get_contents(`/proc/${cachedSteamPid}/comm`)
+        if (ok && new TextDecoder().decode(bytes).trim() === "steam") {
+          return true
+        }
+      } catch (_) {}
+    }
+    cachedSteamPid = null
+  }
+
+  try {
+    const [ok, out] = GLib.spawn_command_line_sync("pgrep -x steam")
+    if (ok && out && out.length > 0) {
+      const pid = parseInt(new TextDecoder().decode(out).trim().split("\n")[0] || "", 10)
+      if (!isNaN(pid) && pid > 0) {
+        cachedSteamPid = pid
+        return true
+      }
+    }
+  } catch (_) {}
+
+  return false
+}
+
+export const [isSteamAppRunning, setIsSteamAppRunning] = createState(false)
 export const [hasGameStream, setHasGameStream] = createState(false)
-export const [gameTitle, setGameTitle] = createState("Steam Game")
+export const [gameTitle, setGameTitle] = createState("Steam")
 export const [gameVolume, setGameVolumeState] = createState(1.0)
 export const [gameMuted, setGameMuted] = createState(false)
 
@@ -219,6 +255,9 @@ function clearSignalHandlers() {
 export function syncGameStreams() {
   const wp = AstalWp.get_default()
   if (!wp || !wp.audio) return
+
+  const steamRunning = isSteamRunning()
+  setIsSteamAppRunning(steamRunning)
 
   const allStreams = wp.audio.streams || []
   const matches: { stream: AstalWp.Stream; title: string }[] = []
@@ -264,10 +303,13 @@ export function syncGameStreams() {
     setGameMuted(primary.stream.mute)
   } else {
     setHasGameStream(false)
+    if (steamRunning) {
+      setGameTitle("Steam")
+    }
   }
 }
 
-export const MAX_GAME_VOLUME = 1.3
+export const MAX_GAME_VOLUME = 1.0
 
 export function setGameVolume(val: number) {
   const clamped = Math.max(0, Math.min(MAX_GAME_VOLUME, val))
@@ -315,7 +357,7 @@ export function startGameAudioMonitor() {
     wp.connect("notify::audio", () => connectAudio())
   }
 
-  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
     syncGameStreams()
     return GLib.SOURCE_CONTINUE
   })

@@ -1,6 +1,6 @@
 import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
-import { createComputed, createState } from "ags"
+import { createComputed } from "ags"
 import {
   MAX_GAME_VOLUME,
   bumpGameVolume,
@@ -8,6 +8,7 @@ import {
   gameTitle,
   gameVolume,
   hasGameStream,
+  isSteamAppRunning,
   setGameVolume,
   startGameAudioMonitor,
   toggleGameMute,
@@ -16,45 +17,39 @@ import { isZoomDense } from "./zoom"
 
 startGameAudioMonitor()
 
-const TRACK_W_BASE = 100
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_STEAM_YELLOW = `${ICON_DIR}/steam-yellow.svg`
 const ICON_STEAM_MUTED = `${ICON_DIR}/steam-muted.svg`
 
-/* ── State: collapsed (icon only) / expanded (icon + track + ±) ───── */
-const [expanded, setExpanded] = createState(false)
-export function toggleGameVolumeExpanded() {
-  setExpanded(!expanded.peek())
-}
-
 function GameVolumeTrack() {
-  const trackW = createComputed(() =>
-    isZoomDense() ? Math.round(TRACK_W_BASE / 2) : TRACK_W_BASE,
-  )
+  const trackW = createComputed(() => (isZoomDense() ? 16 : 24))
 
   const setFromX = (widget: Gtk.Widget, x: number) => {
     const w = widget.get_allocated_width() || trackW()
-    const v = Math.max(0, Math.min(MAX_GAME_VOLUME, (x / w) * MAX_GAME_VOLUME))
+    const v = Math.max(0, Math.min(MAX_GAME_VOLUME, x / w))
     setGameVolume(v)
+  }
+
+  const bump = (delta: number) => {
+    bumpGameVolume(delta)
   }
 
   const fillW = createComputed(() => {
     const tw = trackW()
-    return Math.max(
-      0,
-      Math.round(
-        Math.max(0, Math.min(1, gameVolume() / MAX_GAME_VOLUME)) * tw,
-      ),
-    )
+    if (gameMuted()) return 0
+    const v = Number(gameVolume())
+    return Math.max(0, Math.min(tw, Math.round(Math.max(0, Math.min(1, v)) * tw)))
   })
 
   return (
     <box
       class="GameVolume-track"
       widthRequest={trackW}
-      heightRequest={16}
+      heightRequest={2}
+      hexpand={false}
+      vexpand={false}
+      halign={Gtk.Align.CENTER}
       valign={Gtk.Align.CENTER}
-      tooltipText="Volumen de juego (arrastrar / clic / rueda)"
       $={(self) => {
         const click = new Gtk.GestureClick()
         click.set_button(1)
@@ -76,15 +71,31 @@ function GameVolumeTrack() {
           setFromX(self, sx + dx)
         })
         self.add_controller(drag)
+
+        const scroll = new Gtk.EventControllerScroll({
+          flags:
+            Gtk.EventControllerScrollFlags.VERTICAL |
+            Gtk.EventControllerScrollFlags.DISCRETE,
+        })
+        scroll.connect("scroll", (_c, _dx, dy) => {
+          bump(dy > 0 ? -0.05 : 0.05)
+          return true
+        })
+        self.add_controller(scroll)
       }}
     >
-      <box class="GameVolume-fill" widthRequest={fillW} hexpand={false} />
+      <box
+        class="GameVolume-fill"
+        widthRequest={fillW}
+        heightRequest={2}
+        hexpand={false}
+      />
     </box>
   )
 }
 
 export default function GameVolume() {
-  const isVisible = createComputed(() => hasGameStream())
+  const isVisible = createComputed(() => hasGameStream() || isSteamAppRunning())
 
   const steamIconFile = createComputed(() =>
     gameMuted() ? ICON_STEAM_MUTED : ICON_STEAM_YELLOW,
@@ -94,24 +105,28 @@ export default function GameVolume() {
     const title = gameTitle()
     const pct = Math.round(gameVolume() * 100)
     const m = gameMuted() ? " [Silenciado]" : ""
-    const action = expanded() ? "Contraer" : "Expandir"
-    return `🎮 ${title}: ${pct}%${m} · clic: ${action} · medio: mute`
+    return `🎮 ${title}: ${pct}%${m} · clic: silenciar · rueda: volumen`
   })
 
   const rootClass = createComputed(() => {
     const parts = ["GameVolume"]
     if (gameMuted()) parts.push("muted")
-    if (expanded()) parts.push("expanded")
     return parts.join(" ")
   })
 
-  const controlsVisible = createComputed(() => expanded())
+  const bump = (delta: number) => {
+    bumpGameVolume(delta)
+  }
 
   return (
     <box
       class={rootClass}
-      spacing={1}
+      orientation={Gtk.Orientation.VERTICAL}
+      spacing={isZoomDense() ? 4 : 5}
+      valign={Gtk.Align.CENTER}
+      halign={Gtk.Align.CENTER}
       visible={isVisible}
+      tooltipText="scroll mouse to change volume"
       $={(self) => {
         const scroll = new Gtk.EventControllerScroll({
           flags:
@@ -119,7 +134,7 @@ export default function GameVolume() {
             Gtk.EventControllerScrollFlags.DISCRETE,
         })
         scroll.connect("scroll", (_c, _dx, dy) => {
-          bumpGameVolume(dy > 0 ? -0.05 : 0.05)
+          bump(dy > 0 ? -0.05 : 0.05)
           return true
         })
         self.add_controller(scroll)
@@ -128,7 +143,9 @@ export default function GameVolume() {
       <button
         class="GameVolume-steam"
         tooltipText={steamTip}
-        onClicked={() => toggleGameVolumeExpanded()}
+        onClicked={() => toggleGameMute()}
+        hexpand={false}
+        halign={Gtk.Align.CENTER}
         $={(self) => {
           /* Middle click → toggle mute */
           const mid = new Gtk.GestureClick()
@@ -137,30 +154,10 @@ export default function GameVolume() {
           self.add_controller(mid)
         }}
       >
-        <image file={steamIconFile} pixelSize={16} />
+        <image file={steamIconFile} pixelSize={isZoomDense() ? 10 : 13} />
       </button>
 
-      <button
-        class="GameVolume-step"
-        tooltipText="-5%"
-        visible={controlsVisible}
-        onClicked={() => bumpGameVolume(-0.05)}
-      >
-        <label label="−" />
-      </button>
-
-      <box visible={controlsVisible}>
-        <GameVolumeTrack />
-      </box>
-
-      <button
-        class="GameVolume-step"
-        tooltipText="+5%"
-        visible={controlsVisible}
-        onClicked={() => bumpGameVolume(0.05)}
-      >
-        <label label="+" />
-      </button>
+      <GameVolumeTrack />
     </box>
   )
 }

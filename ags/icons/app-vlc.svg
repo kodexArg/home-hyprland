@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+  <!-- VLC: cono con franjas y base -->
+  <defs><mask id="m"><rect width="24" height="24" fill="#fff"/><g stroke="#000" stroke-width="1.2"><path d="M8.6 12.2H15.4"/><path d="M7.7 15H16.3"/></g></mask></defs>
+  <g mask="url(#m)"><path d="M12 2.5L17.6 16.5H6.4Z"/><path d="M4.2 18.2H19.8L21.6 21.5H2.4Z"/></g>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+  <!-- WhatsApp: globo con cola y auricular recortado -->
+  <defs><mask id="m"><rect width="24" height="24" fill="#fff"/>
+    <path fill="#000" d="M8.2 7.6C8.8 7 9.6 7 9.9 7.7L10.6 9.3C10.8 9.8 10.5 10.2 10.2 10.5C10.9 11.8 12.1 13 13.5 13.8C13.8 13.5 14.2 13.2 14.7 13.4L16.2 14.1C16.9 14.4 16.9 15.2 16.3 15.8C15.2 16.9 13.5 16.4 12 15.4C10 14.2 8.2 12.3 7.4 10.2C7 9.2 7.3 8.4 8.2 7.6Z"/></mask></defs>
+  <g mask="url(#m)"><circle cx="12" cy="11.5" r="9.8"/><path d="M2.2 22L3.6 16.2L8.2 19.8Z"/></g>
+</svg>
