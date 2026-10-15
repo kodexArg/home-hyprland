@@ -756,10 +756,6 @@ function AsusRow() {
 function MenuList() {
   return (
     <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
-      <AsusRow />
-
-      <box class="SystemMenu-sep" heightRequest={1} hexpand />
-
       <label
         class="SystemMenu-status"
         label="SISTEMA"
@@ -767,6 +763,7 @@ function MenuList() {
         tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Reiniciar · Apagar`}
       />
 
+      <AsusRow />
       <VpnRow />
       <WarpRow />
       <BluetoothRow />
