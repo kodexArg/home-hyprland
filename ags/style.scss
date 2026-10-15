@@ -91,7 +91,7 @@ window.Bar {
   }
 
   .WsPeek {
-    margin: 0 14px 0 10px;
+    margin: 0 18px 0 13px;
     padding: 0;
   }
 
@@ -102,14 +102,14 @@ window.Bar {
     border: none;
     outline: none;
     box-shadow: none;
-    min-width: 13px;
-    min-height: 22px;
+    min-width: 16px;
+    min-height: 28px;
     border-radius: 2px;
     background: rgba(8, 7, 6, 0.55);
 
     &.rot {
-      min-width: 22px;
-      min-height: 13px;
+      min-width: 28px;
+      min-height: 16px;
     }
 
     &.occupied {
@@ -716,7 +716,7 @@ window.Bar {
     }
 
     .WsPeek {
-      margin: 0 12px 0 8px;
+      margin: 0 15px 0 10px;
     }
 
     .WsPeek button,
@@ -726,13 +726,13 @@ window.Bar {
       border: none;
       outline: none;
       box-shadow: none;
-      min-width: 9px;
-      min-height: 14px;
+      min-width: 11px;
+      min-height: 18px;
       border-radius: 1px;
 
       &.rot {
-        min-width: 14px;
-        min-height: 9px;
+        min-width: 18px;
+        min-height: 11px;
       }
     }
 

@@ -10,8 +10,8 @@ import { findApp } from "./apps-index"
 import { isZoomDense } from "./zoom"
 
 const POLL_MS = 500
-const SHORT = 13
-const LONG = 22
+const SHORT = 16
+const LONG = 28
 
 type Phase = "empty" | "occupied"
 
@@ -347,8 +347,8 @@ function WsRect({
     onScreen() ? "WsRect-under on" : "WsRect-under",
   )
 
-  const shortPx = isZoomDense() ? 9 : SHORT
-  const longPx = isZoomDense() ? 14 : LONG
+  const shortPx = isZoomDense() ? 11 : SHORT
+  const longPx = isZoomDense() ? 18 : LONG
   const tw = rotate ? longPx : shortPx
   const th = rotate ? shortPx : longPx
 
@@ -410,7 +410,7 @@ function ScreenGroup({
   screens: Accessor<Screen[]>
 }) {
   return (
-    <box spacing={2} hexpand={false} valign={Gtk.Align.END}>
+    <box spacing={3} hexpand={false} valign={Gtk.Align.END}>
       {screen.workspaces.map((id) => {
         const wins = createComputed(() => {
           const hit = screens().find((s) => s.name === screen.name)
@@ -439,7 +439,7 @@ export default function WorkspacePeek() {
   return (
     <box
       class="WsPeek"
-      spacing={isZoomDense() ? 4 : 6}
+      spacing={isZoomDense() ? 5 : 8}
       valign={Gtk.Align.CENTER}
       hexpand={false}
     >
