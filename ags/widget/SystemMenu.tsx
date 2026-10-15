@@ -55,6 +55,7 @@ import {
   lanMouseVisible,
   toggleLanMouseVisible,
 } from "./bar-visibility"
+import { asusOn, startAsusPoll, toggleAsus } from "./AsusToggle"
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_MENU = `${ICON_DIR}/menu.svg`
@@ -739,9 +740,26 @@ function VisibilitySection() {
   )
 }
 
+function AsusRow() {
+  startAsusPoll()
+  return (
+    <ToggleRow
+      iconFile={ICON_SCREEN}
+      label="ASUS"
+      active={createComputed(() => asusOn())}
+      tip={createComputed(() => `ASUS (HDMI-A-2): ${asusOn() ? "encendido" : "apagado"}\nClic: ${asusOn() ? "apagar" : "encender"}`)}
+      onClicked={() => toggleAsus()}
+    />
+  )
+}
+
 function MenuList() {
   return (
     <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
+      <AsusRow />
+
+      <box class="SystemMenu-sep" heightRequest={1} hexpand />
+
       <label
         class="SystemMenu-status"
         label="SISTEMA"
