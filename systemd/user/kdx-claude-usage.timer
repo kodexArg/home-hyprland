@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh claude usage cache for AGS bar every 5min
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

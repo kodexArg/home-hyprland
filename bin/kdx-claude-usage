@@ -3,8 +3,101 @@ import datetime
 import json
 import os
 import sys
+import time
+import urllib.request
 
-CACHE_FILE = "/tmp/kdx_claude_usage.json"
+# Persistent cache (survives reboots) — the AGS ClaudeMeter only reads this file.
+# Refreshed by kdx-claude-usage.timer (systemd --user, every 5 min).
+CACHE_FILE = os.path.expanduser("~/.cache/kdx/claude_usage.json")
+LEGACY_CACHE_FILE = "/tmp/kdx_claude_usage.json"
+CREDENTIALS_FILE = os.path.expanduser("~/.claude/.credentials.json")
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+LIVE_MIN_INTERVAL_S = 300  # the endpoint answers 429 when polled more often
+LIVE_KEYS = ("five_hour_pct", "daily_pct", "week_pct", "claude_pct", "claude_formatted",
+             "reset_str", "reset_iso", "week_reset_str", "week_reset_iso", "fetched_at")
+# Fields that also carry a Desktop-history fallback sample between live attempts.
+FALLBACK_KEYS = ("sample_at", "source", "updated_at")
+
+
+def read_cache():
+    for path in (CACHE_FILE, LEGACY_CACHE_FILE):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            continue
+    return {}
+
+
+def write_cache(res):
+    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+    tmp = CACHE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(res, f)
+    os.replace(tmp, CACHE_FILE)
+
+
+def fetch_live_usage():
+    """Plan usage from the same OAuth endpoint Claude Code's /usage reads."""
+    with open(CREDENTIALS_FILE) as f:
+        oauth = json.load(f)["claudeAiOauth"]
+    if oauth.get("expiresAt", 0) < time.time() * 1000:
+        raise RuntimeError("token OAuth vencido (abrí Claude Code para renovarlo)")
+    request = urllib.request.Request(
+        USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {oauth['accessToken']}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "claude-code/2.1",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return json.load(response)
+
+
+def apply_live_usage(res, usage):
+    five_hour = usage.get("five_hour") or {}
+    seven_day = usage.get("seven_day") or {}
+    res["five_hour_pct"] = round(five_hour.get("utilization") or 0)
+    res["daily_pct"] = round(seven_day.get("utilization") or 0)
+    res["week_pct"] = res["daily_pct"]
+    res["claude_pct"] = max(res["five_hour_pct"], res["daily_pct"])
+    res["claude_formatted"] = f"{res['claude_pct']}%"
+    res["reset_iso"] = five_hour.get("resets_at")
+    res["week_reset_iso"] = seven_day.get("resets_at")
+    if res["reset_iso"]:
+        reset_local = datetime.datetime.fromisoformat(res["reset_iso"]).astimezone()
+        res["reset_str"] = reset_local.strftime("%H:%M")
+    if res["week_reset_iso"]:
+        week_local = datetime.datetime.fromisoformat(res["week_reset_iso"]).astimezone()
+        res["week_reset_str"] = week_local.strftime("%-d %b %H:%M")
+
+
+def apply_desktop_history(res):
+    """Last sample Claude Desktop wrote locally (no network). Marked stale."""
+    plan_history = os.path.expanduser("~/.config/Claude/plan-usage-history.json")
+    if not os.path.exists(plan_history):
+        return
+    try:
+        with open(plan_history) as f:
+            samples = json.load(f).get("samples", [])
+        if not samples:
+            return
+        latest = samples[-1]
+        u = latest.get("u", {})
+        res["five_hour_pct"] = round(u.get("fh", 0))
+        res["daily_pct"] = round(u.get("sd", 0))
+        res["week_pct"] = res["daily_pct"]
+        res["claude_pct"] = max(res["five_hour_pct"], res["daily_pct"])
+        res["claude_formatted"] = f"{res['claude_pct']}%"
+        res["stale"] = True
+        res["source"] = "desktop"
+        sample_t = latest.get("t")
+        if sample_t:
+            res["sample_at"] = sample_t / 1000
+            res["updated_at"] = datetime.datetime.fromtimestamp(sample_t / 1000).strftime("%H:%M")
+    except Exception as e:
+        res["error"] = (res.get("error") or "") + f" · desktop: {e}"
 
 
 def main():
@@ -47,27 +140,29 @@ def main():
             except Exception:
                 pass
 
-    # 2. Read live plan usage from ~/.config/Claude/plan-usage-history.json
-    plan_history = os.path.expanduser("~/.config/Claude/plan-usage-history.json")
-    if os.path.exists(plan_history):
+    # 2. Live plan usage (OAuth endpoint, throttled) → last good live sample → Desktop history
+    cache = read_cache()
+    last_live = cache if cache.get("fetched_at") else None
+    res["attempted_at"] = cache.get("attempted_at", 0)
+    if time.time() - res["attempted_at"] < LIVE_MIN_INTERVAL_S:
+        res.update({k: cache[k] for k in LIVE_KEYS + FALLBACK_KEYS + ("error", "stale") if k in cache})
+    else:
+        res["attempted_at"] = time.time()
         try:
-            with open(plan_history) as f:
-                data = json.load(f)
-                samples = data.get("samples", [])
-                if samples:
-                    latest = samples[-1]
-                    u = latest.get("u", {})
-                    res["five_hour_pct"] = round(u.get("fh", 0))
-                    res["daily_pct"] = round(u.get("sd", 0))
-                    max_pct = max(res["five_hour_pct"], res["daily_pct"])
-                    res["claude_pct"] = max_pct
-                    res["claude_formatted"] = f"{max_pct}%"
-                    sample_t = latest.get("t")
-                    if sample_t:
-                        sample_dt = datetime.datetime.fromtimestamp(sample_t / 1000)
-                        res["updated_at"] = sample_dt.strftime("%H:%M")
-        except Exception as e:
-            res["error"] = str(e)
+            apply_live_usage(res, fetch_live_usage())
+            res["fetched_at"] = time.time()
+            res["source"] = "live"
+        except Exception as live_error:
+            res["error"] = f"live: {live_error}"
+            if last_live:
+                res.update({k: last_live[k] for k in LIVE_KEYS if k in last_live})
+                res["stale"] = True
+                res["source"] = "cache"
+                res["updated_at"] = datetime.datetime.fromtimestamp(last_live["fetched_at"]).strftime("%H:%M")
+
+    # No live sample (now or cached): fall back to Claude Desktop's local plan-usage history.
+    if not res.get("fetched_at"):
+        apply_desktop_history(res)
 
     # 3. Read today's activity from stats-cache.json
     today_str = datetime.date.today().isoformat()
@@ -91,8 +186,7 @@ def main():
                 pass
 
     try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(res, f)
+        write_cache(res)
     except Exception:
         pass
 

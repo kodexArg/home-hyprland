@@ -1,0 +1,11 @@
+[Unit]
+Description=Claude Code plan usage cache for AGS bar (writes ~/.cache/kdx/claude_usage.json)
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 %h/.local/bin/kdx-claude-usage
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=30
+StandardOutput=null
