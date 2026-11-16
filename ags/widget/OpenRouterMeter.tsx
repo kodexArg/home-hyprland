@@ -4,10 +4,11 @@ import UsageBadge, { clampFraction } from "./UsageBadge"
 
 const LOW_BALANCE_USD = 2
 
+/** Chip: balance left (USD). Tooltip: $ balance/total with flat bar · Σ spent. */
 export default function OpenRouterMeter() {
   startOpenRouterWatch()
   const snap = openRouterSnap
-  const usd = (v?: number | null) => (typeof v === "number" ? `$${v.toFixed(2)}` : "--")
+  const usd = (v?: number | null) => (typeof v === "number" ? `$${v.toFixed(2)}` : "")
 
   return (
     <UsageBadge
@@ -22,29 +23,24 @@ export default function OpenRouterMeter() {
       onOpen="https://openrouter.ai/settings/credits"
       tip={{
         title: "OpenRouter",
-        subtitle: createComputed(() => `${usd(snap().balance)} disponibles`),
         rows: [
           {
-            label: "Saldo restante",
-            value: createComputed(() => `${usd(snap().balance)} / ${usd(snap().total_credits)}`),
+            label: "$",
+            value: createComputed(() => {
+              const b = usd(snap().balance)
+              const t = usd(snap().total_credits)
+              return b && t ? `${b}/${t}` : b
+            }),
             fraction: createComputed(() => {
               const s = snap()
-              return s.balance !== null && s.total_credits ? clampFraction(s.balance / s.total_credits) : null
+              return typeof s.balance === "number" && s.total_credits ? clampFraction(s.balance / s.total_credits) : null
             }),
           },
-          {
-            label: "Consumido",
-            value: createComputed(() => usd(snap().total_usage)),
-            fraction: createComputed(() => {
-              const s = snap()
-              return s.total_usage !== undefined && s.total_credits ? clampFraction(s.total_usage / s.total_credits) : null
-            }),
-            kind: "time",
-          },
+          { label: "Σ", value: createComputed(() => usd(snap().total_usage)), fraction: createComputed(() => null) },
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "Clic: refrescar · Clic derecho: créditos OpenRouter",
+        hint: "clic ⟳ · der ↗",
       }}
     />
   )

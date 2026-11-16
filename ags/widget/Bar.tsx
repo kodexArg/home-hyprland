@@ -20,7 +20,6 @@ import CursorMeter from "./CursorMeter"
 import ClaudeMeter from "./ClaudeMeter"
 import ClaudeAlvsMeter from "./ClaudeAlvsMeter"
 import AgyMeter from "./AgyMeter"
-import AgyOtherMeter from "./AgyOtherMeter"
 import LanMouseMeter from "./LanMouseMeter"
 import GameVolume from "./GameVolume"
 import SpotifyVolume from "./SpotifyVolume"
@@ -583,7 +582,6 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
               {show("claude") && <ClaudeMeter />}
               {show("claude-alvs") && <ClaudeAlvsMeter />}
               {show("agy") && <AgyMeter />}
-              {show("agy-other") && <AgyOtherMeter />}
               {show("openrouter") && <OpenRouterMeter />}
             </box>
             <box visible={lanMouseVisible} valign={Gtk.Align.CENTER}>

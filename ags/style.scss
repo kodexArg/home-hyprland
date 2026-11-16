@@ -2038,68 +2038,57 @@ tooltip label {
 
 
 
-/* UsageBadge tooltip — title, one bar per row, neutral bars for elapsed cycle time */
+/* UsageBadge tooltip — compact: one line per window (tag · flat bar · % · ↻ reset), no pace/day-cut bar */
 tooltip .UsageTip {
-  padding: 4px 2px;
-  min-width: 200px;
+  padding: 3px 2px;
+  min-width: 0;
 
   label { padding: 0; }
 
   .UsageTip-title {
     font-weight: bold;
-    font-size: 0.95rem;
+    font-size: 0.85rem;
   }
 
   .UsageTip-subtitle,
-  .UsageTip-detail,
-  .UsageTip-hint {
-    font-size: 0.78rem;
-    color: rgba(237, 230, 218, 0.6);
+  .UsageTip-hint,
+  .UsageTip-reset,
+  .UsageTip-label {
+    font-size: 0.72rem;
+    color: rgba(237, 230, 218, 0.55);
+    font-feature-settings: "tnum";
   }
 
-  .UsageTip-label { font-size: 0.85rem; }
-
   .UsageTip-value {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: bold;
     font-feature-settings: "tnum";
   }
 
   .UsageTip-track {
-    min-height: 6px;
-    border-radius: 3px;
+    min-height: 5px;
+    border-radius: 2px;
     background: rgba(255, 255, 255, 0.08);
   }
 
   .UsageTip-fill {
-    min-height: 6px;
-    border-radius: 3px;
+    min-height: 5px;
+    border-radius: 2px;
     background: $badge-tone;
   }
 
-  .UsageTip-track.time .UsageTip-fill { background: rgba(181, 176, 166, 0.45); }
-
   .UsageTip-error {
-    font-size: 0.8rem;
+    font-size: 0.72rem;
     color: #c45c4a;
   }
 
-  .UsageTip-hint { margin-top: 2px; }
-
-  /* Pace verdict — same three tones as the badge digits / PACE_RGB */
-  .UsageTip-verdict {
-    font-size: 0.8rem;
-    font-weight: bold;
-    &.ok { color: #a6e3a1; }
-    &.warn { color: #fab387; }
-    &.high { color: #f38ba8; }
-  }
+  .UsageTip-hint { margin-top: 1px; }
 
   @each $tone, $color in $badge-tones {
     &.tone-#{$tone} {
       .UsageTip-title,
       .UsageTip-value { color: $color; }
-      .UsageTip-track.usage .UsageTip-fill { background: $color; }
+      .UsageTip-fill { background: $color; }
     }
   }
 
@@ -2108,7 +2097,7 @@ tooltip .UsageTip {
     .UsageTip-subtitle,
     .UsageTip-value { color: $badge-tone; }
     .UsageTip-subtitle { font-weight: bold; }
-    .UsageTip-track.usage .UsageTip-fill { background: $badge-tone; }
+    .UsageTip-fill { background: $badge-tone; }
   }
 }
 

@@ -1,14 +1,11 @@
 import { createComputed } from "ags"
 import { cursorUsageSnap, refreshCursorUsage, startCursorWatch } from "./cursor"
-import UsageBadge, { clampFraction } from "./UsageBadge"
-
-const CYCLE_DAYS = 30
+import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
 /**
  * Chip: Auto pool % · API pool % (Cursor's own two quotas, GetCurrentPeriodUsage).
- * Auto pool = autoBucketModels (default/Auto, composer-*, vega*, grok-4.x); API pool = the rest (Claude, GPT, Gemini...).
- * Tooltip adds the real Grok / third-party / Auto spend split (GetAggregatedUsageEvents).
- * Blocked (Cursor says "usage limit", on-demand off): the tooltip says so and the pool bars keep the real pool % (same grey palette).
+ * Tooltip, one line each: A (Auto pool) · API (third-party pool) · $ spend/cap with cycle reset · split Grok/3P/Auto.
+ * Blocked (Cursor says "usage limit", on-demand off): the tooltip switches to the neutral "blocked" look.
  */
 export default function CursorMeter() {
   startCursorWatch()
@@ -17,28 +14,13 @@ export default function CursorMeter() {
     const s = snap()
     return /usage limit/i.test(s.display_message ?? "") || (typeof s.remaining === "number" && s.remaining <= 0)
   })
-  const pctText = (v: number | null | undefined) => (typeof v === "number" ? `${Math.round(v)}%` : "--")
-  const dollars = (cents?: number | null) => (typeof cents === "number" ? `$${(cents / 100).toFixed(2)}` : "--")
+  const usd = (cents?: number | null) => (typeof cents === "number" ? `$${(cents / 100).toFixed(cents >= 10_000 ? 0 : 2)}` : "")
   const cap = () => (snap().limit ?? 0) + (snap().bonus_spend ?? 0)
-  const share = (key: "grok_cents" | "third_cents" | "auto_cents") => {
+  const resetText = () => (snap().reset_str && snap().reset_str !== "..." ? snap().reset_str : null)
+  const split = createComputed(() => {
     const s = snap().split
-    return s && s.total_cents > 0 ? s[key] / s.total_cents : null
-  }
-  const poolRow = (label: string, detail: string, key: "cursor_pct" | "other_pct") => ({
-    label,
-    value: createComputed(() => (blocked() ? `${pctText(snap()[key])} · bloqueado` : pctText(snap()[key]))),
-    fraction: createComputed(() => clampFraction((snap()[key] ?? 0) / 100)),
-    detail: createComputed(() => detail),
-  })
-  const shareRow = (label: string, key: "grok_cents" | "third_cents" | "auto_cents", detail?: () => string) => ({
-    label,
-    value: createComputed(() => {
-      const s = snap().split
-      const f = share(key)
-      return s && f !== null ? `${dollars(s[key])} · ${Math.round(f * 100)}%` : "--"
-    }),
-    fraction: createComputed(() => clampFraction(share(key))),
-    ...(detail ? { detail: createComputed(detail) } : {}),
+    if (!s || !(s.total_cents > 0)) return ""
+    return [`Grok ${usd(s.grok_cents)}`, `3P ${usd(s.third_cents)}`, `Auto ${usd(s.auto_cents)}`].join(" · ")
   })
 
   return (
@@ -50,43 +32,37 @@ export default function CursorMeter() {
       onRefresh={refreshCursorUsage}
       onOpen="https://www.cursor.com/settings"
       tip={{
-        title: "Cursor · pool Auto · pool API",
-        subtitle: createComputed(() =>
-          blocked() ? `Bloqueado hasta ${snap().reset_str || "el reset"}` : (snap().display_message ?? ""),
-        ),
+        title: "Cursor",
+        subtitle: createComputed(() => (blocked() ? `⛔ ${snap().reset_str || ""}`.trim() : "")),
         blocked,
         rows: [
-          poolRow("Pool Auto", "Grok + Auto + Composer", "cursor_pct"),
-          poolRow("Pool API", "terceros: Claude, GPT, Gemini…", "other_pct"),
-          shareRow("Gasto Grok (ciclo)", "grok_cents"),
-          shareRow("Gasto terceros (ciclo)", "third_cents", () => (snap().split?.third_top ?? []).join(", ")),
-          shareRow("Gasto Auto/Composer sin Grok", "auto_cents"),
           {
-            label: "Gasto total / tope",
-            value: createComputed(() => `${dollars(snap().total_spend)} / ${dollars(cap())}`),
+            label: "A",
+            value: createComputed(() => pct(snap().cursor_pct)),
+            fraction: createComputed(() => clampFraction((snap().cursor_pct ?? NaN) / 100)),
+          },
+          {
+            label: "API",
+            value: createComputed(() => pct(snap().other_pct)),
+            fraction: createComputed(() => clampFraction((snap().other_pct ?? NaN) / 100)),
+          },
+          {
+            label: "$",
+            value: createComputed(() => {
+              const t = usd(snap().total_spend)
+              return t && cap() ? `${t}/${usd(cap())}` : t
+            }),
             fraction: createComputed(() => {
               const total = snap().total_spend
-              return total && cap() ? clampFraction(total / cap()) : null
+              return typeof total === "number" && cap() ? clampFraction(total / cap()) : null
             }),
-            detail: createComputed(() => {
-              const b = snap().bonus_spend
-              return typeof b === "number" && b > 0 ? `incluido ${dollars(snap().limit)} + bonus ${dollars(b)}` : ""
-            }),
+            reset: createComputed(resetText),
           },
-          {
-            label: "Tiempo del ciclo",
-            value: createComputed(() => snap().reset_str || "--"),
-            fraction: createComputed(() => {
-              const left = snap().days_left
-              return typeof left === "number" ? clampFraction(1 - left / CYCLE_DAYS) : null
-            }),
-            kind: "time",
-            days: CYCLE_DAYS,
-          },
+          { label: "Σ", value: split, fraction: createComputed(() => null) },
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "Clic: refrescar · Clic derecho: ajustes Cursor",
+        hint: "clic ⟳ · der ↗",
       }}
     />
   )

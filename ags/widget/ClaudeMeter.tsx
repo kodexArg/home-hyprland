@@ -1,10 +1,8 @@
 import { createComputed } from "ags"
 import { claudeUsageSnap, refreshClaudeUsage, startClaudeWatch } from "./claude"
-import UsageBadge, { clampFraction, cycleElapsed, timeLeft } from "./UsageBadge"
+import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
-const FIVE_HOURS_MS = 5 * 3_600_000
-const WEEK_MS = 7 * 86_400_000
-
+/** Claude Max: chip = 5 h · 7 d. Tooltip: one flat bar per window + ↻ reset (no month / per-model: not in the meter). */
 export default function ClaudeMeter() {
   startClaudeWatch()
   const snap = claudeUsageSnap
@@ -22,49 +20,24 @@ export default function ClaudeMeter() {
       onOpen="https://claude.ai/settings/usage"
       tip={{
         title: "Claude Max",
-        subtitle: createComputed(() => {
-          const s = snap()
-          const src = s.source === "desktop" ? ` · dato Claude Desktop ${s.updated_at}` : s.stale ? ` · dato ${s.updated_at}` : ""
-          return `${s.org} · ${s.tier} · ${s.email}${src}`
-        }),
+        subtitle: createComputed(() => [snap().tier, snap().email].filter(Boolean).join(" · ")),
         rows: [
           {
-            label: "Sesión 5 h",
-            value: createComputed(() => (hasData() ? `${snap().five_hour_pct}%` : "--")),
+            label: "5h",
+            value: createComputed(() => (hasData() ? pct(snap().five_hour_pct) : "")),
             fraction: live(() => clampFraction(snap().five_hour_pct / 100)),
-            detail: createComputed(() => (snap().reset_iso ? `reinicia ${snap().reset_str} · ${timeLeft(snap().reset_iso)}` : "")),
+            reset: createComputed(() => snap().reset_iso),
           },
           {
-            label: "Tiempo de la sesión",
-            value: createComputed(() => {
-              const f = cycleElapsed(snap().reset_iso, FIVE_HOURS_MS)
-              return f === null ? "--" : `${Math.round(f * 100)}%`
-            }),
-            fraction: createComputed(() => cycleElapsed(snap().reset_iso, FIVE_HOURS_MS)),
-            kind: "time",
-          },
-          {
-            label: "Semana (7 d)",
-            value: createComputed(() => (hasData() ? `${weekPct()}%` : "--")),
+            label: "7d",
+            value: createComputed(() => (hasData() ? pct(weekPct()) : "")),
             fraction: live(() => clampFraction(weekPct() / 100)),
-            detail: createComputed(() =>
-              snap().week_reset_str ? `reinicia ${snap().week_reset_str} · ${timeLeft(snap().week_reset_iso)}` : "",
-            ),
-          },
-          {
-            label: "Tiempo de la semana",
-            value: createComputed(() => {
-              const f = cycleElapsed(snap().week_reset_iso, WEEK_MS)
-              return f === null ? "--" : `${Math.round(f * 100)}%`
-            }),
-            fraction: createComputed(() => cycleElapsed(snap().week_reset_iso, WEEK_MS)),
-            kind: "time",
-            days: 7,
+            reset: createComputed(() => snap().week_reset_iso),
           },
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "Clic: refrescar · Clic derecho: uso en claude.ai",
+        hint: "clic ⟳ · der ↗",
       }}
     />
   )

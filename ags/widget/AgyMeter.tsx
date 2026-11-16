@@ -1,97 +1,59 @@
 import { createComputed } from "ags"
 import { agyUsageSnap, refreshAgyUsage, startAgyWatch } from "./agy"
-import UsageBadge, { clampFraction, cycleElapsed, timeLeft } from "./UsageBadge"
+import UsageBadge, { clampFraction, compactDate, pct } from "./UsageBadge"
 
-const FIVE_HOURS_MS = 5 * 3_600_000
-const WEEK_MS = 7 * 86_400_000
-const DAYS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"]
-const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
-
-/** Antigravity CLI (agy): Gemini 4 Argon quota used. Mismo icono blanco (antigravity), foco en Argon. */
+/** Antigravity (agy): one badge, Google models only (Gemini group 5 h · 7 d).
+ *  The rarely used pools (Argon + every other_groups entry, e.g. Claude/GPT) share a single text line in the tooltip. */
 export default function AgyMeter() {
   startAgyWatch()
   const snap = agyUsageSnap
   const num = (v: number | null | undefined) => (typeof v === "number" ? v : null)
-  const pctText = (v: number | null | undefined) => (typeof v === "number" ? `${v}%` : "--")
-  const two = (n: number) => String(n).padStart(2, "0")
-
-  const formatIso = (iso?: string | null) => {
-    if (!iso) return "--"
-    const d = new Date(iso)
-    const day = DAYS[d.getDay()]
-    const month = MONTHS[d.getMonth()]
-    return `${day} ${d.getDate()} ${month} ${two(d.getHours())}:${two(d.getMinutes())} ART`
+  const shortName = (name: string) => name.replace(/^Gemini \d+(\.\d+)? /, "").replace(/ models?$/i, "").replace(/ and /g, "/")
+  const part = (name: string, five: number | null | undefined, week: number | null | undefined, reset?: string | null) => {
+    const vals = [pct(five) && num(five)! > 0 ? `5h ${pct(five)}` : "", pct(week)].filter(Boolean).join(" ")
+    if (!vals) return ""
+    const r = compactDate(reset)
+    return `${shortName(name)} ${vals}${r ? ` ↻${r}` : ""}`
   }
-
-  const primaryValue = createComputed(() => {
-    const s = snap()
-    return s.argon_five_hour_pct != null ? num(s.argon_five_hour_pct) : num(s.argon_week_pct)
+  const others = createComputed(() => {
+    const s = snap() as any
+    const parts = [part(s.argon_name ?? "Argon", s.argon_five_hour_pct, s.argon_week_pct, s.argon_week_reset_iso)]
+    const groups: any[] = Array.isArray(s.other_groups) && s.other_groups.length
+      ? s.other_groups
+      : s.other_group ? [{ name: s.other_group, five_hour_pct: s.other_five_hour_pct, week_pct: s.other_week_pct, week_reset_iso: s.other_week_reset_iso }] : []
+    for (const g of groups) parts.push(part(g.name ?? "otros", g.five_hour_pct, g.week_pct, g.week_reset_iso))
+    return parts.filter(Boolean).join(" · ")
   })
-
-  const secondaryValue = createComputed(() => {
-    const s = snap()
-    return s.argon_five_hour_pct != null ? num(s.argon_week_pct) : null
-  })
-
-  const isExhausted = createComputed(() => (snap().argon_week_pct ?? 0) >= 100)
 
   return (
     <UsageBadge
       icon="antigravity"
       tone="gemini"
-      primary={{ value: primaryValue, format: "percent" }}
-      secondary={{ value: secondaryValue, format: "percent" }}
+      primary={{ value: createComputed(() => num(snap().five_hour_pct)), format: "percent" }}
+      secondary={{ value: createComputed(() => num(snap().week_pct)), format: "percent" }}
       onRefresh={refreshAgyUsage}
       onOpen="https://antigravity.google"
       tip={{
-        title: "Antigravity · Gemini 4 Argon",
-        subtitle: createComputed(() => {
-          const s = snap()
-          const state = isExhausted() ? "Límite semanal alcanzado" : "Cuota semanal activa"
-          return `${state} · dato ${s.updated_at}`
-        }),
+        title: "Antigravity · Gemini",
+        subtitle: createComputed(() => (snap().gemini_models ?? []).map(shortName).join(" · ")),
         rows: [
           {
-            label: "Argon · semana usado",
-            value: createComputed(() => (isExhausted() ? "100% (límite)" : pctText(snap().argon_week_pct))),
-            fraction: createComputed(() => clampFraction((num(snap().argon_week_pct) ?? 0) / 100)),
-            detail: createComputed(() =>
-              snap().argon_week_reset_iso
-                ? `reinicia ${formatIso(snap().argon_week_reset_iso)} (${timeLeft(snap().argon_week_reset_iso)})`
-                : "",
-            ),
+            label: "5h",
+            value: createComputed(() => pct(snap().five_hour_pct)),
+            fraction: createComputed(() => clampFraction((num(snap().five_hour_pct) ?? NaN) / 100)),
+            reset: createComputed(() => snap().reset_iso),
           },
           {
-            label: "Tiempo del ciclo (7 d)",
-            value: createComputed(() => {
-              const f = cycleElapsed(snap().argon_week_reset_iso, WEEK_MS)
-              return f === null ? "--" : `${Math.round(f * 100)}% transcurrido`
-            }),
-            fraction: createComputed(() => cycleElapsed(snap().argon_week_reset_iso, WEEK_MS)),
-            kind: "time",
-            days: 7,
-            detail: createComputed(() => "Argon tiene cuota semanal propia e independiente de Gemini general"),
+            label: "7d",
+            value: createComputed(() => pct(snap().week_pct)),
+            fraction: createComputed(() => clampFraction((num(snap().week_pct) ?? NaN) / 100)),
+            reset: createComputed(() => snap().week_reset_iso),
           },
-          {
-            label: "Gemini general · 5 h / sem",
-            value: createComputed(() => `${pctText(snap().five_hour_pct)} / ${pctText(snap().week_pct)}`),
-            fraction: createComputed(() => clampFraction((num(snap().five_hour_pct) ?? 0) / 100)),
-            detail: createComputed(() => {
-              const models = (snap().gemini_models ?? ["Flash", "Pro"]).join(", ")
-              const reset = snap().reset_iso ? ` · 5 h reinicia ${formatIso(snap().reset_iso)}` : ""
-              return `Modelos: ${models}${reset}`
-            }),
-          },
-          {
-            label: "Modelo activo en agy",
-            value: createComputed(() => snap().model_short || "--"),
-            fraction: createComputed(() => null),
-            detail: createComputed(() => snap().model || "Configurado en Antigravity CLI"),
-          },
+          { label: "+", value: others, fraction: createComputed(() => null) },
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "Clic: refrescar cuota (agy /quota, 0 tokens) · Clic derecho: Antigravity",
+        hint: "clic ⟳ (agy /quota, 0 tokens) · der ↗",
       }}
     />
   )

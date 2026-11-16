@@ -10,7 +10,7 @@ import { createGlowBeat, createFlicker } from "./usage-glow"
  * UsageBadge — one bar chip for every quota/credit meter (Grok, Cursor, Claude, OpenRouter).
  * Strategy: `format` picks how a number is printed; `severity` picks how it is colored.
  * The chip is white logo + tone-colored DSEG7 digits (+ optional second value);
- * hover opens a custom tooltip with one bar per row.
+ * hover opens a compact tooltip: one line per window (tag · flat bar · % · ↻ reset).
  */
 
 export type BadgeTone = "mint" | "blue" | "claude" | "green" | "gemini" | "agyother"
@@ -25,15 +25,13 @@ export type BadgeValue = {
 }
 
 export type TipRow = {
+  /** Short tag for the window: "5h", "7d", "30d", "$"… */
   label: string
   value: Accessor<string>
-  /** 0…1 fills the bar; null hides the bar. */
+  /** 0…1 fills the flat bar; null = text-only row (no bar). */
   fraction: Accessor<number | null>
-  detail?: Accessor<string>
-  /** "time" rows draw neutral gray (elapsed cycle) instead of the badge tone. */
-  kind?: "usage" | "time"
-  /** On a "time" row: cycle length in days; adds a per-day pace box fed by the row above. */
-  days?: number
+  /** Reset instant (ISO) or an already-compact string; shown as "↻ 12:10" / "↻ 20/11". */
+  reset?: Accessor<string | null | undefined>
 }
 
 export type UsageTip = {
@@ -63,7 +61,7 @@ export type UsageBadgeProps = {
 }
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons/badge`
-const TIP_BAR_PX = 180
+const TIP_BAR_PX = 96
 
 const FORMATTERS: Record<BadgeFormat, (value: number) => string> = {
   percent: (value) => `${Math.round(value)}%`,
@@ -88,21 +86,20 @@ export function clampFraction(value: number | null | undefined): number | null {
   return Math.min(1, Math.max(0, value))
 }
 
-/** Share of the current cycle already gone, from its reset instant and length. */
-export function cycleElapsed(resetIso: string | undefined | null, periodMs: number): number | null {
-  if (!resetIso) return null
-  const resetMs = Date.parse(resetIso)
-  if (Number.isNaN(resetMs)) return null
-  return clampFraction(1 - (resetMs - Date.now()) / periodMs)
+const two = (n: number) => String(n).padStart(2, "0")
+
+/** Compact local date: "12:10" when it is less than 24 h away, else "20/11". Non-ISO strings pass through. */
+export function compactDate(reset: string | null | undefined): string {
+  if (!reset) return ""
+  const ms = Date.parse(reset)
+  if (Number.isNaN(ms)) return reset
+  const d = new Date(ms)
+  return ms - Date.now() < 86_400_000 ? `${two(d.getHours())}:${two(d.getMinutes())}` : `${two(d.getDate())}/${two(d.getMonth() + 1)}`
 }
 
-export function timeLeft(resetIso: string | undefined | null): string {
-  if (!resetIso) return ""
-  const ms = Date.parse(resetIso) - Date.now()
-  if (Number.isNaN(ms) || ms <= 0) return ""
-  const hours = Math.floor(ms / 3_600_000)
-  if (hours >= 48) return `faltan ${Math.floor(hours / 24)}d`
-  return `faltan ${hours}h ${Math.floor((ms % 3_600_000) / 60_000)}m`
+/** "73%" or "" when the number does not exist. */
+export function pct(value: number | null | undefined): string {
+  return typeof value === "number" && !Number.isNaN(value) ? `${Math.round(value)}%` : ""
 }
 
 function valueClass(spec: BadgeValue) {
@@ -162,110 +159,32 @@ function ValueLabel({ spec }: { spec: BadgeValue }) {
   )
 }
 
-function TipBar({ row }: { row: TipRow }) {
-  const fillPx = createComputed(() => Math.round((row.fraction() ?? 0) * TIP_BAR_PX))
+function TipBar({ fraction }: { fraction: Accessor<number | null> }) {
+  const fillPx = createComputed(() => Math.round((fraction() ?? 0) * TIP_BAR_PX))
   return (
     <box
-      class={`UsageTip-track ${row.kind === "time" ? "time" : "usage"}`}
+      class="UsageTip-track"
       widthRequest={TIP_BAR_PX}
-      visible={createComputed(() => row.fraction() !== null)}
+      valign={Gtk.Align.CENTER}
+      visible={createComputed(() => fraction() !== null)}
     >
       <box class="UsageTip-fill" widthRequest={fillPx} visible={createComputed(() => fillPx() > 0)} />
     </box>
   )
 }
 
-const PACE_RGB: Record<BadgeSeverity, [number, number, number]> = {
-  ok: [0.65, 0.89, 0.63],
-  warn: [0.98, 0.70, 0.53],
-  high: [0.95, 0.55, 0.66],
-  err: [0.95, 0.55, 0.66],
-}
-
-/** Used share split into days: track = whole cycle, fill = used (3-tone), one tick per day boundary. */
-function PaceBox({ used, elapsed, days }: { used: Accessor<number | null>; elapsed: Accessor<number | null>; days: number }) {
-  const pace = createComputed(() => {
-    const u = used()
-    if (u === null) return null
-    const pct = u * 100
-    const left = Math.max((1 - (elapsed() ?? 0)) * days, 1 / 24)
-    const remaining = Math.max(0, 100 - pct)
-    const allowed = remaining / left
-    const ideal = 100 / days
-    const ratio = allowed / ideal
-    let verdict = "En el promedio"
-    let tone = "ok"
-    if (ratio >= 1.1) verdict = `Se puede aumentar la frecuencia un ${Math.round((ratio - 1) * 100)}%`
-    else if (ratio <= 0.9) {
-      verdict = `Se debe disminuir la frecuencia un ${Math.round((1 - ratio) * 100)}%`
-      tone = ratio > 0.7 ? "warn" : "high"
-    }
-    return {
-      used: `Usado ${pct.toFixed(1)}% del total · ${(pct / days).toFixed(1)}%/día de ${days} d`,
-      left: `Quedan ${remaining.toFixed(1)}% en ${left.toFixed(2)} d → ${allowed.toFixed(1)}%/día (ideal ${ideal.toFixed(1)}%/día)`,
-      verdict,
-      tone,
-    }
+/** One line per window: tag · flat bar · value · ↻ reset. */
+function TipRowView({ row }: { row: TipRow }) {
+  const reset = createComputed(() => {
+    const r = compactDate(row.reset?.())
+    return r ? `↻ ${r}` : ""
   })
   return (
-    <box orientation={Gtk.Orientation.VERTICAL} spacing={3} class="UsageTip-pace" visible={createComputed(() => used() !== null)}>
-      <label class="UsageTip-detail" label={createComputed(() => pace()?.used ?? "--")} xalign={0} />
-      <label class="UsageTip-detail" label={createComputed(() => pace()?.left ?? "")} xalign={0} />
-      <label
-        class={createComputed(() => `UsageTip-verdict ${pace()?.tone ?? "ok"}`)}
-        label={createComputed(() => pace()?.verdict ?? "")}
-        xalign={0}
-      />
-      <drawingarea
-        widthRequest={TIP_BAR_PX}
-        heightRequest={8}
-        $={(area: Gtk.DrawingArea) => {
-          area.set_draw_func((_a, cr, w, h) => {
-            cr.setSourceRGBA(1, 1, 1, 0.12)
-            cr.rectangle(0, 0, w, h)
-            cr.fill()
-            const u = used() ?? 0
-            const [r, g, b] = PACE_RGB[DEFAULT_SEVERITY.percent(u * 100)]
-            cr.setSourceRGB(r, g, b)
-            cr.rectangle(0, 0, Math.round(u * w), h)
-            cr.fill()
-            cr.setSourceRGBA(0, 0, 0, 0.6)
-            cr.setLineWidth(1)
-            for (let d = 1; d < days; d++) {
-              const x = Math.round((d * w) / days) + 0.5
-              cr.moveTo(x, 0)
-              cr.lineTo(x, h)
-            }
-            cr.stroke()
-          })
-          createEffect(() => {
-            used()
-            area.queue_draw()
-          })
-        }}
-      />
-    </box>
-  )
-}
-
-function TipRowView({ row }: { row: TipRow }) {
-  return (
-    <box orientation={Gtk.Orientation.VERTICAL} spacing={3} class="UsageTip-row">
-      <box spacing={8}>
-        <label class="UsageTip-label" label={row.label} xalign={0} hexpand />
-        <label class="UsageTip-value" label={row.value} xalign={1} />
-      </box>
-      <TipBar row={row} />
-      {row.detail && (
-        <label
-          class="UsageTip-detail"
-          label={row.detail}
-          xalign={0}
-          wrap
-          maxWidthChars={36}
-          visible={createComputed(() => row.detail!() !== "")}
-        />
-      )}
+    <box spacing={6} class="UsageTip-row" visible={createComputed(() => row.value() !== "")}>
+      <label class="UsageTip-label" label={row.label} xalign={0} widthChars={3} />
+      <TipBar fraction={row.fraction} />
+      <label class="UsageTip-value" label={row.value} xalign={1} hexpand />
+      <label class="UsageTip-reset" label={reset} xalign={1} visible={createComputed(() => reset() !== "")} />
     </box>
   )
 }
@@ -273,26 +192,23 @@ function TipRowView({ row }: { row: TipRow }) {
 function TipView({ tip, tone }: { tip: UsageTip; tone: BadgeTone }) {
   const errorText = tip.error ?? createComputed(() => null as string | null)
   return (
-    <box orientation={Gtk.Orientation.VERTICAL} spacing={8} class={createComputed(() => `UsageTip tone-${tone}${tip.blocked?.() ? " blocked" : ""}`)}>
+    <box orientation={Gtk.Orientation.VERTICAL} spacing={4} class={createComputed(() => `UsageTip tone-${tone}${tip.blocked?.() ? " blocked" : ""}`)}>
       <box orientation={Gtk.Orientation.VERTICAL} spacing={1}>
         <label
           class="UsageTip-title"
           xalign={0}
-          label={createComputed(() => tip.title + (tip.stale?.() ? "  · cacheado" : ""))}
+          label={createComputed(() => tip.title + (tip.stale?.() ? " ⧗" : ""))}
         />
         {tip.subtitle && <label class="UsageTip-subtitle" xalign={0} label={tip.subtitle} />}
       </box>
-      {tip.rows.map((row, i) => (
+      {tip.rows.map((row) => (
         <TipRowView row={row} />
       ))}
-      {tip.rows.flatMap((row, i) =>
-        row.days && i > 0 ? [<PaceBox used={tip.rows[i - 1].fraction} elapsed={row.fraction} days={row.days} />] : [],
-      )}
       <label
         class="UsageTip-error"
         xalign={0}
         wrap
-        maxWidthChars={34}
+        maxWidthChars={30}
         label={createComputed(() => errorText() ?? "")}
         visible={createComputed(() => Boolean(errorText()))}
       />

@@ -1,9 +1,7 @@
 import { createComputed } from "ags"
 import { execAsync } from "ags/process"
 import { grokBuildUsageSnap, refreshGrokBuildUsage, startGrokBuildWatch } from "./grokbuild"
-import UsageBadge, { clampFraction, cycleElapsed } from "./UsageBadge"
-
-const WEEK_MS = 7 * 86_400_000
+import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
 export default function GrokBuildMeter() {
   startGrokBuildWatch()
@@ -22,25 +20,15 @@ export default function GrokBuildMeter() {
         subtitle: createComputed(() => [snap().plan, snap().cursor_plan].filter(Boolean).join(" · ")),
         rows: [
           {
-            label: "Límite semanal",
-            value: createComputed(() => (weekly() === null ? "--" : `${weekly()}%`)),
-            fraction: createComputed(() => clampFraction((weekly() ?? 0) / 100)),
-            detail: createComputed(() => (snap().reset_str ? `reinicia ${snap().reset_str}` : "")),
-          },
-          {
-            label: "Tiempo de la semana",
-            value: createComputed(() => {
-              const f = cycleElapsed(snap().reset_iso, WEEK_MS)
-              return f === null ? "--" : `${Math.round(f * 100)}%`
-            }),
-            fraction: createComputed(() => cycleElapsed(snap().reset_iso, WEEK_MS)),
-            kind: "time",
-            days: 7,
+            label: "7d",
+            value: createComputed(() => pct(weekly())),
+            fraction: createComputed(() => clampFraction((weekly() ?? NaN) / 100)),
+            reset: createComputed(() => snap().reset_iso ?? (snap().reset_str && snap().reset_str !== "..." ? snap().reset_str : null)),
           },
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "Clic: refrescar · Clic derecho: abrir Grok Build",
+        hint: "clic ⟳ · der ↗",
       }}
     />
   )
