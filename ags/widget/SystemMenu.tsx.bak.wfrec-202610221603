@@ -1,0 +1,944 @@
+import app from "ags/gtk4/app"
+import { Astal, Gtk, Gdk } from "ags/gtk4"
+import GLib from "gi://GLib"
+import Gio from "gi://Gio"
+import { createComputed, createState } from "ags"
+import { barVisible, setOverBar } from "./bar-mode"
+import { isZoomDense } from "./zoom"
+import {
+  L2TP_CONN,
+  l2tpIconOn,
+  l2tpLabel,
+  l2tpRowClass,
+  l2tpTip,
+  toggleL2tp,
+} from "./l2tp"
+import {
+  warpIconOn,
+  warpLabel,
+  warpRowClass,
+  warpTip,
+  toggleWarp,
+} from "./warp"
+import {
+  bluetoothIconOn,
+  bluetoothLabel,
+  bluetoothRowClass,
+  bluetoothTip,
+  toggleBluetooth,
+} from "./bluetooth"
+
+import {
+  castMic,
+  castPopupOpen,
+  castTargetLabel,
+  fetchHyprlandPanels,
+  HyprWindowPanel,
+  setCastMic,
+  setCastPopupOpen,
+  setCastTarget,
+  startCastRecord,
+} from "./cast"
+import {
+  micMuted,
+  micName,
+  refreshMic,
+  startMicWatch,
+  toggleMicMute,
+} from "./mic"
+import {
+  moneyVisible,
+  toggleMoneyVisible,
+  monitorsVisible,
+  toggleMonitorsVisible,
+  ramVisible,
+  toggleRamVisible,
+  lanMouseVisible,
+  toggleLanMouseVisible,
+} from "./bar-visibility"
+import { asusOn, startAsusPoll, toggleAsus } from "./AsusToggle"
+import { glowEnabled, toggleGlowEnabled } from "./usage-glow"
+
+const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
+const ICON_MENU = `${ICON_DIR}/menu.svg`
+const ICON_MONEY = `${ICON_DIR}/money.svg`
+const ICON_CPU = `${ICON_DIR}/cpu.svg`
+const ICON_LAN_MOUSE = `${ICON_DIR}/lan-mouse-gray.svg`
+const ICON_MIC = `${ICON_DIR}/mic.svg`
+
+const ICON_MIC_MUTED = `${ICON_DIR}/mic-muted.svg`
+const ICON_REBOOT = `${ICON_DIR}/reboot.svg`
+const ICON_POWEROFF = `${ICON_DIR}/poweroff.svg`
+const ICON_VPN = `${ICON_DIR}/vpn.svg`
+const ICON_VPN_OFF = `${ICON_DIR}/vpn-off.svg`
+const ICON_WARP = `${ICON_DIR}/warp.svg`
+const ICON_WARP_OFF = `${ICON_DIR}/warp-off.svg`
+const ICON_BLUETOOTH = `${ICON_DIR}/bluetooth.svg`
+const ICON_BLUETOOTH_OFF = `${ICON_DIR}/bluetooth-off.svg`
+const ICON_CAST = `${ICON_DIR}/cast.svg`
+const ICON_TARGET = `${ICON_DIR}/target-set.svg`
+const ICON_STREAM = `${ICON_DIR}/stream-signal.svg`
+const ICON_REC_IDLE = `${ICON_DIR}/rec.svg`
+const ICON_REC_ON = `${ICON_DIR}/rec-on.svg`
+const ICON_SCREEN = `${ICON_DIR}/screen.svg`
+const ICON_AREA = `${ICON_DIR}/area.svg`
+const ICON_PANEL = `${ICON_DIR}/panel.svg`
+const ICON_LOGS = `${ICON_DIR}/logs.svg`
+const ICON_KILL = `${ICON_DIR}/kill.svg`
+
+const LABEL_W = 120
+const PANEL_GAP = 4
+
+const MENU_ICON_PX = 13
+
+type PowerAction = "reboot" | "poweroff"
+
+const [menuOpen, setMenuOpen] = createState(false)
+const [pending, setPending] = createState<PowerAction | null>(null)
+
+function attachMotion(
+  widget: Gtk.Widget,
+  onEnter: () => void,
+  onLeave: () => void,
+) {
+  const motion = new Gtk.EventControllerMotion()
+  motion.connect("enter", onEnter)
+  motion.connect("leave", onLeave)
+  widget.add_controller(motion)
+}
+
+function closeAll() {
+  setPending(null)
+  setMenuOpen(false)
+}
+
+function requestConfirm(action: PowerAction) {
+  setPending(action)
+}
+
+function cancelConfirm() {
+  setPending(null)
+}
+
+function runSystemctl(action: PowerAction) {
+  closeAll()
+  try {
+    Gio.Subprocess.new(
+      ["systemctl", action],
+      Gio.SubprocessFlags.STDERR_SILENCE,
+    )
+  } catch (e) {
+    printerr(`system-menu: systemctl ${action} failed: ${e}`)
+  }
+}
+
+function SystemClickaway(gdkmonitor: Gdk.Monitor) {
+  const { TOP, RIGHT, LEFT, BOTTOM } = Astal.WindowAnchor
+  const visible = createComputed(() => menuOpen() && barVisible())
+
+  return (
+    <window
+      visible={visible}
+      name="system-menu-clickaway"
+      namespace="ags-system-menu-clickaway"
+      class="SystemClickaway"
+      gdkmonitor={gdkmonitor}
+      exclusivity={Astal.Exclusivity.IGNORE}
+      anchor={TOP | RIGHT | LEFT | BOTTOM}
+      layer={Astal.Layer.TOP}
+      keymode={Astal.Keymode.NONE}
+      application={app}
+      $={(self: Gtk.Window) => {
+        const click = new Gtk.GestureClick()
+        click.set_button(0)
+        click.connect("pressed", () => closeAll())
+        self.add_controller(click)
+      }}
+    >
+      <box hexpand vexpand />
+    </window>
+  )
+}
+
+function MiniSwitch({
+  active,
+  busy,
+  failed,
+}: {
+  active: boolean | ReturnType<typeof createComputed<boolean>>
+  busy?: boolean | ReturnType<typeof createComputed<boolean>>
+  failed?: boolean | ReturnType<typeof createComputed<boolean>>
+}) {
+  const isActive = typeof active === "function" ? active : () => active
+  const isBusy = typeof busy === "function" ? busy : () => busy ?? false
+  const isFailed = typeof failed === "function" ? failed : () => failed ?? false
+
+  const cls = createComputed(() => {
+    if (isFailed()) return "MiniSwitch failed"
+    if (isBusy()) return "MiniSwitch busy"
+    return isActive() ? "MiniSwitch on" : "MiniSwitch off"
+  })
+
+  const knobCls = createComputed(() => {
+    if (isFailed()) return "MiniSwitch-knob failed"
+    if (isBusy()) return "MiniSwitch-knob busy"
+    return isActive() ? "MiniSwitch-knob on" : "MiniSwitch-knob off"
+  })
+
+  return (
+    <box class={cls} valign={Gtk.Align.CENTER} halign={Gtk.Align.END}>
+      <box class={knobCls} />
+    </box>
+  )
+}
+
+function ToggleRow({
+  iconFile,
+  label,
+  active,
+  tip,
+  busy,
+  failed,
+  rowClass,
+  onClicked,
+}: {
+  iconFile: string | ReturnType<typeof createComputed<string>>
+  label: string | ReturnType<typeof createComputed<string>>
+  active: boolean | ReturnType<typeof createComputed<boolean>>
+  tip: string | ReturnType<typeof createComputed<string>>
+  busy?: boolean | ReturnType<typeof createComputed<boolean>>
+  failed?: boolean | ReturnType<typeof createComputed<boolean>>
+  rowClass?: string | ReturnType<typeof createComputed<string>>
+  onClicked: () => void
+}) {
+  const isActive = typeof active === "function" ? active : () => active
+  const fullRowClass = createComputed(() => {
+    const extra = typeof rowClass === "function" ? rowClass() : rowClass ?? ""
+    return `SystemMenu-row ${isActive() ? "is-active" : "is-inactive"} ${extra}`.trim()
+  })
+
+  return (
+    <button class={fullRowClass} tooltipText={tip} onClicked={onClicked}>
+      <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
+        <image file={iconFile} pixelSize={14} class="SystemMenu-icon" />
+        <label
+          class="SystemMenu-label"
+          label={label}
+          xalign={0}
+          hexpand
+        />
+        <MiniSwitch active={active} busy={busy} failed={failed} />
+      </box>
+    </button>
+  )
+}
+
+function ActionRow({
+  iconFile,
+  label,
+  tip,
+  badgeText,
+  onClicked,
+}: {
+  iconFile: string | ReturnType<typeof createComputed<string>>
+  label: string | ReturnType<typeof createComputed<string>>
+  tip: string | ReturnType<typeof createComputed<string>>
+  badgeText?: string
+  onClicked: () => void
+}) {
+  return (
+    <button class="SystemMenu-row action" tooltipText={tip} onClicked={onClicked}>
+      <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
+        <image file={iconFile} pixelSize={14} class="SystemMenu-icon" />
+        <label class="SystemMenu-label" label={label} xalign={0} hexpand />
+        <box class="ActionBadge" valign={Gtk.Align.CENTER} halign={Gtk.Align.END}>
+          <label class="ActionBadge-text" label={badgeText ?? "›"} />
+        </box>
+      </box>
+    </button>
+  )
+}
+
+function VpnRow() {
+  const iconFile = createComputed(() =>
+    l2tpIconOn() ? ICON_VPN : ICON_VPN_OFF,
+  )
+  const isBusy = createComputed(() => l2tpRowClass().includes("busy"))
+  const isFailed = createComputed(() => l2tpRowClass().includes("failed"))
+
+  return (
+    <ToggleRow
+      iconFile={iconFile}
+      label="Gabriel VPN"
+      active={l2tpIconOn}
+      busy={isBusy}
+      failed={isFailed}
+      tip={l2tpTip}
+      rowClass={l2tpRowClass}
+      onClicked={() => toggleL2tp()}
+    />
+  )
+}
+
+function WarpRow() {
+  const iconFile = createComputed(() =>
+    warpIconOn() ? ICON_WARP : ICON_WARP_OFF,
+  )
+  const isBusy = createComputed(() => warpRowClass().includes("busy"))
+  const isFailed = createComputed(() => warpRowClass().includes("failed"))
+
+  return (
+    <ToggleRow
+      iconFile={iconFile}
+      label="Cloudflare WARP"
+      active={warpIconOn}
+      busy={isBusy}
+      failed={isFailed}
+      tip={warpTip}
+      rowClass={warpRowClass}
+      onClicked={() => toggleWarp()}
+    />
+  )
+}
+
+function BluetoothRow() {
+  const iconFile = createComputed(() =>
+    bluetoothIconOn() ? ICON_BLUETOOTH : ICON_BLUETOOTH_OFF,
+  )
+  const label = createComputed(() =>
+    bluetoothLabel().startsWith("Connected:")
+      ? bluetoothLabel().replace("Connected: ", "BT: ")
+      : bluetoothLabel(),
+  )
+  const isBusy = createComputed(() => bluetoothRowClass().includes("busy"))
+
+  return (
+    <ToggleRow
+      iconFile={iconFile}
+      label={label}
+      active={bluetoothIconOn}
+      busy={isBusy}
+      tip={bluetoothTip}
+      rowClass={bluetoothRowClass}
+      onClicked={() => toggleBluetooth()}
+    />
+  )
+}
+
+function ConfirmView() {
+  const action = createComputed(() => pending())
+  const isPoweroff = createComputed(() => action() === "poweroff")
+
+  const title = createComputed(() =>
+    isPoweroff() ? "Power off?" : "Restart?",
+  )
+  const body = createComputed(() =>
+    isPoweroff()
+      ? "Shut down this machine now."
+      : "Reboot this machine now.",
+  )
+  const confirmLabel = createComputed(() =>
+    isPoweroff() ? "Power off" : "Restart",
+  )
+  const confirmClass = createComputed(() =>
+    isPoweroff()
+      ? "SystemMenu-confirm-ok poweroff"
+      : "SystemMenu-confirm-ok reboot",
+  )
+  const iconFile = createComputed(() =>
+    isPoweroff() ? ICON_POWEROFF : ICON_REBOOT,
+  )
+
+  return (
+    <box
+      class="SystemMenu-confirm"
+      orientation={Gtk.Orientation.VERTICAL}
+      spacing={8}
+    >
+      <box spacing={10} valign={Gtk.Align.CENTER}>
+        <image file={iconFile} pixelSize={18} />
+        <label
+          class="SystemMenu-confirm-title"
+          label={title}
+          xalign={0}
+          hexpand
+        />
+      </box>
+
+      <label
+        class="SystemMenu-confirm-body"
+        label={body}
+        xalign={0}
+        wrap
+      />
+
+      <box spacing={6} hexpand class="SystemMenu-confirm-actions">
+        <button
+          class="SystemMenu-confirm-cancel"
+          tooltipText="Cancel — return to menu"
+          hexpand
+          onClicked={() => cancelConfirm()}
+        >
+          <label label="Cancel" />
+        </button>
+        <button
+          class={confirmClass}
+          tooltipText={createComputed(() =>
+            isPoweroff() ? "Confirm systemctl poweroff" : "Confirm systemctl reboot",
+          )}
+          hexpand
+          onClicked={() => {
+            const a = pending.peek()
+            if (a) runSystemctl(a)
+          }}
+        >
+          <label label={confirmLabel} />
+        </button>
+      </box>
+    </box>
+  )
+}
+
+function pickTarget(
+  t: "panel-left" | "panel-right" | "screen-region" | "screen-full" | "window-geom",
+  opts?: { geom?: string; title?: string },
+): void {
+  // One click = record (Gabriel 2026-10-22): no arm step, no second selection.
+  // The popup closes first so it is not captured; video only via hypr-record --no-audio.
+  setCastTarget(t, opts)
+  setCastPopupOpen(false)
+  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+    startCastRecord()
+    return GLib.SOURCE_REMOVE
+  })
+}
+
+function rebuildPanelList(self: Gtk.Box): void {
+  let child = self.get_first_child()
+  while (child) {
+    const next = child.get_next_sibling()
+    self.remove(child)
+    child = next
+  }
+
+  const list = fetchHyprlandPanels()
+  const left = list.filter(
+    (p) => p.monitorName.includes("HDMI-A-2") || p.monitorName.includes("ASUS"),
+  )
+  const right = list.filter(
+    (p) => p.monitorName.includes("HDMI-A-1") || p.monitorName.includes("AOC"),
+  )
+  const used = new Set([...left, ...right].map((p) => p.address))
+  const leftover = list.filter((p) => !used.has(p.address))
+  for (const p of leftover) {
+    if (p.at[0] < 0) left.push(p)
+    else right.push(p)
+  }
+
+  if (left.length === 0 && right.length === 0) {
+    self.append(
+      new Gtk.Label({
+        label: "No open window panels detected",
+        xalign: 0.5,
+        css_classes: ["CastPopup-sub-header"],
+        visible: true,
+      }),
+    )
+    return
+  }
+
+  const appendGroup = (heading: string, panels: HyprWindowPanel[]) => {
+    if (panels.length === 0) return
+    const box = new Gtk.Box({
+      orientation: Gtk.Orientation.VERTICAL,
+      spacing: 4,
+      hexpand: true,
+      visible: true,
+    })
+    box.append(
+      new Gtk.Label({
+        label: heading,
+        xalign: 0,
+        css_classes: ["CastPopup-sub-header"],
+        visible: true,
+      }),
+    )
+    for (const p of panels) {
+      const btn = new Gtk.Button({
+        css_classes: ["CastPopup-panel-line"],
+        tooltip_text: `Record this window (video only): ${p.title} — one click`,
+        visible: true,
+        hexpand: true,
+      })
+      btn.set_child(
+        new Gtk.Label({
+          label: p.title.length > 42 ? `${p.title.slice(0, 40)}…` : p.title,
+          xalign: 0,
+          css_classes: ["CastPopup-panel-title"],
+          visible: true,
+          hexpand: true,
+        }),
+      )
+      btn.connect("clicked", () =>
+        pickTarget("window-geom", { geom: p.geom, title: p.title }),
+      )
+      box.append(btn)
+    }
+    self.append(box)
+  }
+
+  appendGroup("ASUS (Left · HDMI-A-2)", left)
+  appendGroup("AOC (Right · HDMI-A-1)", right)
+}
+
+function CastPopupModal(gdkmonitor: Gdk.Monitor) {
+  const visible = createComputed(() => castPopupOpen() && barVisible())
+  const targetHint = createComputed(() => {
+    const label = castTargetLabel()
+    return label === "No target" ? "Pick a target — [*REC] appears gray on the bar" : `Armed: ${label}`
+  })
+
+  return (
+    <window
+      visible={visible}
+      name="cast-popup-modal"
+      namespace="ags-cast-popup-modal"
+      class="CastPopupModal"
+      gdkmonitor={gdkmonitor}
+      exclusivity={Astal.Exclusivity.IGNORE}
+      layer={Astal.Layer.OVERLAY}
+      keymode={Astal.Keymode.ON_DEMAND}
+      application={app}
+      $={(self: Gtk.Window) => {
+        const key = new Gtk.EventControllerKey()
+        key.connect("key-pressed", (_c, keyval) => {
+          if (keyval === Gdk.KEY_Escape) {
+            setCastPopupOpen(false)
+            return true
+          }
+          return false
+        })
+        self.add_controller(key)
+      }}
+    >
+      <box
+        class="CastPopup-overlay"
+        hexpand
+        vexpand
+        valign={Gtk.Align.CENTER}
+        halign={Gtk.Align.CENTER}
+      >
+        <box
+          class="CastPopup-card"
+          orientation={Gtk.Orientation.VERTICAL}
+          spacing={12}
+          valign={Gtk.Align.CENTER}
+          halign={Gtk.Align.CENTER}
+        >
+          <label class="CastPopup-title" label="Cast & Screen Capture" />
+          <label class="CastPopup-sub-header" label={targetHint} />
+
+          {}
+          <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
+            <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
+              <image file={ICON_SCREEN} pixelSize={14} />
+              <label class="CastPopup-section-label" label="Screen" />
+            </box>
+            <box spacing={6} halign={Gtk.Align.CENTER}>
+              <button
+                class="CastPopup-opt"
+                tooltipText="Record LEFT screen — ASUS VA27EHF (HDMI-A-2), video only, one click. [*REC] stops."
+                onClicked={() => pickTarget("panel-left")}
+              >
+                <label label="Left (ASUS)" />
+              </button>
+              <button
+                class="CastPopup-opt"
+                tooltipText="Record RIGHT screen — AOC G2790G4 (HDMI-A-1), video only, one click. [*REC] stops."
+                onClicked={() => pickTarget("panel-right")}
+              >
+                <label label="Right (AOC)" />
+              </button>
+              <button
+                class="CastPopup-opt"
+                tooltipText="Record both displays (one video), video only, one click. [*REC] stops."
+                onClicked={() => pickTarget("screen-full")}
+              >
+                <label label="All" />
+              </button>
+            </box>
+          </box>
+
+          {}
+          {/* audio section removed 2026-10-22: video-only recording */}
+
+          {}
+          <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
+            <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
+              <image file={ICON_AREA} pixelSize={14} />
+              <label class="CastPopup-section-label" label="Area" />
+            </box>
+            <box spacing={6} halign={Gtk.Align.CENTER}>
+              <button
+                class="CastPopup-opt"
+                tooltipText="Select Area: drag once, recording starts (video only). [*REC] stops."
+                onClicked={() => pickTarget("screen-region")}
+              >
+                <label label="Select Area" />
+              </button>
+            </box>
+          </box>
+
+          {}
+          <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.FILL} hexpand>
+            <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
+              <image file={ICON_PANEL} pixelSize={14} />
+              <label class="CastPopup-section-label" label="Panel" />
+            </box>
+
+            <box
+              orientation={Gtk.Orientation.VERTICAL}
+              spacing={8}
+              class="CastPopup-panel-list"
+              hexpand
+              halign={Gtk.Align.FILL}
+              $={(self: Gtk.Box) => {
+                const refresh = () => {
+                  if (!castPopupOpen.peek()) return
+                  rebuildPanelList(self)
+                }
+                if (castPopupOpen.peek()) refresh()
+                castPopupOpen.subscribe((isOpen) => {
+                  if (isOpen) refresh()
+                })
+              }}
+            />
+          </box>
+
+          <button
+            class="CastPopup-close"
+            onClicked={() => setCastPopupOpen(false)}
+          >
+            <label label="Close" />
+          </button>
+        </box>
+      </box>
+    </window>
+  )
+}
+
+function CastRow() {
+  return (
+    <ActionRow
+      iconFile={ICON_CAST}
+      label="Cast & Rec"
+      tip="Cast & Screen Capture — selección de pantalla/área y grabación"
+      onClicked={() => {
+        closeAll()
+        setCastPopupOpen(true)
+      }}
+    />
+  )
+}
+
+function LogsRow() {
+  return (
+    <ActionRow
+      iconFile={ICON_LOGS}
+      label="Logs Sistema"
+      tip="System Logs — monitor de errores, servicios, kernel y audio"
+      onClicked={() => {
+        closeAll()
+        try {
+          Gio.Subprocess.new(
+            [
+              "kitty",
+              "--class=kdx-logs",
+              "-T",
+              "System Logs",
+              "/home/kodex/.local/bin/kdx-logs",
+            ],
+            Gio.SubprocessFlags.NONE,
+          )
+        } catch (e) {
+          printerr(`system-menu: launch logs failed: ${e}`)
+        }
+      }}
+    />
+  )
+}
+
+function KillRow() {
+  return (
+    <ActionRow
+      iconFile={ICON_KILL}
+      label="Matar procesos"
+      tip="kdx-kill — detener servicios --user, liberar puertos, TERM→KILL a procesos (SUPER+CTRL+K)"
+      onClicked={() => {
+        closeAll()
+        try {
+          Gio.Subprocess.new(
+            ["kitty", "--class=kdx-kill", "-T", "Kill", "/home/kodex/.local/bin/kdx-kill"],
+            Gio.SubprocessFlags.NONE,
+          )
+        } catch (e) {
+          printerr(`system-menu: launch kdx-kill failed: ${e}`)
+        }
+      }}
+    />
+  )
+}
+
+function VisibilitySection() {
+  return (
+    <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
+      <label
+        class="SystemMenu-status"
+        label="BARRA"
+        xalign={0}
+        tooltipText="Alternar visibilidad de los módulos en la barra"
+      />
+      <ToggleRow
+        iconFile={ICON_MONEY}
+        label="Dinero (IA)"
+        active={moneyVisible}
+        tip={createComputed(() =>
+          moneyVisible()
+            ? "Badges IA (Grok, Cursor, Claude, OpenRouter) visibles · Clic para ocultar"
+            : "Badges IA ocultos de la barra · Clic para mostrar",
+        )}
+        onClicked={() => toggleMoneyVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_SCREEN}
+        label="Monitores"
+        active={monitorsVisible}
+        tip={createComputed(() =>
+          monitorsVisible()
+            ? "Preview de monitores y workspaces visible · Clic para ocultar"
+            : "Preview de monitores oculto · Clic para mostrar",
+        )}
+        onClicked={() => toggleMonitorsVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_CPU}
+        label="CPU & RAM"
+        active={ramVisible}
+        tip={createComputed(() =>
+          ramVisible()
+            ? "Medidor RamTrack de CPU, RAM y VRAM visible · Clic para ocultar"
+            : "Medidor RamTrack oculto · Clic para mostrar",
+        )}
+        onClicked={() => toggleRamVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_LAN_MOUSE}
+        label="Lan Mouse"
+        active={lanMouseVisible}
+        tip={createComputed(() =>
+          lanMouseVisible()
+            ? "Lan Mouse visible en la barra · Clic para ocultar"
+            : "Lan Mouse oculto de la barra · Clic para mostrar",
+        )}
+        onClicked={() => toggleLanMouseVisible()}
+      />
+      <ToggleRow
+        iconFile={ICON_MONEY}
+        label="Brillo al consumir"
+        active={glowEnabled}
+        tip={createComputed(() =>
+          glowEnabled()
+            ? "Glow on usage: los badges laten cuando sube un consumo · Clic para apagar"
+            : "Glow on usage apagado · Clic para encender",
+        )}
+        onClicked={() => toggleGlowEnabled()}
+      />
+    </box>
+  )
+}
+
+function AsusRow() {
+  startAsusPoll()
+  return (
+    <ToggleRow
+      iconFile={ICON_SCREEN}
+      label="ASUS"
+      active={createComputed(() => asusOn())}
+      tip={createComputed(() => `ASUS (HDMI-A-2): ${asusOn() ? "encendido" : "apagado"}\nClic: ${asusOn() ? "apagar" : "encender"}`)}
+      onClicked={() => toggleAsus()}
+    />
+  )
+}
+
+function MenuList() {
+  return (
+    <box orientation={Gtk.Orientation.VERTICAL} spacing={2}>
+      <label
+        class="SystemMenu-status"
+        label="SISTEMA"
+        xalign={0}
+        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Matar · Reiniciar · Apagar`}
+      />
+
+      <AsusRow />
+      <VpnRow />
+      <WarpRow />
+      <BluetoothRow />
+      <CastRow />
+      <LogsRow />
+      <KillRow />
+
+      <box class="SystemMenu-sep" heightRequest={1} hexpand />
+
+      <VisibilitySection />
+
+      <box class="SystemMenu-sep" heightRequest={1} hexpand />
+
+      <box
+        class="SystemMenu-power"
+        spacing={8}
+        halign={Gtk.Align.CENTER}
+        hexpand
+      >
+        <button
+          class="SystemMenu-power-btn reboot"
+          tooltipText="Reiniciar equipo — pide confirmación"
+          onClicked={() => requestConfirm("reboot")}
+        >
+          <image file={ICON_REBOOT} pixelSize={16} />
+        </button>
+        <button
+          class="SystemMenu-power-btn poweroff"
+          tooltipText="Apagar equipo — pide confirmación"
+          onClicked={() => requestConfirm("poweroff")}
+        >
+          <image file={ICON_POWEROFF} pixelSize={16} />
+        </button>
+      </box>
+    </box>
+  )
+}
+
+function SystemPanel(gdkmonitor: Gdk.Monitor) {
+  const { TOP, RIGHT } = Astal.WindowAnchor
+  const panelVisible = createComputed(() => menuOpen() && barVisible())
+  const bodyClass = createComputed(() =>
+    pending() ? "SystemMenu-menu confirming" : "SystemMenu-menu",
+  )
+
+  SystemClickaway(gdkmonitor)
+
+  return (
+    <window
+      visible={panelVisible}
+      name="system-menu"
+      namespace="ags-system-menu"
+      class="SystemPanel"
+      gdkmonitor={gdkmonitor}
+      exclusivity={Astal.Exclusivity.NORMAL}
+      anchor={TOP | RIGHT}
+      layer={Astal.Layer.OVERLAY}
+      marginTop={PANEL_GAP}
+      marginRight={8}
+      keymode={Astal.Keymode.ON_DEMAND}
+      application={app}
+      $={(self: Gtk.Window) => {
+        const key = new Gtk.EventControllerKey()
+        key.connect("key-pressed", (_c, keyval) => {
+          if (keyval === Gdk.KEY_Escape) {
+            if (pending.peek()) cancelConfirm()
+            else closeAll()
+            return true
+          }
+          return false
+        })
+        self.add_controller(key)
+      }}
+    >
+      <box
+        class={bodyClass}
+        orientation={Gtk.Orientation.VERTICAL}
+        spacing={2}
+        valign={Gtk.Align.CENTER}
+        $={(self) =>
+          attachMotion(
+            self,
+            () => setOverBar(true),
+            () => setOverBar(false),
+          )
+        }
+      >
+        {}
+        <box
+          visible={createComputed(() => !pending())}
+          orientation={Gtk.Orientation.VERTICAL}
+        >
+          <MenuList />
+        </box>
+        <box
+          visible={createComputed(() => !!pending())}
+          orientation={Gtk.Orientation.VERTICAL}
+        >
+          <ConfirmView />
+        </box>
+      </box>
+    </window>
+  )
+}
+
+export default function SystemMenu({
+  gdkmonitor,
+}: {
+  gdkmonitor: Gdk.Monitor
+}) {
+  SystemPanel(gdkmonitor)
+  CastPopupModal(gdkmonitor)
+
+  const cls = createComputed(() => {
+    const parts = ["SystemMenu"]
+    if (menuOpen()) parts.push("open")
+    return parts.join(" ")
+  })
+
+  const tip = createComputed(() => {
+    if (pending()) {
+      return pending() === "poweroff"
+        ? "Confirm power off — or Esc to cancel"
+        : "Confirm restart — or Esc to cancel"
+    }
+    return menuOpen()
+      ? "System menu open — click to close"
+      : "System menu — L2TP · mic · restart · power off"
+  })
+
+  return (
+    <button
+      class={cls}
+      tooltipText={tip}
+      onClicked={() => {
+        if (menuOpen.peek()) closeAll()
+        else {
+          setPending(null)
+          refreshMic()
+          setMenuOpen(true)
+        }
+      }}
+    >
+      <image file={ICON_MENU} pixelSize={isZoomDense() ? 13 : MENU_ICON_PX} />
+    </button>
+  )
+}
+
+export function getSystemMenuOpen(): boolean {
+  return menuOpen.peek()
+}
+
+export function toggleSystemMenu(): string {
+  if (menuOpen.peek()) {
+    closeAll()
+    return "system-menu-closed"
+  }
+  setPending(null)
+  setMenuOpen(true)
+  return "system-menu-open"
+}

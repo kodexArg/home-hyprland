@@ -19,7 +19,7 @@ const DEFAULT_SNAP: OpenRouterCreditSnap = {
 }
 
 const CACHE_FILE = "/tmp/kdx_openrouter_credits.json"
-const POLL_INTERVAL_MS = 60_000 // Poll OpenRouter credits every 60s
+const POLL_INTERVAL_MS = 20_000 // pace2: faster "in use" detection
 const SCRIPT = `${GLib.get_home_dir()}/.local/bin/kdx-openrouter-credits`
 
 const [creditSnap, setCreditSnap] = createState<OpenRouterCreditSnap>(readCachedSnap())

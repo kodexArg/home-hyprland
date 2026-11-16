@@ -29,14 +29,17 @@ import {
 } from "./bluetooth"
 
 import {
-  castMic,
+  armMonitor,
+  armPanel,
+  castMonitorOutput,
+  castPanelAddress,
   castPopupOpen,
+  castTarget,
   castTargetLabel,
+  fetchHyprlandMonitors,
   fetchHyprlandPanels,
-  HyprWindowPanel,
-  setCastMic,
+  selectAreaWithDelay,
   setCastPopupOpen,
-  setCastTarget,
 } from "./cast"
 import {
   micMuted,
@@ -55,6 +58,8 @@ import {
   lanMouseVisible,
   toggleLanMouseVisible,
 } from "./bar-visibility"
+import { asusOn, startAsusPoll, toggleAsus } from "./AsusToggle"
+import { glowEnabled, toggleGlowEnabled } from "./usage-glow"
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const ICON_MENU = `${ICON_DIR}/menu.svg`
@@ -81,6 +86,7 @@ const ICON_SCREEN = `${ICON_DIR}/screen.svg`
 const ICON_AREA = `${ICON_DIR}/area.svg`
 const ICON_PANEL = `${ICON_DIR}/panel.svg`
 const ICON_LOGS = `${ICON_DIR}/logs.svg`
+const ICON_KILL = `${ICON_DIR}/kill.svg`
 
 const LABEL_W = 120
 const PANEL_GAP = 4
@@ -395,40 +401,22 @@ function ConfirmView() {
   )
 }
 
-function pickTarget(
-  t: "panel-left" | "panel-right" | "screen-region" | "screen-full" | "window-geom",
-  opts?: { geom?: string; title?: string },
-): void {
-  setCastTarget(t, opts)
-  setCastPopupOpen(false)
-}
-
-function rebuildPanelList(self: Gtk.Box): void {
+function clearBox(self: Gtk.Box): void {
   let child = self.get_first_child()
   while (child) {
     const next = child.get_next_sibling()
     self.remove(child)
     child = next
   }
+}
 
-  const list = fetchHyprlandPanels()
-  const left = list.filter(
-    (p) => p.monitorName.includes("HDMI-A-2") || p.monitorName.includes("ASUS"),
-  )
-  const right = list.filter(
-    (p) => p.monitorName.includes("HDMI-A-1") || p.monitorName.includes("AOC"),
-  )
-  const used = new Set([...left, ...right].map((p) => p.address))
-  const leftover = list.filter((p) => !used.has(p.address))
-  for (const p of leftover) {
-    if (p.at[0] < 0) left.push(p)
-    else right.push(p)
-  }
-
-  if (left.length === 0 && right.length === 0) {
+function rebuildMonitorList(self: Gtk.Box): void {
+  clearBox(self)
+  const monitors = fetchHyprlandMonitors()
+  if (monitors.length === 0) {
     self.append(
       new Gtk.Label({
-        label: "No open window panels detected",
+        label: "No active monitors",
         xalign: 0.5,
         css_classes: ["CastPopup-sub-header"],
         visible: true,
@@ -437,55 +425,107 @@ function rebuildPanelList(self: Gtk.Box): void {
     return
   }
 
-  const appendGroup = (heading: string, panels: HyprWindowPanel[]) => {
-    if (panels.length === 0) return
-    const box = new Gtk.Box({
+  for (const m of monitors) {
+    const isArmed =
+      castTarget.peek() === "monitor" && castMonitorOutput.peek() === m.name
+    const classes = isArmed ? ["CastPopup-opt", "active"] : ["CastPopup-opt"]
+    const title = m.model ? `${m.name} · ${m.model}` : m.name
+    const sub = `${m.width}×${m.height}`
+
+    const inner = new Gtk.Box({
       orientation: Gtk.Orientation.VERTICAL,
-      spacing: 4,
-      hexpand: true,
+      spacing: 2,
+      halign: Gtk.Align.CENTER,
+      valign: Gtk.Align.CENTER,
       visible: true,
     })
-    box.append(
+    inner.append(
       new Gtk.Label({
-        label: heading,
-        xalign: 0,
+        label: title,
+        xalign: 0.5,
+        visible: true,
+      }),
+    )
+    inner.append(
+      new Gtk.Label({
+        label: sub,
+        xalign: 0.5,
         css_classes: ["CastPopup-sub-header"],
         visible: true,
       }),
     )
-    for (const p of panels) {
-      const btn = new Gtk.Button({
-        css_classes: ["CastPopup-panel-line"],
-        tooltip_text: `Arm window target: ${p.title} — then click [*REC]`,
+
+    const btn = new Gtk.Button({
+      css_classes: classes,
+      tooltip_text: `Monitor ${title} (${sub}) — arms [*REC]`,
+      visible: true,
+    })
+    btn.set_child(inner)
+    btn.connect("clicked", () => {
+      armMonitor(m.name, title)
+      setCastPopupOpen(false)
+    })
+    self.append(btn)
+  }
+}
+
+function rebuildPanelList(self: Gtk.Box): void {
+  clearBox(self)
+  const list = fetchHyprlandPanels()
+  if (list.length === 0) {
+    self.append(
+      new Gtk.Label({
+        label: "No Hyprland panels",
+        xalign: 0.5,
+        css_classes: ["CastPopup-sub-header"],
         visible: true,
-        hexpand: true,
-      })
-      btn.set_child(
-        new Gtk.Label({
-          label: p.title.length > 42 ? `${p.title.slice(0, 40)}…` : p.title,
-          xalign: 0,
-          css_classes: ["CastPopup-panel-title"],
-          visible: true,
-          hexpand: true,
-        }),
-      )
-      btn.connect("clicked", () =>
-        pickTarget("window-geom", { geom: p.geom, title: p.title }),
-      )
-      box.append(btn)
-    }
-    self.append(box)
+      }),
+    )
+    return
   }
 
-  appendGroup("ASUS (Left · HDMI-A-2)", left)
-  appendGroup("AOC (Right · HDMI-A-1)", right)
+  for (const p of list) {
+    const isArmed =
+      castTarget.peek() === "panel" && castPanelAddress.peek() === p.address
+    const classes = isArmed
+      ? ["CastPopup-panel-line", "active"]
+      : ["CastPopup-panel-line"]
+    const prefix = p.workspaceName
+      ? `[${p.monitorName}:${p.workspaceName}]`
+      : `[${p.monitorName}]`
+    const rawLine = `${prefix} ${p.title}`
+    const line = rawLine.length > 48 ? `${rawLine.slice(0, 46)}…` : rawLine
+
+    const btn = new Gtk.Button({
+      css_classes: classes,
+      tooltip_text: `${p.title} (${p.class || "panel"}) — ${p.monitorName} WS ${p.workspaceName} — arms [*REC]`,
+      visible: true,
+      hexpand: true,
+    })
+    btn.set_child(
+      new Gtk.Label({
+        label: line,
+        xalign: 0,
+        css_classes: ["CastPopup-panel-title"],
+        visible: true,
+        hexpand: true,
+      }),
+    )
+    btn.connect("clicked", () => {
+      armPanel(p.address, p.title)
+      setCastPopupOpen(false)
+    })
+    self.append(btn)
+  }
 }
 
 function CastPopupModal(gdkmonitor: Gdk.Monitor) {
   const visible = createComputed(() => castPopupOpen() && barVisible())
   const targetHint = createComputed(() => {
     const label = castTargetLabel()
-    return label === "No target" ? "Pick a target — [*REC] appears gray on the bar" : `Armed: ${label}`
+    return label === "No target"
+      ? "Select monitor, panel or area to arm [*REC]"
+      : `Armed: ${label}`
   })
 
   return (
@@ -528,65 +568,27 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
           <label class="CastPopup-title" label="Cast & Screen Capture" />
           <label class="CastPopup-sub-header" label={targetHint} />
 
-          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_SCREEN} pixelSize={14} />
-              <label class="CastPopup-section-label" label="Screen" />
+              <label class="CastPopup-section-label" label="Monitor" />
             </box>
-            <box spacing={6} halign={Gtk.Align.CENTER}>
-              <button
-                class="CastPopup-opt"
-                tooltipText="Arm LEFT screen — ASUS VA27EHF (HDMI-A-2). Click [*REC] to start."
-                onClicked={() => pickTarget("panel-left")}
-              >
-                <label label="Left (ASUS)" />
-              </button>
-              <button
-                class="CastPopup-opt"
-                tooltipText="Arm RIGHT screen — AOC G2790G4 (HDMI-A-1). Click [*REC] to start."
-                onClicked={() => pickTarget("panel-right")}
-              >
-                <label label="Right (AOC)" />
-              </button>
-              <button
-                class="CastPopup-opt"
-                tooltipText="Arm both displays (one video). Click [*REC] to start."
-                onClicked={() => pickTarget("screen-full")}
-              >
-                <label label="All" />
-              </button>
-            </box>
+            <box
+              spacing={8}
+              halign={Gtk.Align.CENTER}
+              $={(self: Gtk.Box) => {
+                const refresh = () => {
+                  if (!castPopupOpen.peek()) return
+                  rebuildMonitorList(self)
+                }
+                if (castPopupOpen.peek()) refresh()
+                castPopupOpen.subscribe(() => {
+                  if (castPopupOpen.peek()) refresh()
+                })
+              }}
+            />
           </box>
 
-          {}
-          <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
-            <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
-              <image file={ICON_MIC} pixelSize={14} />
-              <label class="CastPopup-section-label" label="Audio" />
-            </box>
-            <box spacing={6} halign={Gtk.Align.CENTER}>
-              <button
-                class={createComputed(() =>
-                  castMic() ? "CastPopup-opt active" : "CastPopup-opt",
-                )}
-                tooltipText={createComputed(() =>
-                  castMic()
-                    ? "Voice ON — Brio + desktop mixed into the mp4. Click to drop the mic."
-                    : "Voice OFF — desktop audio only. Click to add Brio.",
-                )}
-                onClicked={() => setCastMic(!castMic.peek())}
-              >
-                <label
-                  label={createComputed(() =>
-                    castMic() ? "Mic ON (voice + desktop)" : "Mic OFF (desktop only)",
-                  )}
-                />
-              </button>
-            </box>
-          </box>
-
-          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.CENTER}>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_AREA} pixelSize={14} />
@@ -594,16 +596,17 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
             </box>
             <box spacing={6} halign={Gtk.Align.CENTER}>
               <button
-                class="CastPopup-opt"
-                tooltipText="Arm region capture — [*REC] opens slurp, then records."
-                onClicked={() => pickTarget("screen-region")}
+                class={createComputed(() =>
+                  castTarget() === "area" ? "CastPopup-opt active" : "CastPopup-opt",
+                )}
+                tooltipText="In 3 seconds opens area selector, then arms [*REC]"
+                onClicked={() => selectAreaWithDelay()}
               >
-                <label label="Select Area" />
+                <label label="Select Area (3s)" />
               </button>
             </box>
           </box>
 
-          {}
           <box orientation={Gtk.Orientation.VERTICAL} spacing={6} halign={Gtk.Align.FILL} hexpand>
             <box spacing={6} halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
               <image file={ICON_PANEL} pixelSize={14} />
@@ -612,7 +615,7 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
 
             <box
               orientation={Gtk.Orientation.VERTICAL}
-              spacing={8}
+              spacing={4}
               class="CastPopup-panel-list"
               hexpand
               halign={Gtk.Align.FILL}
@@ -622,8 +625,8 @@ function CastPopupModal(gdkmonitor: Gdk.Monitor) {
                   rebuildPanelList(self)
                 }
                 if (castPopupOpen.peek()) refresh()
-                castPopupOpen.subscribe((isOpen) => {
-                  if (isOpen) refresh()
+                castPopupOpen.subscribe(() => {
+                  if (castPopupOpen.peek()) refresh()
                 })
               }}
             />
@@ -676,6 +679,48 @@ function LogsRow() {
           )
         } catch (e) {
           printerr(`system-menu: launch logs failed: ${e}`)
+        }
+      }}
+    />
+  )
+}
+
+function CpuRow() {
+  return (
+    <ActionRow
+      iconFile={ICON_CPU}
+      label="Monitor CPU"
+      tip="btop — procesos ordenados por CPU · k mata · f filtra (SUPER+CTRL+M)"
+      onClicked={() => {
+        closeAll()
+        try {
+          Gio.Subprocess.new(
+            ["kitty", "--class=kdx-btop", "-T", "btop", "btop"],
+            Gio.SubprocessFlags.NONE,
+          )
+        } catch (e) {
+          printerr(`system-menu: launch btop failed: ${e}`)
+        }
+      }}
+    />
+  )
+}
+
+function KillRow() {
+  return (
+    <ActionRow
+      iconFile={ICON_KILL}
+      label="Matar procesos"
+      tip="kdx-kill — detener servicios --user, liberar puertos, TERM→KILL a procesos (SUPER+CTRL+K)"
+      onClicked={() => {
+        closeAll()
+        try {
+          Gio.Subprocess.new(
+            ["kitty", "--class=kdx-kill", "-T", "Kill", "/home/kodex/.local/bin/kdx-kill"],
+            Gio.SubprocessFlags.NONE,
+          )
+        } catch (e) {
+          printerr(`system-menu: launch kdx-kill failed: ${e}`)
         }
       }}
     />
@@ -735,7 +780,31 @@ function VisibilitySection() {
         )}
         onClicked={() => toggleLanMouseVisible()}
       />
+      <ToggleRow
+        iconFile={ICON_MONEY}
+        label="Brillo al consumir"
+        active={glowEnabled}
+        tip={createComputed(() =>
+          glowEnabled()
+            ? "Glow on usage: los badges laten cuando sube un consumo · Clic para apagar"
+            : "Glow on usage apagado · Clic para encender",
+        )}
+        onClicked={() => toggleGlowEnabled()}
+      />
     </box>
+  )
+}
+
+function AsusRow() {
+  startAsusPoll()
+  return (
+    <ToggleRow
+      iconFile={ICON_SCREEN}
+      label="ASUS"
+      active={createComputed(() => asusOn())}
+      tip={createComputed(() => `ASUS (HDMI-A-2): ${asusOn() ? "encendido" : "apagado"}\nClic: ${asusOn() ? "apagar" : "encender"}`)}
+      onClicked={() => toggleAsus()}
+    />
   )
 }
 
@@ -746,14 +815,17 @@ function MenuList() {
         class="SystemMenu-status"
         label="SISTEMA"
         xalign={0}
-        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Reiniciar · Apagar`}
+        tooltipText={`${L2TP_CONN} · WARP · Bluetooth · Cast · Logs · Matar · Reiniciar · Apagar`}
       />
 
+      <AsusRow />
       <VpnRow />
       <WarpRow />
       <BluetoothRow />
       <CastRow />
       <LogsRow />
+      <CpuRow />
+      <KillRow />
 
       <box class="SystemMenu-sep" heightRequest={1} hexpand />
 

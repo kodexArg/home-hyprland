@@ -29,10 +29,27 @@ export type ClaudeUsageSnap = {
   stale?: boolean
 }
 
-const DEFAULT_SNAP: ClaudeUsageSnap = {
+const DEFAULT_SNAP_PERSONAL: ClaudeUsageSnap = {
+  email: "gcavedal@gmail.com",
+  org: "Gabriel Cavedal",
+  tier: "Max",
+  rate_limit_tier: "default_claude_max_5x",
+  five_hour_pct: 0,
+  daily_pct: 0,
+  claude_pct: 0,
+  claude_formatted: "0%",
+  tokens_today: 0,
+  messages_today: 0,
+  sessions_today: 0,
+  reset_str: "5h móvil",
+  updated_at: "--:--",
+  error: null,
+}
+
+const DEFAULT_SNAP_ALVS: ClaudeUsageSnap = {
   email: "gcavedal@alvsgroup.com",
   org: "Alvsgroup",
-  tier: "Team",
+  tier: "Team Standard",
   rate_limit_tier: "default_raven",
   five_hour_pct: 0,
   daily_pct: 0,
@@ -46,62 +63,99 @@ const DEFAULT_SNAP: ClaudeUsageSnap = {
   error: null,
 }
 
-/** Written by ~/.local/bin/kdx-claude-usage, run by kdx-claude-usage.timer (systemd --user, 5 min).
- *  The bar only re-reads this small file; it never spawns the script on a tick. */
-const CACHE_FILE = `${GLib.get_user_cache_dir()}/kdx/claude_usage.json`
-const POLL_INTERVAL_MS = 60_000
+const CACHE_FILE_PERSONAL = `${GLib.get_user_cache_dir()}/kdx/claude_usage.json`
+const CACHE_FILE_ALVS = `${GLib.get_user_cache_dir()}/kdx/claude_alvs_usage.json`
+const POLL_INTERVAL_MS = 15_000
 const SCRIPT = `${GLib.get_home_dir()}/.local/bin/kdx-claude-usage`
 
-const [claudeSnap, setClaudeSnap] = createState<ClaudeUsageSnap>(readCachedSnap())
-
-let inFlight = false
-let pollSource: number | null = null
-
-function readCachedSnap(): ClaudeUsageSnap {
+function readSnapFile(filePath: string, defaultSnap: ClaudeUsageSnap): ClaudeUsageSnap {
   try {
-    const file = Gio.File.new_for_path(CACHE_FILE)
+    const file = Gio.File.new_for_path(filePath)
     if (file.query_exists(null)) {
       const [ok, bytes] = file.load_contents(null)
       if (ok) {
-        return JSON.parse(new TextDecoder().decode(bytes).trim())
+        return { ...defaultSnap, ...JSON.parse(new TextDecoder().decode(bytes).trim()) }
       }
     }
   } catch {}
-  return DEFAULT_SNAP
+  return defaultSnap
 }
 
-export function refreshClaudeUsage() {
-  if (inFlight) return
-  inFlight = true
+const [claudeSnap, setClaudeSnap] = createState<ClaudeUsageSnap>(
+  readSnapFile(CACHE_FILE_PERSONAL, DEFAULT_SNAP_PERSONAL),
+)
+const [claudeAlvsSnap, setClaudeAlvsSnap] = createState<ClaudeUsageSnap>(
+  readSnapFile(CACHE_FILE_ALVS, DEFAULT_SNAP_ALVS),
+)
 
-  execAsync(["python3", SCRIPT])
+let inFlightPersonal = false
+let inFlightAlvs = false
+let pollSourcePersonal: number | null = null
+let pollSourceAlvs: number | null = null
+
+export function refreshClaudeUsage() {
+  if (inFlightPersonal) return
+  inFlightPersonal = true
+
+  execAsync(["python3", SCRIPT, "--profile", "personal", "--force"])
     .then((out) => {
       try {
         const data = JSON.parse(out.trim())
         setClaudeSnap(data)
       } catch (e) {
-        printerr(`claude-usage: JSON parse error: ${e}`)
+        printerr(`claude-usage (personal): JSON parse error: ${e}`)
       }
     })
     .catch((err) => {
-      printerr(`claude-usage: exec error: ${err}`)
-      const cached = readCachedSnap()
+      printerr(`claude-usage (personal): exec error: ${err}`)
+      const cached = readSnapFile(CACHE_FILE_PERSONAL, DEFAULT_SNAP_PERSONAL)
       setClaudeSnap({ ...cached, stale: true })
     })
     .finally(() => {
-      inFlight = false
+      inFlightPersonal = false
+    })
+}
+
+export function refreshClaudeAlvsUsage() {
+  if (inFlightAlvs) return
+  inFlightAlvs = true
+
+  execAsync(["python3", SCRIPT, "--profile", "alvs", "--force"])
+    .then((out) => {
+      try {
+        const data = JSON.parse(out.trim())
+        setClaudeAlvsSnap(data)
+      } catch (e) {
+        printerr(`claude-usage (alvs): JSON parse error: ${e}`)
+      }
+    })
+    .catch((err) => {
+      printerr(`claude-usage (alvs): exec error: ${err}`)
+      const cached = readSnapFile(CACHE_FILE_ALVS, DEFAULT_SNAP_ALVS)
+      setClaudeAlvsSnap({ ...cached, stale: true })
+    })
+    .finally(() => {
+      inFlightAlvs = false
     })
 }
 
 export function startClaudeWatch() {
-  if (pollSource !== null) return
+  if (pollSourcePersonal !== null) return
+  setClaudeSnap(readSnapFile(CACHE_FILE_PERSONAL, DEFAULT_SNAP_PERSONAL))
+  pollSourcePersonal = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
+    setClaudeSnap(readSnapFile(CACHE_FILE_PERSONAL, DEFAULT_SNAP_PERSONAL))
+    return GLib.SOURCE_CONTINUE
+  })
+}
 
-  setClaudeSnap(readCachedSnap())
-
-  pollSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
-    setClaudeSnap(readCachedSnap())
+export function startClaudeAlvsWatch() {
+  if (pollSourceAlvs !== null) return
+  setClaudeAlvsSnap(readSnapFile(CACHE_FILE_ALVS, DEFAULT_SNAP_ALVS))
+  pollSourceAlvs = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_INTERVAL_MS, () => {
+    setClaudeAlvsSnap(readSnapFile(CACHE_FILE_ALVS, DEFAULT_SNAP_ALVS))
     return GLib.SOURCE_CONTINUE
   })
 }
 
 export const claudeUsageSnap = claudeSnap
+export const claudeAlvsUsageSnap = claudeAlvsSnap

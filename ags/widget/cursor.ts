@@ -3,7 +3,20 @@ import Gio from "gi://Gio"
 import { createState, createComputed } from "ags"
 import { execAsync } from "ags/process"
 
+/** Real cycle spend per family (cents), from GetAggregatedUsageEvents. */
+export type CursorSplit = {
+  grok_cents: number
+  third_cents: number
+  auto_cents: number
+  total_cents: number
+  third_top: string[]
+}
+
 export type CursorUsageSnap = {
+  split?: CursorSplit | null
+  total_pct?: number | null
+  included_spend?: number
+  bonus_spend?: number
   cursor_pct: number | null
   other_pct: number | null
   cursor_formatted: string
@@ -28,7 +41,7 @@ const DEFAULT_SNAP: CursorUsageSnap = {
 }
 
 const CACHE_FILE = "/tmp/kdx_cursor_usage.json"
-const POLL_INTERVAL_MS = 60_000 // Poll Cursor usage every 60s
+const POLL_INTERVAL_MS = 30_000 // pace2: faster "in use" detection
 const SCRIPT = `${GLib.get_home_dir()}/.local/bin/kdx-cursor-usage`
 
 const [cursorSnap, setCursorSnap] = createState<CursorUsageSnap>(readCachedSnap())
@@ -48,6 +61,10 @@ function readCachedSnap(): CursorUsageSnap {
           other_pct: typeof parsed.other_pct === "number" ? parsed.other_pct : null,
           cursor_formatted: parsed.cursor_formatted || "--%",
           other_formatted: parsed.other_formatted || "--%",
+          split: parsed.split ?? null,
+          total_pct: typeof parsed.total_pct === "number" ? parsed.total_pct : null,
+          included_spend: parsed.included_spend,
+          bonus_spend: parsed.bonus_spend,
           total_spend: parsed.total_spend,
           limit: parsed.limit,
           remaining: parsed.remaining,
@@ -76,6 +93,10 @@ export function refreshCursorUsage() {
           other_pct: typeof data.other_pct === "number" ? data.other_pct : null,
           cursor_formatted: data.cursor_formatted || "--%",
           other_formatted: data.other_formatted || "--%",
+          split: data.split ?? null,
+          total_pct: typeof data.total_pct === "number" ? data.total_pct : null,
+          included_spend: data.included_spend,
+          bonus_spend: data.bonus_spend,
           total_spend: data.total_spend,
           limit: data.limit,
           remaining: data.remaining,

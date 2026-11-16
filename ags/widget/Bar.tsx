@@ -18,6 +18,7 @@ import GrokBotMeter from "./GrokBotMeter"
 import GrokBuildMeter from "./GrokBuildMeter"
 import CursorMeter from "./CursorMeter"
 import ClaudeMeter from "./ClaudeMeter"
+import ClaudeAlvsMeter from "./ClaudeAlvsMeter"
 import AgyMeter from "./AgyMeter"
 import AgyOtherMeter from "./AgyOtherMeter"
 import LanMouseMeter from "./LanMouseMeter"
@@ -514,11 +515,13 @@ function Clock({ timeFormat = "%H:%M" }) {
     GLib.DateTime.new_now_local().format(timeFormat)!,
   )
 
+  let calendar: Gtk.Calendar | undefined
+
   return (
     <menubutton class="Clock" tooltipText="Calendar" valign={Gtk.Align.CENTER}>
       <label class="Clock-time" label={time} />
-      <popover>
-        <Gtk.Calendar />
+      <popover onShow={() => calendar?.select_day(GLib.DateTime.new_now_local())}>
+        <Gtk.Calendar $={(self) => (calendar = self)} />
       </popover>
     </menubutton>
   )
@@ -541,7 +544,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
 
   return (
     <window
-      visible={true}
+      visible={barVisible}
       name={`bar-${conn}`}
       namespace="ags-bar"
       class={barModeClass}
@@ -578,6 +581,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
               {show("grokbuild") && <GrokBuildMeter />}
               {show("cursor") && <CursorMeter />}
               {show("claude") && <ClaudeMeter />}
+              {show("claude-alvs") && <ClaudeAlvsMeter />}
               {show("agy") && <AgyMeter />}
               {show("agy-other") && <AgyOtherMeter />}
               {show("openrouter") && <OpenRouterMeter />}

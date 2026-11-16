@@ -3,84 +3,99 @@ import { agyUsageSnap, refreshAgyUsage, startAgyWatch } from "./agy"
 import UsageBadge, { clampFraction, cycleElapsed, timeLeft } from "./UsageBadge"
 
 const FIVE_HOURS_MS = 5 * 3_600_000
+const WEEK_MS = 7 * 86_400_000
+const DAYS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"]
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
-/** Antigravity CLI (agy) "other" models group (Claude/GPT): quota used 5 h / week.
- *  Same cache + timer as AgyMeter (~/.cache/kdx/agy_usage.json); no extra agy calls. */
+/** Antigravity CLI (agy) "other models" group (Claude Opus 5.5, Sonnet, GPT-OSS): quota used 5 h / week.
+ *  Mismo diseño y dígitos morados; icono de AGY en naranja (#ff8c42). */
 export default function AgyOtherMeter() {
   startAgyWatch()
   const snap = agyUsageSnap
   const num = (v: number | null | undefined) => (typeof v === "number" ? v : null)
   const pctText = (v: number | null | undefined) => (typeof v === "number" ? `${v}%` : "--")
   const two = (n: number) => String(n).padStart(2, "0")
-  /** Box clock is ART (America/Mendoza). */
-  const hhmm = (iso?: string | null) => {
+
+  const formatIso = (iso?: string | null) => {
+    if (!iso) return "--"
+    const d = new Date(iso)
+    const day = DAYS[d.getDay()]
+    const month = MONTHS[d.getMonth()]
+    return `${day} ${d.getDate()} ${month} ${two(d.getHours())}:${two(d.getMinutes())} ART`
+  }
+
+  const formatTimeOnly = (iso?: string | null) => {
     if (!iso) return "--"
     const d = new Date(iso)
     return `${two(d.getHours())}:${two(d.getMinutes())} ART`
   }
-  const dayHhmm = (iso?: string | null) => {
-    if (!iso) return "--"
-    const d = new Date(iso)
-    return `${d.getDate()} ${MONTHS[d.getMonth()]} ${two(d.getHours())}:${two(d.getMinutes())} ART`
-  }
-  const modelsText = createComputed(() => {
-    const s = snap()
-    const models = s.other_models ?? []
-    if (!models.length) return "Sin datos de modelos todavía (espera el próximo refresco)."
-    const lines = models.map(
-      (m) =>
-        `${m}: 5 h ${pctText(s.other_five_hour_pct)} · sem ${pctText(s.other_week_pct)}\n` +
-        `   reinicia 5 h ${hhmm(s.other_reset_iso)} · sem ${dayHhmm(s.other_week_reset_iso)}`,
-    )
-    if (!s.other_per_model) lines.push("agy solo da cifra de GRUPO: estos modelos comparten la misma cuota.")
-    return lines.join("\n")
-  })
 
   return (
     <UsageBadge
       icon="agy-other"
       tone="agyother"
-      primary={{ value: createComputed(() => num(snap().other_five_hour_pct)), format: "percent" }}
-      secondary={{ value: createComputed(() => num(snap().other_week_pct)), format: "percent" }}
+      primary={{ value: createComputed(() => num(snap().other_week_pct)), format: "percent" }}
       onRefresh={refreshAgyUsage}
       onOpen="https://antigravity.google"
       tip={{
-        title: "agy · otros modelos",
-        subtitle: createComputed(() => `${snap().other_group ?? "Claude and GPT models"} · dato ${snap().updated_at}`),
+        title: "Antigravity · Other models (Opus 5.5)",
+        subtitle: createComputed(() => {
+          const s = snap()
+          const active = s.model.toLowerCase().includes("opus")
+            ? `Activo: ${s.model}`
+            : (s.other_group ?? "Claude and GPT models")
+          return `${active} · dato ${s.updated_at}`
+        }),
         rows: [
           {
-            label: "Grupo · 5 h usado",
-            value: createComputed(() => pctText(snap().other_five_hour_pct)),
-            fraction: createComputed(() => clampFraction((num(snap().other_five_hour_pct) ?? 0) / 100)),
-            detail: createComputed(() =>
-              snap().other_reset_iso ? `reinicia ${hhmm(snap().other_reset_iso)} · ${timeLeft(snap().other_reset_iso)}` : "",
-            ),
-          },
-          {
-            label: "Tiempo de la sesión",
-            value: createComputed(() => {
-              const f = cycleElapsed(snap().other_reset_iso, FIVE_HOURS_MS)
-              return f === null ? "--" : `${Math.round(f * 100)}%`
-            }),
-            fraction: createComputed(() => cycleElapsed(snap().other_reset_iso, FIVE_HOURS_MS)),
-            kind: "time",
-          },
-          {
-            label: "Grupo · semana usado",
-            value: createComputed(() => pctText(snap().other_week_pct)),
+            label: "Opus 5.5 / 3P · Semana (7 d)",
+            value: createComputed(() => `${pctText(snap().other_week_pct)} usado`),
             fraction: createComputed(() => clampFraction((num(snap().other_week_pct) ?? 0) / 100)),
             detail: createComputed(() =>
               snap().other_week_reset_iso
-                ? `reinicia ${dayHhmm(snap().other_week_reset_iso)} · ${timeLeft(snap().other_week_reset_iso)}`
+                ? `reinicia ${formatIso(snap().other_week_reset_iso)} (${timeLeft(snap().other_week_reset_iso)})`
                 : "",
             ),
           },
           {
-            label: "Modelos (según agy /quota)",
-            value: createComputed(() => `${(snap().other_models ?? []).length}`),
+            label: "Tiempo de la semana (7 d)",
+            value: createComputed(() => {
+              const f = cycleElapsed(snap().other_week_reset_iso, WEEK_MS)
+              return f === null ? "--" : `${Math.round(f * 100)}% transcurrido`
+            }),
+            fraction: createComputed(() => cycleElapsed(snap().other_week_reset_iso, WEEK_MS)),
+            kind: "time",
+            days: 7,
+            detail: createComputed(() => "Límite ligado directamente a tu cuota semanal de tier"),
+          },
+          {
+            label: "Opus 5.5 / 3P · Sesión 5 h",
+            value: createComputed(() => `${pctText(snap().other_five_hour_pct)} usado`),
+            fraction: createComputed(() => clampFraction((num(snap().other_five_hour_pct) ?? 0) / 100)),
+            detail: createComputed(() =>
+              snap().other_reset_iso
+                ? `reinicia ${formatTimeOnly(snap().other_reset_iso)} (${timeLeft(snap().other_reset_iso)})`
+                : "",
+            ),
+          },
+          {
+            label: "Tiempo de la sesión (5 h)",
+            value: createComputed(() => {
+              const f = cycleElapsed(snap().other_reset_iso, FIVE_HOURS_MS)
+              return f === null ? "--" : `${Math.round(f * 100)}% transcurrido`
+            }),
+            fraction: createComputed(() => cycleElapsed(snap().other_reset_iso, FIVE_HOURS_MS)),
+            kind: "time",
+            detail: createComputed(() => "Ventana de 5 horas para regular demanda agregada"),
+          },
+          {
+            label: "Modelos en grupo compartido",
+            value: createComputed(() => `${(snap().other_models ?? []).length || 3} modelos`),
             fraction: createComputed(() => null),
-            detail: modelsText,
+            detail: createComputed(
+              () =>
+                "Claude Opus 5.5 (High) · Claude Sonnet · GPT-OSS\nConsumen del mismo cupo en proporción al costo de tokens.",
+            ),
           },
         ],
         error: createComputed(() => snap().error),

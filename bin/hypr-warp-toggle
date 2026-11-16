@@ -41,7 +41,7 @@ if is_warp_connected; then
     sudo systemctl restart systemd-resolved
 
     # 5) Vaciar caches locales
-    resolvectl flush-caches 2>/dev/null || true
+    # resolvectl flush-caches  # disabled: triggers a polkit prompt as non-root
 
     # 6) Notificación en Hyprland
     notify-send -u normal -t 3500 -i network-wireless-disconnected "Cloudflare WARP" "DESACTIVADO\nDNS restaurado a systemd-resolved nativo"

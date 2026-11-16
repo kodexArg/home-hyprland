@@ -1,6 +1,7 @@
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import { createState } from "ags"
+import { startVoz, voz, vozUp } from "./voz"
 
 const TICK_MS = 15000
 const REPROBE_MS = 100
@@ -116,23 +117,46 @@ function listInputSourceNames(): string[] {
   return names
 }
 
-function listSourceOutputIds(): string[] {
+/** Indexes of sink-monitor sources (desktop audio, not a microphone). */
+function listMonitorSourceIndexes(): Set<string> {
+  const out = runSync(["pactl", "list", "short", "sources"])
+  const idx = new Set<string>()
+  for (const line of out.split("\n")) {
+    const cols = line.split("\t")
+    if (cols[1]?.trim().endsWith(".monitor")) idx.add(cols[0].trim())
+  }
+  return idx
+}
+
+/**
+ * Capture streams (source-outputs). With `micOnly`, streams that capture a
+ * sink monitor are skipped: they carry desktop audio, not the microphone
+ * (e.g. hypr-record's system-audio capture must survive a muted mic).
+ */
+function listSourceOutputIds(micOnly = false): string[] {
   const out = runSync(["pactl", "list", "short", "source-outputs"])
+  const monitors = micOnly ? listMonitorSourceIndexes() : null
   const ids: string[] = []
   for (const line of out.split("\n")) {
-    const id = line.split("\t")[0]?.trim()
-    if (id && /^\d+$/.test(id)) ids.push(id)
+    const cols = line.split("\t")
+    const id = cols[0]?.trim()
+    if (!id || !/^\d+$/.test(id)) continue
+    if (monitors?.has(cols[1]?.trim() ?? "")) continue
+    ids.push(id)
   }
   return ids
 }
 
-/** Apply mute=1/0 to every input source and every capture stream. */
+/**
+ * Apply mute=1/0 to every input source and capture stream. Muting only hits
+ * microphone captures; unmuting clears every stream.
+ */
 function applyGlobalMute(mute: boolean): void {
   const v = mute ? "1" : "0"
   for (const name of listInputSourceNames()) {
     runSync(["pactl", "set-source-mute", name, v])
   }
-  for (const id of listSourceOutputIds()) {
+  for (const id of listSourceOutputIds(mute)) {
     runSync(["pactl", "set-source-output-mute", id, v])
   }
 }
@@ -567,7 +591,7 @@ function reapOrphanActivity(): void {
 }
 
 function startActivityMonitor(): void {
-  if (activityProc !== null) return
+  if (activityProc !== null || !activityWanted) return
   try {
     activityProc = Gio.Subprocess.new(
       [ACTIVITY_BIN],
@@ -617,7 +641,33 @@ export function startMicWatch(): void {
   ensureTick()
   startSubscribe()
   reapOrphanActivity()
-  startActivityMonitor()
+  startVozOwnership()
+}
+
+// ── voz (hyprland-whisper) es el dueño del micrófono ───────────────────────
+// Mientras el daemon de voz está arriba, la detección de voz sale de su VAD
+// y no se abre una segunda captura. Si el daemon cae, vuelve kdx-mic-activity.
+let activityWanted = false
+
+function startVozOwnership(): void {
+  const sync = () => {
+    if (vozUp.peek()) {
+      activityWanted = false
+      stopActivityMonitor()
+      setMicHearing(!micMuted.peek() && voz.peek().hearing)
+    } else {
+      activityWanted = true
+      startActivityMonitor()
+    }
+  }
+  vozUp.subscribe(sync)
+  voz.subscribe(sync)
+  startVoz()
+  // El daemon tarda un instante en contestar: dar tiempo antes del fallback.
+  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+    sync()
+    return GLib.SOURCE_REMOVE
+  })
 }
 
 export function refreshMic(): void {

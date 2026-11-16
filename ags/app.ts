@@ -19,6 +19,12 @@ import { getWarpActive, getWarpPhase, toggleWarp } from "./widget/warp"
 import { refreshCredits, openRouterSnap } from "./widget/openrouter"
 import { refreshCursorUsage, cursorUsageSnap } from "./widget/cursor"
 import {
+  refreshClaudeUsage,
+  claudeUsageSnap,
+  refreshClaudeAlvsUsage,
+  claudeAlvsUsageSnap,
+} from "./widget/claude"
+import {
   moneyVisible,
   setMoneyVisible,
   toggleMoneyVisible,
@@ -36,11 +42,16 @@ import {
   toggleLanMouseVisible,
 } from "./widget/bar-visibility"
 import GLib from "gi://GLib"
+import { createRoot } from "ags"
 
 
 const BAR_MODEL = "VA27EHF"
 
 let spawnedFor: string | null = null
+let barWin: any = null
+let barDispose: (() => void) | null = null
+let onFallback = false
+let monOverride: string | null = null
 
 function connectorOf(mon: { connector?: string | null }): string {
   return mon.connector ?? ""
@@ -61,19 +72,30 @@ function isBarMonitor(mon: {
 }
 
 function trySpawnBar(reason: string) {
-  // house default: only ASUS VA27EHF (left landscape). No bar on AOC.
-  if (spawnedFor) return
-  for (const mon of app.get_monitors()) {
-    if (!isBarMonitor(mon)) continue
-    Bar(mon)
-    spawnedFor = connectorOf(mon) || BAR_MODEL
-    printerr(`ags: bar on ${spawnedFor} model=${modelOf(mon)} (${reason})`)
+  // prefer ASUS VA27EHF; if absent, fall back to first available monitor (AOC)
+  const mons = app.get_monitors()
+  const target = (monOverride ? mons.find((m) => connectorOf(m) === monOverride) : undefined) ?? mons.find(isBarMonitor) ?? mons[0]
+  const conn = target ? connectorOf(target) || modelOf(target) : null
+  if (conn && conn === spawnedFor && barWin) return
+  if (barWin) {
+    try { barDispose?.() } catch (_) {}
+    try { barWin.destroy() } catch (_) {}
+    barWin = null
+    barDispose = null
+    spawnedFor = null
+  }
+  if (!target) {
+    printerr(`ags: no bar monitor yet (${reason}); no monitors`)
     return
   }
-  printerr(
-    `ags: no bar monitor yet (${reason}); want model=${BAR_MODEL}; monitors=` +
-      app.get_monitors().map((m) => `${connectorOf(m) || "?"}:${modelOf(m) || "?"}`).join(","),
-  )
+  onFallback = !isBarMonitor(target)
+  setBarMode(onFallback && !monOverride ? "hidden" : "always")
+  barWin = createRoot((dispose) => {
+    barDispose = dispose
+    return Bar(target)
+  })
+  spawnedFor = conn
+  printerr(`ags: bar on ${spawnedFor} model=${modelOf(target)} fallback=${!isBarMonitor(target)} (${reason})`)
 }
 
 function sanitizeCss(input: unknown): string {
@@ -95,7 +117,26 @@ app.start({
   },
   requestHandler(argv, res) {
     const cmd = argv[0]
+    if (cmd === "bar-toggle") {
+      setBarMode(getBarMode() === "hidden" ? "always" : "hidden")
+      res(getBarMode())
+      return
+    }
+    if (cmd === "bar-move") {
+      const conns = app.get_monitors().map(connectorOf).filter((c) => !!c)
+      if (conns.length < 2) { res(`single monitor ${spawnedFor}`); return }
+      const i = conns.indexOf(spawnedFor ?? "")
+      monOverride = conns[(i + 1) % conns.length]
+      trySpawnBar("bar-move")
+      res(`bar on ${spawnedFor}`)
+      return
+    }
     if (cmd === "bar-cycle" || cmd === "bar") {
+      if (onFallback) {
+        setBarMode(getBarMode() === "hidden" ? "always" : "hidden")
+        res(getBarMode())
+        return
+      }
       res(cycleBarMode())
       return
     }
@@ -173,6 +214,26 @@ app.start({
     if (cmd === "cursor-refresh") {
       refreshCursorUsage()
       res("refreshing cursor usage...")
+      return
+    }
+    if (cmd === "claude" || cmd === "claude-usage" || cmd === "claude-status") {
+      const s = claudeUsageSnap()
+      res(JSON.stringify(s))
+      return
+    }
+    if (cmd === "claude-refresh") {
+      refreshClaudeUsage()
+      res("refreshing claude usage...")
+      return
+    }
+    if (cmd === "claude-alvs" || cmd === "claude-alvs-usage" || cmd === "claude-alvs-status") {
+      const s = claudeAlvsUsageSnap()
+      res(JSON.stringify(s))
+      return
+    }
+    if (cmd === "claude-alvs-refresh") {
+      refreshClaudeAlvsUsage()
+      res("refreshing claude alvs usage...")
       return
     }
     if (cmd === "money" || cmd === "money-toggle" || cmd === "credits-toggle") {

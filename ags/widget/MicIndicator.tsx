@@ -25,13 +25,68 @@ import {
   type MicSource,
   type EasyEffectsInfo,
 } from "./mic"
-import {
-  micMenuOpen,
-  openMicMenu,
-  closeAllClusterMenus,
-  readLastLogLine,
-  FSM1_LOG,
-} from "./cluster-menu"
+import { micMenuOpen, openMicMenu, closeAllClusterMenus } from "./cluster-menu"
+import { voz, vozUp, vozSend, vozToast, type VozMode } from "./voz"
+
+// Modos del daemon de voz (hyprland-whisper). El micrófono es su interfaz.
+const VOZ_MODE_LABEL: Record<VozMode, string> = {
+  comando: "ÓRDENES",
+  dictado: "DICTADO",
+  off: "APAGADO",
+}
+
+/** Aviso breve bajo la barra con lo último que hizo la voz (reemplaza a notify-send). */
+function VozToast(gdkmonitor: Gdk.Monitor) {
+  const { TOP, RIGHT } = Astal.WindowAnchor
+  const visible = createComputed(() => vozToast() !== "" && !micMenuOpen())
+
+  return (
+    <window
+      visible={visible}
+      name="voz-toast"
+      namespace="ags-voz-toast"
+      class="MicPanel VozToast"
+      gdkmonitor={gdkmonitor}
+      exclusivity={Astal.Exclusivity.NORMAL}
+      anchor={TOP | RIGHT}
+      layer={Astal.Layer.OVERLAY}
+      marginTop={4}
+      marginRight={8}
+      keymode={Astal.Keymode.NONE}
+      application={app}
+    >
+      <box class="LocalLlm-menu VozToast-box">
+        <label
+          class="LocalLlm-label"
+          label={vozToast}
+          xalign={0}
+          wrap
+          wrapMode={Pango.WrapMode.WORD_CHAR}
+          maxWidthChars={48}
+        />
+      </box>
+    </window>
+  )
+}
+
+function VozModeRow({ id, label, hint }: { id: VozMode; label: string; hint: string }) {
+  const on = createComputed(() => vozUp() && voz().mode === id)
+  return (
+    <button
+      class={createComputed(() => (on() ? "LocalLlm-model on" : "LocalLlm-model"))}
+      tooltipText={hint}
+      onClicked={() => vozSend(`mode ${id}`)}
+    >
+      <box spacing={8} valign={Gtk.Align.CENTER} hexpand>
+        <label class="LocalLlm-mark" label={createComputed(() => (on() ? "●" : "○"))} xalign={0.5} />
+        <box orientation={Gtk.Orientation.VERTICAL} hexpand spacing={0}>
+          <label class="LocalLlm-label" label={label} xalign={0} hexpand />
+          <label class="Mic-source-detail" label={hint} xalign={0} hexpand />
+        </box>
+      </box>
+    </button>
+  )
+}
 
 const ICON_DIR = `${GLib.get_user_config_dir()}/ags/icons`
 const PANEL_GAP = 4
@@ -99,14 +154,32 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
     }
   })
 
-  const lastFsm1Log = createPoll(readLastLogLine(FSM1_LOG), 1000, () =>
-    readLastLogLine(FSM1_LOG),
-  )
+  const vozBadge = createComputed(() => {
+    if (!vozUp()) return "[SIN DAEMON]"
+    const v = voz()
+    if (v.phase === "loading") return "[CARGANDO MODELO]"
+    if (v.phase === "error") return "[ERROR]"
+    if (v.armed) return "[TE ESCUCHO]"
+    if (v.phase === "stt") return "[TRANSCRIBIENDO]"
+    if (v.phase === "llm") return "[PENSANDO]"
+    return `[${VOZ_MODE_LABEL[v.mode] ?? v.mode}]`
+  })
 
-  const fsm1Badge = createComputed(() => {
-    if (micMuted()) return "[MIC_OFF]"
-    if (micHearing()) return "[VOZ VIVA]"
-    return "[MIC_ON]"
+  const vozLast = createComputed(() => {
+    if (!vozUp()) return "El daemon no responde · systemctl --user start voz"
+    const v = voz()
+    if (!v.text) return `Decí «${v.wake}» y la orden.`
+    if (v.kind === "oido") return `«${v.text}» (sin orden)`
+    if (v.kind === "dictado") return `«${v.text}»`
+    return `«${v.text}» → ${v.did}`
+  })
+
+  const vozFoot = createComputed(() => {
+    if (!vozUp()) return ""
+    const v = voz()
+    const laya = v.laya ? "laya ✓" : "laya —"
+    const llm = v.llm ? `LLM ✓ US$ ${v.spent.toFixed(3)}` : "LLM —"
+    return `${v.model} · ${v.ms} ms · ${laya} · ${llm}`
   })
 
   const statusLine = createComputed(() => {
@@ -190,17 +263,37 @@ function MicPanel(gdkmonitor: Gdk.Monitor) {
 
         <box class="LocalLlm-log-box" orientation={Gtk.Orientation.VERTICAL}>
           <box spacing={6} valign={Gtk.Align.CENTER}>
-            <label class="LocalLlm-log-title" label="📋 ÚLTIMO ESTADO FSM1" hexpand xalign={0} />
-            <label class="LocalLlm-log-title" label={fsm1Badge} xalign={1} />
+            <label class="LocalLlm-log-title" label="🗣 VOZ" hexpand xalign={0} />
+            <label class="LocalLlm-log-title" label={vozBadge} xalign={1} />
           </box>
           <label
             class="LocalLlm-log-content"
-            label={lastFsm1Log}
+            label={vozLast}
             xalign={0}
             wrap
             wrapMode={Pango.WrapMode.WORD_CHAR}
+            maxWidthChars={100}
           />
+          <label class="Mic-source-detail" label={vozFoot} xalign={0} />
         </box>
+
+        <VozModeRow
+          id="comando"
+          label="Órdenes"
+          hint="Escucha siempre; actúa cuando decís la palabra de activación"
+        />
+        <VozModeRow
+          id="dictado"
+          label="Dictado"
+          hint="Escribe lo que decís en la ventana activa"
+        />
+        <VozModeRow
+          id="off"
+          label="Apagado"
+          hint="No transcribe y libera la VRAM del modelo"
+        />
+
+        <box class="LocalLlm-sep" heightRequest={1} hexpand />
 
         <box
           class="Mic-ee-box"
@@ -325,13 +418,25 @@ export default function MicIndicator({
   startMicWatch()
   if (gdkmonitor) {
     MicPanel(gdkmonitor)
+    VozToast(gdkmonitor)
   }
 
+  // gris: escucha · verde: voz · naranja: procesando o armado · rojo: dictado
   const tone = createComputed((): MicTone => {
     if (micMuted()) return "muted"
+    if (vozUp()) {
+      const v = voz()
+      if (v.phase === "error") return "error"
+      if (v.mode !== "off") {
+        if (v.phase === "loading" || v.phase === "stt" || v.phase === "llm" || v.armed) return "busy"
+        if (v.mode === "dictado") return "recording"
+      }
+    }
     if (micHearing()) return "voice"
     return "unmuted"
   })
+
+  const vozClass = createComputed(() => (vozUp() ? `voz-${voz().mode}` : "voz-down"))
 
   const iconFile = createComputed(() => {
     const t = tone()
@@ -353,15 +458,33 @@ export default function MicIndicator({
       badgeText = "VOZ VIVA"
       badgeColor = "#7bc96f"
       action = "Silenciar micrófono"
+    } else if (t === "busy") {
+      badgeText = voz().armed ? "TE ESCUCHO" : "PROCESANDO"
+      badgeColor = "#ff8c42"
+    } else if (t === "recording") {
+      badgeText = "DICTANDO"
+      badgeColor = "#c45c4a"
+    } else if (t === "error") {
+      badgeText = "ERROR"
+      badgeColor = "#c45c4a"
     }
 
     const stateLine = t === "voice"
       ? `Entrada: <b>${name}</b>  ·  <span foreground="#7bc96f">● detectando audio</span>`
       : `Entrada: <b>${name}</b>`
 
+    const v = voz()
+    const wake = GLib.markup_escape_text(v.wake, -1)
+    const vozLine = !vozUp()
+      ? `Voz: <span alpha="60%">daemon apagado</span>`
+      : v.mode === "off"
+        ? `Voz: <span alpha="60%">apagada</span>`
+        : `Voz: <b>${VOZ_MODE_LABEL[v.mode]}</b>  ·  decí «${wake}» y la orden`
+
     return [
       `<b><span size="small" letter_spacing="1500" foreground="#ff8c42">🎙️ MICRÓFONO</span></b>   <span size="small" weight="bold" foreground="${badgeColor}">[${badgeText}]</span>`,
       stateLine,
+      vozLine,
       `<span size="smaller" alpha="75%">Clic: ${action}  ·  Clic secundario: Selector de entrada  ·  Clic central: Easy Effects ${eeEnabled() ? "ON→OFF" : "OFF→ON"}</span>`,
     ].join("\n")
   })
@@ -369,7 +492,8 @@ export default function MicIndicator({
   const cls = createComputed(() => {
     const t = tone()
     const open = micMenuOpen() ? "open" : ""
-    return `MicIndicator ${t} ${t === "voice" ? "hearing live" : t === "unmuted" ? "idle" : "muted"} ${open}`.trim()
+    const sub = t === "voice" ? "hearing live" : t === "unmuted" ? "idle" : t === "muted" ? "muted" : ""
+    return `MicIndicator ${t} ${sub} ${vozClass()} ${open}`.replace(/\s+/g, " ").trim()
   })
 
   return (

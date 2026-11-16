@@ -67,6 +67,7 @@ local grokCli     = "kitty --class grok-cli --title Grok -c /home/kodex/.config/
 local agyCli      = "kitty --class agy-cli --title AGY -c /home/kodex/.config/kitty/agy.conf /home/kodex/.local/bin/agy-launch"
 local warpToggle  = "/home/kodex/.local/bin/hypr-warp-toggle"
 local bluetoothToggle = "/home/kodex/.local/bin/hypr-bluetooth-toggle"
+local kdxKill     = "kitty --class=kdx-kill -T Kill /home/kodex/.local/bin/kdx-kill"
 local mainMod     = "SUPER"
 local resizeStep  = 40
 
@@ -393,6 +394,13 @@ hl.window_rule({
     center = true,
     size   = { "1300", "800" },
 })
+hl.window_rule({
+    name   = "kdx-kill-float",
+    match  = { class = "kdx-kill" },
+    float  = true,
+    center = true,
+    size   = { "1300", "800" },
+})
 
 local function revealAllWindows()
     local targetWs = hl.get_active_workspace()
@@ -530,6 +538,7 @@ hl.bind(mainMod .. " + CTRL + ALT + D", hl.dsp.exec_cmd(dictator .. " brain togg
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + CTRL + C", hl.dsp.window.kill())
 hl.bind(mainMod .. " + CTRL + X", hl.dsp.window.kill())
+hl.bind(mainMod .. " + CTRL + K", hl.dsp.exec_cmd(kdxKill))  -- kdx-kill picker (svc / port / proc)
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + Q", hl.dsp.layout("togglesplit"))

@@ -21,7 +21,7 @@ export default function ClaudeMeter() {
       onRefresh={refreshClaudeUsage}
       onOpen="https://claude.ai/settings/usage"
       tip={{
-        title: "Claude Code",
+        title: "Claude Max",
         subtitle: createComputed(() => {
           const s = snap()
           const src = s.source === "desktop" ? ` · dato Claude Desktop ${s.updated_at}` : s.stale ? ` · dato ${s.updated_at}` : ""
@@ -59,6 +59,7 @@ export default function ClaudeMeter() {
             }),
             fraction: createComputed(() => cycleElapsed(snap().week_reset_iso, WEEK_MS)),
             kind: "time",
+            days: 7,
           },
         ],
         error: createComputed(() => snap().error),

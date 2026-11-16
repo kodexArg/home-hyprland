@@ -12,9 +12,11 @@ Prefer hyprmcp (`list_monitors`, `list_workspaces`, `list_clients`, `list_layers
 
 If `scripts/check_version.sh` mismatches or `hyprctl version` ≠ stamp:
 
-1. https://wiki.hypr.land/Configuring/ (Lua / monitors / binds)
+1. https://wiki.hypr.land/Configuring/ (Lua / monitors / binds). Index 200 on 2026-10-19. `/Configuring/Dispatchers/` 404 on both wiki.hypr.land and wiki.hyprland.org.
 2. https://wiki.hyprland.org/ (legacy host; follow redirects)
 3. `man hyprland` / `hyprctl version`
+
+Window move on this host: `hyprctl dispatch workspace <id>` focuses that panel. `hyprctl dispatch movetoworkspacesilent <id>,address:0x…` moves a window without a config edit. ASUS (`HDMI-A-2`) owns workspaces 1–3; workspace 2 is the left panel.
 
 Cache notes into this file only if they apply **here** (NVIDIA+AMD, two HDMI, Lua 0.55+). Drop generic ricing.
 

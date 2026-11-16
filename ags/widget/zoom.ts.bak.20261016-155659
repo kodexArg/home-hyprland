@@ -1,0 +1,6 @@
+/** Scale-change (zoom dense/roomy) removed: bar always renders at normal size. */
+export const isZoomDense = () => false
+
+/** Usage-meter chips (Grok, Cursor, Claude, OpenRouter, LanMouse): icon a hair under the DSEG7 digits. */
+export const meterIconPx = 11
+export const meterSpacing = 3

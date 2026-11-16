@@ -26,7 +26,7 @@ const DEFAULT_SNAP: GrokBotUsageSnap = {
 }
 
 const CACHE_FILE = "/tmp/kdx_grokbot_usage.json"
-const POLL_INTERVAL_MS = 60_000 // Poll Grok Bot usage every 60s
+const POLL_INTERVAL_MS = 30_000 // pace2: faster "in use" detection
 const SCRIPT = `${GLib.get_home_dir()}/.local/bin/kdx-grokbot-usage`
 
 const [grokSnap, setGrokSnap] = createState<GrokBotUsageSnap>(readCachedSnap())

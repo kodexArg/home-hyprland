@@ -1,7 +1,6 @@
 import GLib from "gi://GLib"
 import { createState, createComputed } from "ags"
 import { exec } from "ags/process"
-import { isZoomDense } from "./zoom"
 
 export type BarMode = "always" | "temp" | "hidden"
 
@@ -86,7 +85,7 @@ function readMonitorGeometry(): MonitorGeometry | null {
       const model = (m.model || "").toUpperCase()
       const desc = (m.description || "").toUpperCase()
       return model.includes(BAR_MODEL) || desc.includes(BAR_MODEL)
-    })
+    }) ?? monitors[0]
     if (!monitor) return null
 
     const scale = monitor.scale > 0 ? monitor.scale : 1
@@ -226,7 +225,7 @@ export function getBarMode(): BarMode {
 }
 
 export const barModeClass = createComputed(
-  () => `Bar mode-${mode()}${isZoomDense() ? " zoom-dense" : ""}`,
+  () => `Bar mode-${mode()}`,
 )
 
 export const barVisible = createComputed(() => {

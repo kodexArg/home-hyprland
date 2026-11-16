@@ -86,7 +86,7 @@ export function syncSpotifyStreams() {
     for (const s of trackedStreams) {
       const ids: number[] = []
       const volId = s.connect("notify::volume", () => {
-        setSpotifyVolumeState(s.volume)
+        acceptStreamVolume(s)
       })
       const muteId = s.connect("notify::mute", () => {
         setSpotifyMuted(s.mute)
@@ -99,8 +99,24 @@ export function syncSpotifyStreams() {
   if (matches.length > 0) {
     const primary = matches[0]
     setHasSpotifyStream(true)
-    setSpotifyVolumeState(primary.volume)
     setSpotifyMuted(primary.mute)
+    if (heldVolume === null) {
+      const saved = readHeldFile()
+      const live = primary.volume
+      if (saved !== null && live >= 0.97 && live - saved >= 0.08) {
+        heldVolume = saved
+        applyingHold = true
+        try {
+          primary.set_volume(saved)
+        } catch (_) {}
+        applyingHold = false
+        publishMprisVolume(saved)
+      } else {
+        heldVolume = live
+      }
+    }
+    acceptStreamVolume(primary)
+    if (!mprisOk && heldVolume !== null) publishMprisVolume(heldVolume)
   } else {
     setHasSpotifyStream(false)
   }
@@ -122,14 +138,93 @@ export function syncSpotifyStreams() {
 
 export const MAX_SPOTIFY_VOLUME = 1.0
 
+// Spotify reapplies MPRIS Volume onto the PipeWire stream at each track change.
+// The slider used to move only the stream, so the client restored 100%.
+const HELD_PATH = `${GLib.get_user_state_dir()}/ags-spotify-volume`
+let heldVolume: number | null = null
+let applyingHold = false
+let mprisWanted: number | null = null
+let mprisTimer = 0
+let mprisOk = false
+
+function readHeldFile(): number | null {
+  try {
+    const [ok, bytes] = GLib.file_get_contents(HELD_PATH)
+    if (!ok || !bytes) return null
+    const n = parseFloat(new TextDecoder().decode(bytes).trim())
+    if (Number.isNaN(n)) return null
+    return Math.max(0, Math.min(1, n))
+  } catch (_) {
+    return null
+  }
+}
+
+function writeHeldFile(val: number) {
+  try {
+    GLib.file_set_contents(HELD_PATH, `${val.toFixed(4)}\n`)
+  } catch (_) {}
+}
+
+function rememberVolume(val: number) {
+  if (heldVolume !== null && Math.abs(heldVolume - val) < 0.005) {
+    heldVolume = val
+    return
+  }
+  heldVolume = val
+  writeHeldFile(val)
+  publishMprisVolume(val)
+}
+
+function publishMprisVolume(val: number) {
+  mprisWanted = Math.max(0, Math.min(1, val))
+  if (mprisTimer) return
+  mprisTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+    mprisTimer = 0
+    const v = mprisWanted
+    mprisWanted = null
+    if (v === null) return GLib.SOURCE_REMOVE
+    execAsync(["spotify-ctl", "volume", v.toFixed(4)])
+      .then(() => {
+        mprisOk = true
+      })
+      .catch(() => undefined)
+    return GLib.SOURCE_REMOVE
+  })
+}
+
+function acceptStreamVolume(s: AstalWp.Stream) {
+  if (applyingHold) {
+    setSpotifyVolumeState(s.volume)
+    return
+  }
+  const v = s.volume
+  if (heldVolume !== null && v >= 0.97 && v - heldVolume >= 0.08) {
+    applyingHold = true
+    try {
+      s.set_volume(heldVolume)
+    } catch (_) {}
+    applyingHold = false
+    publishMprisVolume(heldVolume)
+    setSpotifyVolumeState(heldVolume)
+    return
+  }
+  rememberVolume(v)
+  setSpotifyVolumeState(v)
+}
+
 export function setSpotifyVolume(val: number) {
   const clamped = Math.max(0, Math.min(MAX_SPOTIFY_VOLUME, val))
+  heldVolume = clamped
+  writeHeldFile(clamped)
   setSpotifyVolumeState(clamped)
+  publishMprisVolume(clamped)
+  applyingHold = true
   for (const s of trackedStreams) {
     try {
       s.set_volume(clamped)
     } catch (_) {}
   }
+  applyingHold = false
 }
 
 export function bumpSpotifyVolume(delta: number) {
