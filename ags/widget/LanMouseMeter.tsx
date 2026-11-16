@@ -44,7 +44,10 @@ function toggle() {
 
 export default function LanMouseMeter() {
   if (pollSource === null) {
-    refresh()
+    // Lan Mouse inicia apagado (a demanda)
+    execAsync(["systemctl", "--user", "stop", "lan-mouse"])
+      .catch(() => {})
+      .finally(() => refresh())
     pollSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_MS, () => {
       refresh()
       return GLib.SOURCE_CONTINUE

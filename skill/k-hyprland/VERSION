@@ -1,6 +1,6 @@
 # Catalog stamp for /k-hyprland. Bump when you refresh references from repo or wiki.
-catalog_date=2026-10-09
-repo_head=5a21703
+catalog_date=2026-10-19
+repo_head=978fdf1
 hyprland_tag=v0.56.2
 ags_tag=3.1.0
 os=debian-sid-forky

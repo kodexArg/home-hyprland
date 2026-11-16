@@ -12,14 +12,16 @@
 #
 # Options (anywhere before mode):
 #   --no-audio          no sound
-#   --mic               default Pulse/PipeWire source (mic)
-#   --system-audio      default sink.monitor (desktop audio)  [default]
-#   --both              mix mic + desktop (null-sink + 2 loopbacks)
+#   --mic               default Pulse/PipeWire source (mic) only
+#   --system-audio      default sink.monitor (desktop audio) only
+#   --both              mix desktop + mic (null-sink + 2 loopbacks)  [default]
+#                       The mic mute state is never touched: a muted mic records
+#                       silence, and opening it mid-recording is picked up live.
 #   --framerate N       hard CFR (wf-recorder -r)
 #   --agent             no setsid; useful for CLI/scripts
 #
 # Env:
-#   HYPR_REC_AUDIO=0|mic|system|both   (default system)
+#   HYPR_REC_AUDIO=0|mic|system|both   (default both)
 #   HYPR_REC_FPS=N
 #   HYPR_REC_CODEC=…              e.g. libx264 / h264_nvenc
 #   HYPR_REC_AGENT=1              same as --agent
@@ -33,7 +35,7 @@
 # Log:   $XDG_RUNTIME_DIR/hypr-record.log
 set -euo pipefail
 
-export PATH="/home/kodex/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
 LOG="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.log"
 PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-record.pid"
@@ -44,7 +46,7 @@ MIX_SINK="hypr-rec-mix"
 
 log() { printf '%s %s\n' "$(date -Iseconds)" "$*" >>"$LOG" 2>/dev/null || true; }
 
-AUDIO_MODE="${HYPR_REC_AUDIO:-system}"
+AUDIO_MODE="${HYPR_REC_AUDIO:-both}"
 # Cap FPS: unthrottled VFR reports insane MB rate and can brick finalize.
 FRAMERATE="${HYPR_REC_FPS:-30}"
 CODEC="${HYPR_REC_CODEC:-}"
@@ -80,6 +82,9 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
+# Video-only lock (2026-10-22) lifted 2026-11-13 at Gabriel's request:
+# default is desktop audio + mic (if open). Use --no-audio for silent video.
+
 if [[ "$AGENT" == "1" ]]; then
   export HYPR_REC_AGENT=1
   export HYPR_REC_DETACHED=1
@@ -91,19 +96,12 @@ arg2="${2:-}"
 # ── helpers ────────────────────────────────────────────────────────────────
 notify() {
   local msg="$1"
-  local icon="${2:-5}"  # 5=Ok 3=Error 0=Warning
-  if command -v notify-send >/dev/null 2>&1; then
-    notify-send -a hypr-record -i media-record "Screen record" "$msg" 2>/dev/null || true
-  else
-    hyprctl notify "$icon" 8750 "rgb(ff8c42)" "$msg" >/dev/null 2>&1 || true
-  fi
+  notify-send -a hypr-record -i media-record "Screen record" "$msg" 2>/dev/null || true
 }
 
 copy_to_clipboard() {
   local target="$1"
-  if command -v wl-copy >/dev/null 2>&1; then
-    printf '%s' "$target" | wl-copy >/dev/null 2>&1 || true
-  fi
+  printf '%s' "$target" | wl-copy >/dev/null 2>&1 || true
 }
 
 is_recording() {
@@ -121,8 +119,38 @@ read_state() {
 }
 
 write_state() {
-  # $1 mode $2 file
-  printf '%s|%s|%s\n' "$1" "$2" "$(date -Iseconds)" >"$STATEFILE"
+  # $1 mode $2 file → mode|file|started_iso|audio
+  printf '%s|%s|%s|%s\n' "$1" "$2" "$(date -Iseconds)" "$AUDIO_MODE" >"$STATEFILE"
+}
+
+# 138146552 → "132 MB"
+human_size() {
+  numfmt --to=iec --suffix=B "$1" 2>/dev/null || printf '%s B' "$1"
+}
+
+# "m:ss" from ffprobe, empty when unknown
+file_duration() {
+  local d
+  d="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null || true)"
+  [[ -n "$d" && "$d" != "N/A" ]] || return 0
+  python3 -c 'import sys; t=int(float(sys.argv[1])+0.5); print(f"{t//60}:{t%60:02d}")' "$d" 2>/dev/null || true
+}
+
+# "audio" | "sin audio" for the saved file
+file_audio_label() {
+  if ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$1" 2>/dev/null | grep -q .; then
+    echo "con audio"
+  else
+    echo "sin audio"
+  fi
+}
+
+saved_summary() {
+  # $1 file → "name.mp4 · 1:23 · 132 MB · con audio"
+  local f="$1" sz dur
+  sz="$(wc -c <"$f" | tr -d ' ')"
+  dur="$(file_duration "$f")"
+  printf '%s%s · %s · %s' "$(basename "$f")" "${dur:+ · $dur}" "$(human_size "$sz")" "$(file_audio_label "$f")"
 }
 
 clear_state() {
@@ -139,46 +167,59 @@ label_for_mode() {
   esac
 }
 
-# Physical layout on this host (SSOT):
-#   LEFT  = HDMI-A-2 ASUS portrait  @ x=-1080  (+ AGS bar)
-#   RIGHT = HDMI-A-1 AOC  landscape @ x=0
-# Prefer brand/connector names; left/right follow *physical* side.
 resolve_output() {
-  local key
-  key="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
-  case "$key" in
-    ""|active|focused)
-      hyprctl monitors -j 2>>"$LOG" | python3 -c '
-import json,sys
-ms=json.load(sys.stdin)
+  local want="${1:-active}"
+  hyprctl monitors -j 2>>"$LOG" | python3 -c '
+import json, sys
+want = (sys.argv[1] if len(sys.argv) > 1 else "active").strip()
+low = want.lower()
+ms = [m for m in json.load(sys.stdin) if not m.get("disabled")]
+if not ms:
+    sys.exit(1)
+ms.sort(key=lambda m: (int(m.get("x", 0)), int(m.get("y", 0))))
 for m in ms:
-    if m.get("focused"):
-        print(m["name"]); sys.exit(0)
-if ms: print(ms[0]["name"]); sys.exit(0)
+    if m.get("name", "").lower() == low:
+        print(m["name"])
+        sys.exit(0)
+if low in ("", "active", "focused"):
+    for m in ms:
+        if m.get("focused"):
+            print(m["name"])
+            sys.exit(0)
+    print(ms[0]["name"])
+    sys.exit(0)
+if low in ("left", "panel-left", "panel_left", "0"):
+    print(ms[0]["name"])
+    sys.exit(0)
+if low in ("right", "panel-right", "panel_right", "1"):
+    print(ms[-1]["name"])
+    sys.exit(0)
+for m in ms:
+    desc = " ".join([m.get("make", ""), m.get("model", ""), m.get("description", "")]).lower()
+    if low in desc:
+        print(m["name"])
+        sys.exit(0)
 sys.exit(1)
-' 2>>"$LOG"
-      ;;
-    left|asus|portrait|vertical|bar|ags|side|hdmi-a-2|hdmi_a_2|1|panel-left|panel_left)
-      /home/kodex/.local/bin/hypr-output portrait
-      ;;
-    right|aoc|landscape|main|primary|hdmi-a-1|hdmi_a_1|0|panel-right|panel_right)
-      /home/kodex/.local/bin/hypr-output landscape
-      ;;
-    hdmi-a-1|HDMI-A-1) echo "HDMI-A-1" ;;
-    hdmi-a-2|HDMI-A-2) echo "HDMI-A-2" ;;
-    *)
-      if hyprctl monitors -j 2>>"$LOG" | python3 -c '
-import json,sys
-want=sys.argv[1]
-ms=json.load(sys.stdin)
-sys.exit(0 if want in [m["name"] for m in ms] else 1)
-' "$1" 2>>"$LOG"; then
-        echo "$1"
-      else
-        return 1
-      fi
-      ;;
-  esac
+' "$want" 2>>"$LOG"
+}
+
+client_geom() {
+  local addr="${1:-}"
+  [[ -n "$addr" ]] || return 1
+  hyprctl clients -j 2>>"$LOG" | python3 -c '
+import json, sys
+want = sys.argv[1].strip().lower()
+for c in json.load(sys.stdin):
+    if (c.get("address") or "").strip().lower() == want:
+        at = c.get("at") or [0, 0]
+        size = c.get("size") or [0, 0]
+        ww, hh = int(size[0]), int(size[1])
+        if ww <= 0 or hh <= 0:
+            sys.exit(1)
+        print(f"{int(at[0])},{int(at[1])} {ww}x{hh}")
+        sys.exit(0)
+sys.exit(1)
+' "$addr" 2>>"$LOG"
 }
 
 active_window_geom() {
@@ -240,20 +281,14 @@ if rec:
     print(f"  ACTIVE pid={open(pidf).read().strip()} state={st}")
 else:
     print("  idle")
-print("\n=== panels (this host) ===")
+print("\n=== monitors ===")
+ms.sort(key=lambda m: (int(m.get("x", 0)), int(m.get("y", 0))))
 for m in ms:
     name = m["name"]
     mid = m.get("id")
-    # Physical: ASUS HDMI-A-2 LEFT (x negative), AOC HDMI-A-1 RIGHT
-    if name == "HDMI-A-2":
-        role = "LEFT / ASUS portrait + AGS bar"
-    elif name == "HDMI-A-1":
-        role = "RIGHT / AOC landscape"
-    else:
-        role = "other"
+    desc = m.get("description") or f"{m.get('make', '')} {m.get('model', '')}".strip() or name
     foc = " FOCUSED" if m.get("focused") else ""
-    print(f"\n[{name}] id={mid} {m['width']}x{m['height']} @ {m['x']},{m['y']} transform={m.get('transform')}{foc}")
-    print(f"  role: {role}")
+    print(f"\n[{name}] id={mid} {m['width']}x{m['height']} @ {m['x']},{m['y']} ({desc}){foc}")
     cl = [c for c in clients if c.get("monitor") == mid or str(c.get("monitor")) == str(mid)]
     if not cl:
         print("  clients: (none)")
@@ -262,9 +297,8 @@ for m in ms:
         for c in cl:
             cls = c.get("class") or "?"
             title = (c.get("title") or "")[:60]
-            print(f"    - class={cls!r} title={title!r}")
-print("\nAliases: left|asus|bar → HDMI-A-2 · right|aoc → HDMI-A-1")
-print("Record:  hypr-record region|window|panel left|panel aoc|toggle region|stop")
+            addr = c.get("address") or "?"
+            print(f"    - addr={addr} class={cls!r} title={title!r}")
 PY
 }
 
@@ -274,15 +308,14 @@ audio_kv() {
   awk -F= -v k="$key" '$1==k {print substr($0, index($0,"=")+1); exit}' "$AUDIOFILE"
 }
 
-# Prefer Brio (host habit, same as AGS mic.ts); else Pulse default source.
+# Mic = session default source (what the AGS mic menu / Easy Effects selects).
 resolve_mic_source() {
   local name
-  name="$(pactl list short sources 2>/dev/null | awk '{print $2}' | grep -v '\.monitor$' | grep -i brio | head -1 || true)"
-  if [[ -n "${name:-}" ]]; then
-    printf '%s\n' "$name"
-    return 0
-  fi
-  pactl get-default-source 2>/dev/null || true
+  name="$(pactl get-default-source 2>/dev/null || true)"
+  case "${name:-}" in
+    ""|*.monitor) return 0 ;;
+  esac
+  printf '%s\n' "$name"
 }
 
 wait_source() {
@@ -311,19 +344,14 @@ unload_mix_modules() {
 }
 
 cleanup_audio() {
-  local src mute sink
-  src="$(audio_kv src)"
-  mute="$(audio_kv mute)"
+  local sink
   sink="$(audio_kv sink)"
   unload_mix_modules
-  if [[ -n "${src:-}" && "${mute:-}" == "yes" ]]; then
-    pactl set-source-mute "$src" 1 >/dev/null 2>>"$LOG" || true
-    log "audio: restored mute on $src"
-  fi
   if [[ -n "${sink:-}" ]]; then
     local now
     now="$(pactl get-default-sink 2>/dev/null || true)"
-    if [[ -n "$now" && "$now" != "$sink" ]]; then
+    # Only undo a default-sink steal by our own null sink; respect user switches.
+    if [[ "$now" == "$MIX_SINK" ]]; then
       pactl set-default-sink "$sink" >/dev/null 2>>"$LOG" || true
       log "audio: restored default sink $sink"
     fi
@@ -331,71 +359,107 @@ cleanup_audio() {
   rm -f "$AUDIOFILE"
 }
 
-# Unmute mic for the session (restore on cleanup). Mix: mic + sink.monitor → hypr-rec-mix.
+# Mix: sink.monitor + mic → hypr-rec-mix. Mute state is the user's: never touched.
 prepare_audio() {
   cleanup_audio
   case "$AUDIO_MODE" in
     0|no|false|off|none) return 0 ;;
   esac
 
-  local src orig_mute orig_sink
+  local src orig_sink
   src="$(resolve_mic_source)"
   orig_sink="$(pactl get-default-sink 2>/dev/null || true)"
-  orig_mute="no"
-  if [[ -n "${src:-}" ]]; then
-    if pactl get-source-mute "$src" 2>/dev/null | grep -qi 'yes'; then
-      orig_mute="yes"
-    fi
-  fi
 
   {
     printf 'mode=%s\n' "$AUDIO_MODE"
     printf 'src=%s\n' "${src:-}"
-    printf 'mute=%s\n' "$orig_mute"
     printf 'sink=%s\n' "${orig_sink:-}"
   } >"$AUDIOFILE"
 
   case "$AUDIO_MODE" in
     both|mix|all)
-      unload_mix_modules
-      if [[ -z "${src:-}" || -z "${orig_sink:-}" ]]; then
-        log "audio: mix missing src/sink (src=${src:-?} sink=${orig_sink:-?}) → fallback mic"
+      if [[ -z "${orig_sink:-}" ]]; then
+        log "audio: no default sink → fallback mic"
         AUDIO_MODE=mic
+      elif [[ -z "${src:-}" ]]; then
+        log "audio: no mic source → fallback system"
+        AUDIO_MODE=system
       else
         local mid_null mid_mic mid_sys
         if ! mid_null="$(pactl load-module module-null-sink sink_name="$MIX_SINK" sink_properties=device.description=hypr-rec-mix 2>>"$LOG")"; then
-          log "audio: null-sink failed → fallback mic"
-          AUDIO_MODE=mic
+          log "audio: null-sink failed → fallback system"
+          AUDIO_MODE=system
         else
           # New sink must not steal the session default (speakers / HDMI).
           pactl set-default-sink "$orig_sink" >/dev/null 2>>"$LOG" || true
-          mid_mic="$(pactl load-module module-loopback source="$src" sink="$MIX_SINK" latency_msec=30 2>>"$LOG" || true)"
-          mid_sys="$(pactl load-module module-loopback source="${orig_sink}.monitor" sink="$MIX_SINK" latency_msec=30 2>>"$LOG" || true)"
+          mid_sys="$(pactl load-module module-loopback source="${orig_sink}.monitor" sink="$MIX_SINK" latency_msec=30 source_dont_move=true sink_dont_move=true 2>>"$LOG" || true)"
+          mid_mic="$(pactl load-module module-loopback source="$src" sink="$MIX_SINK" latency_msec=30 source_dont_move=true sink_dont_move=true 2>>"$LOG" || true)"
           printf 'modules=%s,%s,%s\n' "${mid_null:-}" "${mid_mic:-}" "${mid_sys:-}" >>"$AUDIOFILE"
-          if [[ -z "${mid_mic:-}" || -z "${mid_sys:-}" ]]; then
-            log "audio: loopback failed mic=${mid_mic:-?} sys=${mid_sys:-?} → fallback mic"
+          if [[ -z "${mid_sys:-}" ]]; then
+            log "audio: system loopback failed → fallback system (direct)"
             unload_mix_modules
-            AUDIO_MODE=mic
+            AUDIO_MODE=system
           elif ! wait_source "${MIX_SINK}.monitor"; then
-            log "audio: mix monitor never appeared → fallback mic"
+            log "audio: mix monitor never appeared → fallback system"
             unload_mix_modules
-            AUDIO_MODE=mic
+            AUDIO_MODE=system
           else
-            log "audio: mix ready src=$src sink=${orig_sink}.monitor → ${MIX_SINK}.monitor (mods ${mid_null:-?} ${mid_mic:-?} ${mid_sys:-?})"
+            [[ -n "${mid_mic:-}" ]] || log "audio: mic loopback failed — recording desktop audio only"
+            log "audio: mix ready sys=${orig_sink}.monitor mic=$src ($(pactl get-source-mute "$src" 2>/dev/null | tr 'A-Z' 'a-z')) → ${MIX_SINK}.monitor (mods ${mid_null:-?} ${mid_sys:-?} ${mid_mic:-?})"
           fi
         fi
       fi
       ;;
   esac
+  # Fallbacks above may have changed the mode: keep the state file honest.
+  sed -i "s/^mode=.*/mode=$AUDIO_MODE/" "$AUDIOFILE" 2>/dev/null || true
+}
 
-  case "$AUDIO_MODE" in
-    mic|source|default|both|mix|all)
-      if [[ -n "${src:-}" && "$orig_mute" == "yes" ]]; then
-        pactl set-source-mute "$src" 0 >/dev/null 2>>"$LOG" || true
-        log "audio: unmuted $src for recording"
-      fi
-      ;;
-  esac
+# PipeWire restores a remembered per-app mute on new capture streams, and a
+# global mic mute may have tagged ours. Clear it on the streams we own:
+# the recorder itself and the desktop loopback always; the mic loopback only
+# when the mic source is open (the source mute stays the user's gate).
+unmute_own_streams() {
+  local wpid="$1"
+  pactl -f json list source-outputs 2>/dev/null | python3 -c '
+import json, subprocess, sys
+wpid, mid_mic, mid_sys, mic_open = sys.argv[1:5]
+try:
+    outs = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for o in outs:
+    if not o.get("mute"):
+        continue
+    props = o.get("properties") or {}
+    owner = str(o.get("owner_module", ""))
+    mine = str(props.get("application.process.id", "")) == wpid
+    mine = mine or (mid_sys and owner == mid_sys)
+    mine = mine or (mid_mic and owner == mid_mic and mic_open == "1")
+    if mine:
+        subprocess.run(["pactl", "set-source-output-mute", str(o["index"]), "0"], check=False)
+        sys.stderr.write("audio: unmuted own stream #%s\n" % o["index"])
+' "$wpid" "${2:-}" "${3:-}" "${4:-0}" 2>>"$LOG" || true
+}
+
+# Streams appear a moment after wf-recorder starts: sweep for ~3s.
+unmute_own_streams_bg() {
+  local wpid="$1" mods mid_mic mid_sys src mic_open=0 i
+  case "$AUDIO_MODE" in 0|no|false|off|none) return 0 ;; esac
+  mods="$(audio_kv modules)"
+  mid_mic="$(cut -d, -f2 <<<"$mods")"
+  mid_sys="$(cut -d, -f3 <<<"$mods")"
+  src="$(audio_kv src)"
+  if [[ -n "${src:-}" ]] && pactl get-source-mute "$src" 2>/dev/null | grep -qi 'no'; then
+    mic_open=1
+  fi
+  (
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$wpid" 2>/dev/null || exit 0
+      unmute_own_streams "$wpid" "$mid_mic" "$mid_sys" "$mic_open"
+      sleep 0.3
+    done
+  ) &
 }
 
 audio_args() {
@@ -481,7 +545,6 @@ file_has_duration() {
 # Last-resort remux when SIGINT left a broken moov (rare with -D + CFR).
 try_repair_mp4() {
   local f="$1" tmp
-  command -v ffmpeg >/dev/null 2>&1 || return 1
   file_has_duration "$f" && return 0
   tmp="${f%.mp4}.repair-$$.mp4"
   log "repair: attempting remux $f"
@@ -502,9 +565,9 @@ stop_recording() {
     echo "not recording" >&2
     return 1
   fi
-  local pid file mode_s started
+  local pid file mode_s started audio_s
   pid="$(cat "$PIDFILE")"
-  IFS='|' read -r mode_s file started <<<"$(read_state)"
+  IFS='|' read -r mode_s file started audio_s <<<"$(read_state)"
   log "stop: INT pid=$pid file=${file:-?} mode=${mode_s:-?}"
   clear_state
   # SIGINT = clean finalize (same as Ctrl+C in wf-recorder)
@@ -530,7 +593,7 @@ stop_recording() {
     if file_has_duration "$file"; then
       log "stop: saved $file ($sz bytes)"
       copy_to_clipboard "$file"
-      notify "$(label_for_mode "${mode_s:-region}"): $(basename "$file") (${sz} B) — path copied"
+      notify "$(label_for_mode "${mode_s:-region}"): $(saved_summary "$file") — path copied"
       if [[ "$AGENT" == "1" ]]; then
         printf '%s\n' "$file"
       fi
@@ -565,23 +628,13 @@ maybe_detach_start() {
     export HYPR_REC_CODEC="${CODEC:-}"
     export HYPR_REC_AGENT="$AGENT"
     export HYPR_REC_DAMAGE="$DAMAGE_ONLY"
-    if command -v setsid >/dev/null 2>&1; then
-      setsid -f env HYPR_REC_DETACHED=1 \
-        HYPR_REC_AUDIO="$AUDIO_MODE" \
-        HYPR_REC_FPS="${FRAMERATE:-}" \
-        HYPR_REC_CODEC="${CODEC:-}" \
-        HYPR_REC_AGENT="$AGENT" \
-        HYPR_REC_DAMAGE="$DAMAGE_ONLY" \
-        "$0" "$@" </dev/null >>"$LOG" 2>&1
-    else
-      nohup env HYPR_REC_DETACHED=1 \
-        HYPR_REC_AUDIO="$AUDIO_MODE" \
-        HYPR_REC_FPS="${FRAMERATE:-}" \
-        HYPR_REC_CODEC="${CODEC:-}" \
-        HYPR_REC_AGENT="$AGENT" \
-        HYPR_REC_DAMAGE="$DAMAGE_ONLY" \
-        "$0" "$@" </dev/null >>"$LOG" 2>&1 &
-    fi
+    setsid -f env HYPR_REC_DETACHED=1 \
+      HYPR_REC_AUDIO="$AUDIO_MODE" \
+      HYPR_REC_FPS="${FRAMERATE:-}" \
+      HYPR_REC_CODEC="${CODEC:-}" \
+      HYPR_REC_AGENT="$AGENT" \
+      HYPR_REC_DAMAGE="$DAMAGE_ONLY" \
+      "$0" "$@" </dev/null >>"$LOG" 2>&1
     exit 0
   fi
 }
@@ -590,11 +643,6 @@ start_recording() {
   # $1 kind  remaining: either -g geom | -o output | (nothing for full geom)
   local kind="$1"
   shift
-
-  if ! command -v wf-recorder >/dev/null 2>&1; then
-    echo "wf-recorder missing (apt install wf-recorder)" >&2
-    exit 1
-  fi
 
   if is_recording; then
     log "start refused: already recording"
@@ -616,23 +664,15 @@ start_recording() {
   # Launch recorder in background inside this (possibly setsid) process
   "${WF_CMD[@]}" >>"$LOG" 2>&1 &
   local wpid=$!
-  # Brief settle — fail fast if encoder dies
-  sleep 0.35
-  if ! kill -0 "$wpid" 2>/dev/null; then
-    log "wf-recorder exited immediately"
-    wait "$wpid" 2>/dev/null || true
-    cleanup_audio
-    exit 1
-  fi
-
   echo "$wpid" >"$PIDFILE"
   write_state "$kind" "$file"
+  unmute_own_streams_bg "$wpid"
   notify "$(label_for_mode "$kind"): recording… (toggle/stop to end)"
   log "recording pid=$wpid file=$file"
 
   # Reap + notify on natural exit (rare: killed externally without our stop)
-  wait "$wpid" 2>/dev/null || true
-  local rc=$?
+  local rc=0
+  wait "$wpid" 2>/dev/null || rc=$?
   cleanup_audio
   # If stop_recording already cleared state, skip double notify
   if [[ -f "$PIDFILE" ]] && [[ "$(cat "$PIDFILE" 2>/dev/null)" == "$wpid" ]]; then
@@ -641,8 +681,9 @@ start_recording() {
       local sz
       sz="$(wc -c <"$file" | tr -d ' ')"
       log "recorder exit rc=$rc file=$file sz=$sz"
+      try_repair_mp4 "$file" || true
       copy_to_clipboard "$file"
-      notify "$(label_for_mode "$kind"): $(basename "$file") (${sz} B) — path copied"
+      notify "$(label_for_mode "$kind"): $(saved_summary "$file") — path copied"
     else
       log "recorder exit rc=$rc no file"
     fi
@@ -708,19 +749,34 @@ do_start_mode() {
       maybe_detach_start "$m"
       start_recording panel -o "$out"
       ;;
+    client|panel-addr)
+      local geom
+      if ! geom="$(client_geom "$a2")"; then
+        log "client $a2 no longer exists — clean exit"
+        exit 0
+      fi
+      maybe_detach_start geom "$geom"
+      log "client addr=$a2 geom=$geom"
+      start_recording window -g "$geom"
+      ;;
     geom|geometry)
       maybe_detach_start geom "$a2"
       local geom="$a2"
       if [[ -z "$geom" ]]; then
         log "no geometry specified"
-        exit 1
+        exit 0
       fi
       log "geom geom=$geom"
-      start_recording window -g "$geom"
+      start_recording region -g "$geom"
       ;;
     *)
-      echo "usage: hypr-record window|region|full|panel <alias>|toggle|stop|status" >&2
-      exit 2
+      if out="$(resolve_output "$m")"; then
+        maybe_detach_start monitor "$out"
+        start_recording panel -o "$out"
+      else
+        echo "usage: hypr-record window|region|full|monitor <name>|client <addr>|geom <geom>|toggle|stop|status" >&2
+        exit 2
+      fi
       ;;
   esac
 }
@@ -746,10 +802,10 @@ Modes:
   status              idle | recording pid=… state=…
   inventory           panels + clients + record state
 
-Audio (default: system / sink.monitor):
-  --system-audio      desktop audio
-  --mic               default capture source (Brio if present)
-  --both              mix mic + desktop (Cast default)
+Audio (default: both):
+  --both              desktop audio + mic mixed (mic only audible if unmuted)
+  --system-audio      desktop audio only
+  --mic               default capture source only
   --no-audio          silent
 
 Other:
@@ -787,12 +843,16 @@ EOF
       fi
     fi
     ;;
-  window|region|full|all|desktop|monitor|output|panel|left|right|aoc|asus|bar|landscape|portrait|main|HDMI-A-1|HDMI-A-2|hdmi-a-1|hdmi-a-2)
+  window|region|full|all|desktop|monitor|output|panel|client|panel-addr|geom|geometry|left|right|aoc|asus|bar|landscape|portrait|main|HDMI-*|DP-*|eDP-*)
     do_start_mode "$@"
     ;;
   *)
-    log "bad mode: $mode"
-    echo "usage: hypr-record window|region|full|panel <alias>|toggle|stop|status|inventory" >&2
-    exit 2
+    if resolve_output "$mode" >/dev/null 2>&1; then
+      do_start_mode monitor "$mode"
+    else
+      log "bad mode: $mode"
+      echo "usage: hypr-record window|region|full|monitor <name>|client <addr>|geom <geom>|toggle|stop|status|inventory" >&2
+      exit 2
+    fi
     ;;
 esac

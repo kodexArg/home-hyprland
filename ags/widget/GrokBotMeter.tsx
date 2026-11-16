@@ -34,6 +34,7 @@ export default function GrokBotMeter() {
             }),
             fraction: createComputed(() => cycleElapsed(snap().reset_iso, WEEK_MS)),
             kind: "time",
+            days: 7,
           },
         ],
         error: createComputed(() => snap().error),

@@ -41,12 +41,14 @@ hypr-record --agent status         # scripts/agents: no setsid
 | Output dir | `~/Videos/Screencasts/` |
 | State | `$XDG_RUNTIME_DIR/hypr-record.{pid,state,log}` |
 | Engine | `wf-recorder` (+ PipeWire/Pulse audio optional) |
-| Default audio | system (`sink.monitor`) |
-| Cast audio | **`--both`** (Brio + desktop mix) unless Mic toggle OFF |
+| Default audio | **both** — desktop (`sink.monitor`) + mic (default source), every caller (2026-11-13; video-only lock of 2026-10-22 lifted) |
+| Mic gate | the mic's own mute: muted → silence, opened mid-recording → recorded live. `hypr-record` never changes mute |
 
 Env: `HYPR_REC_AUDIO=0|mic|system|both` · `HYPR_REC_FPS` (default 30) · `HYPR_REC_CODEC` · `HYPR_REC_AGENT` · `HYPR_REC_DAMAGE=1` (opt-in; default continuous `-D`).
 
-**Voice mix (`--both`):** wf-recorder takes one `-a` device. Mix = PipeWire null sink `hypr-rec-mix` + loopback(mic) + loopback(sink.monitor). Unmutes Brio for the session, restores mute/default sink on stop. State: `$XDG_RUNTIME_DIR/hypr-record.audio`.
+**Voice mix (`--both`):** wf-recorder takes one `-a` device. Mix = PipeWire null sink `hypr-rec-mix` + loopback(default source, i.e. Easy Effects when ON) + loopback(sink.monitor). State: `$XDG_RUNTIME_DIR/hypr-record.audio`.
+
+**Silent-track pitfall (fixed 2026-11-13):** PipeWire restores a remembered per-app mute on `wf-recorder`'s capture stream, and the bar's global mic mute used to mute every source-output. Now `mic.ts` skips streams that capture a `.monitor`, and `hypr-record` unmutes its own streams at start (`unmute_own_streams`).
 
 **Idle AOC pitfall (fixed 2026-08-06):** damage-only capture on a quiet HDMI-A-1 often yields 1 frame + hang on stop → unplayable mp4. Default is now `-D` + CFR 30.
 
@@ -69,15 +71,15 @@ Left/right follow **physical** side (fixed 2026-08-06). Brand aliases still pref
 
 | UI | File | Live? |
 |---|---|---|
-| SystemMenu **Cast** row | `widget/SystemMenu.tsx` + `cast.ts` | ✅ drives `hypr-record` (Mic toggle → `--both`) |
-| `CastRecChip` | `CastRecChip.tsx` | ✅ stop while recording |
+| SystemMenu **Cast** row | `widget/SystemMenu.tsx` + `cast.ts` | ✅ drives `hypr-record` (script default audio = both) |
+| `CastRecChip` | `CastRecChip.tsx` | ✅ `[●REC m:ss]` timer · click start/stop · right-click disarms |
 | `RecModeIndicator` | Super+M chip | ✅ WIP mode only |
 | `RecMenu` | `RecMenu.tsx` | ❌ parked (not mounted in `Bar.tsx`) |
 | `ags request rec-menu` | `app.ts` | routes; avoid relying |
 | Capture panel | parked | ADR `20260726-ags-surfaces-inventory-capture-parked` |
 
 `cast.ts` phases: `idle` · `target_set` · `recording` · `stopping` · `failed`.  
-Reconcile: poll `hypr-record status` every 1.5s (external SSOT).
+Reconcile: reads `hypr-record.pid` + `/proc/<pid>` (no subprocess) every 1.5s, 250ms while active. Stop waits for `hypr-record stop` to exit before opening VLC.
 
 ---
 

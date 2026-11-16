@@ -4,40 +4,73 @@ import UsageBadge, { clampFraction } from "./UsageBadge"
 
 const CYCLE_DAYS = 30
 
+/**
+ * Chip: Auto pool % · API pool % (Cursor's own two quotas, GetCurrentPeriodUsage).
+ * Auto pool = autoBucketModels (default/Auto, composer-*, vega*, grok-4.x); API pool = the rest (Claude, GPT, Gemini...).
+ * Tooltip adds the real Grok / third-party / Auto spend split (GetAggregatedUsageEvents).
+ * Blocked (Cursor says "usage limit", on-demand off): the tooltip says so and the pool bars keep the real pool % (same grey palette).
+ */
 export default function CursorMeter() {
   startCursorWatch()
   const snap = cursorUsageSnap
-  const pctText = (v: number | null) => (v === null ? "--" : `${v}%`)
+  const blocked = createComputed(() => {
+    const s = snap()
+    return /usage limit/i.test(s.display_message ?? "") || (typeof s.remaining === "number" && s.remaining <= 0)
+  })
+  const pctText = (v: number | null | undefined) => (typeof v === "number" ? `${Math.round(v)}%` : "--")
   const dollars = (cents?: number | null) => (typeof cents === "number" ? `$${(cents / 100).toFixed(2)}` : "--")
+  const cap = () => (snap().limit ?? 0) + (snap().bonus_spend ?? 0)
+  const share = (key: "grok_cents" | "third_cents" | "auto_cents") => {
+    const s = snap().split
+    return s && s.total_cents > 0 ? s[key] / s.total_cents : null
+  }
+  const poolRow = (label: string, detail: string, key: "cursor_pct" | "other_pct") => ({
+    label,
+    value: createComputed(() => (blocked() ? `${pctText(snap()[key])} · bloqueado` : pctText(snap()[key]))),
+    fraction: createComputed(() => clampFraction((snap()[key] ?? 0) / 100)),
+    detail: createComputed(() => detail),
+  })
+  const shareRow = (label: string, key: "grok_cents" | "third_cents" | "auto_cents", detail?: () => string) => ({
+    label,
+    value: createComputed(() => {
+      const s = snap().split
+      const f = share(key)
+      return s && f !== null ? `${dollars(s[key])} · ${Math.round(f * 100)}%` : "--"
+    }),
+    fraction: createComputed(() => clampFraction(share(key))),
+    ...(detail ? { detail: createComputed(detail) } : {}),
+  })
 
   return (
     <UsageBadge
       icon="cursor"
       tone="blue"
-      primary={{ value: createComputed(() => snap().cursor_pct), format: "percent" }}
-      secondary={{ value: createComputed(() => snap().other_pct), format: "percent" }}
+      primary={{ value: createComputed(() => snap().cursor_pct), format: "percent", severity: () => "ok" }}
+      secondary={{ value: createComputed(() => snap().other_pct), format: "percent", severity: () => "ok" }}
       onRefresh={refreshCursorUsage}
       onOpen="https://www.cursor.com/settings"
       tip={{
-        title: "Cursor",
-        subtitle: createComputed(() => snap().display_message ?? ""),
+        title: "Cursor · pool Auto · pool API",
+        subtitle: createComputed(() =>
+          blocked() ? `Bloqueado hasta ${snap().reset_str || "el reset"}` : (snap().display_message ?? ""),
+        ),
+        blocked,
         rows: [
+          poolRow("Pool Auto", "Grok + Auto + Composer", "cursor_pct"),
+          poolRow("Pool API", "terceros: Claude, GPT, Gemini…", "other_pct"),
+          shareRow("Gasto Grok (ciclo)", "grok_cents"),
+          shareRow("Gasto terceros (ciclo)", "third_cents", () => (snap().split?.third_top ?? []).join(", ")),
+          shareRow("Gasto Auto/Composer sin Grok", "auto_cents"),
           {
-            label: "Modelos Cursor",
-            value: createComputed(() => pctText(snap().cursor_pct)),
-            fraction: createComputed(() => clampFraction((snap().cursor_pct ?? 0) / 100)),
-          },
-          {
-            label: "Otros modelos",
-            value: createComputed(() => pctText(snap().other_pct)),
-            fraction: createComputed(() => clampFraction((snap().other_pct ?? 0) / 100)),
-          },
-          {
-            label: "Gasto del ciclo",
-            value: createComputed(() => `${dollars(snap().total_spend)} / ${dollars(snap().limit)}`),
+            label: "Gasto total / tope",
+            value: createComputed(() => `${dollars(snap().total_spend)} / ${dollars(cap())}`),
             fraction: createComputed(() => {
-              const s = snap()
-              return s.total_spend && s.limit ? clampFraction(s.total_spend / s.limit) : null
+              const total = snap().total_spend
+              return total && cap() ? clampFraction(total / cap()) : null
+            }),
+            detail: createComputed(() => {
+              const b = snap().bonus_spend
+              return typeof b === "number" && b > 0 ? `incluido ${dollars(snap().limit)} + bonus ${dollars(b)}` : ""
             }),
           },
           {
@@ -48,6 +81,7 @@ export default function CursorMeter() {
               return typeof left === "number" ? clampFraction(1 - left / CYCLE_DAYS) : null
             }),
             kind: "time",
+            days: CYCLE_DAYS,
           },
         ],
         error: createComputed(() => snap().error),

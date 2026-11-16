@@ -4,7 +4,9 @@ import { createComputed } from "ags"
 import {
   castChipClass,
   castChipVisible,
+  castElapsed,
   castTip,
+  disarmCast,
   isRecording,
   toggleCastRecord,
 } from "./cast"
@@ -20,6 +22,10 @@ export default function CastRecChip() {
     isRecording() ? ICON_REC_ON : ICON_REC_IDLE,
   )
   const tip = createComputed(() => castTip())
+  const text = createComputed(() => {
+    const el = castElapsed()
+    return el ? `REC ${el}]` : "REC]"
+  })
 
   return (
     <button
@@ -28,11 +34,17 @@ export default function CastRecChip() {
       valign={Gtk.Align.CENTER}
       tooltipText={tip}
       onClicked={() => toggleCastRecord()}
+      $={(self: Gtk.Button) => {
+        const rightClick = new Gtk.GestureClick()
+        rightClick.set_button(3)
+        rightClick.connect("pressed", () => disarmCast())
+        self.add_controller(rightClick)
+      }}
     >
       <box spacing={0} valign={Gtk.Align.CENTER}>
         <label class="CastRecChip-bracket" label="[" />
         <image file={iconFile} pixelSize={isZoomDense() ? 6 : 9} class="CastRecChip-dot" />
-        <label class="CastRecChip-text" label="REC]" />
+        <label class="CastRecChip-text" label={text} />
       </box>
     </button>
   )

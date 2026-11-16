@@ -19,12 +19,13 @@ export type AppEntry = {
 }
 
 export const APP_INDEX: AppEntry[] = [
-  { id: "whatsapp", cls: /whatsapp|hnpfjngllnobngcgfapefoaidbinmjnm/, title: /whatsapp/i, bg: "#0b141a", brand: "#25d366", icon: "app-whatsapp.svg" },
+  { id: "whatsapp", cls: /whatsapp|hnpfjngllnobngcgfapefoaidbinmjnm/, title: /whatsapp/i, bg: "#15242c", brand: "#25d366", icon: "app-whatsapp.svg" },
   { id: "kick", cls: /^kick/, title: /\bkick\b/i, bg: "#0b0e0f", brand: "#53fc18", icon: "app-kick.svg" },
   { id: "youtube", cls: /youtube/, title: /youtube/i, bg: "#0f0f0f", brand: "#ff0000", icon: "app-youtube.svg" },
   { id: "meet", title: /google meet|meet\.google|^meet\b/i, bg: "#10241a", brand: "#00ac47", icon: "app-video.svg" },
-  { id: "grok-bot", cls: /^grok-bot$|^grok$/, title: /grok/i, bg: "#000000", brand: "#f2f2f2", icon: "app-grok-bot.png" },
-  { id: "claude", cls: /claude/, title: /\bclaude\b/i, bg: "#262624", brand: "#d97757", icon: "app-claude.svg" },
+  { id: "grok-bot", cls: /^grok-bot$/, title: /grok bot/i, bg: "#000000", brand: "#f2f2f2", icon: "app-grok-bot.png" },
+  { id: "grok", cls: /^grok$/, title: /\bgrok\b/i, bg: "#141414", brand: "#e8e8e8", icon: "app-grok.svg" },
+  { id: "claude", cls: /claude/, title: /\bclaude\b/i, bg: "#32302d", brand: "#d97757", icon: "app-claude.svg" },
   { id: "spotify", cls: /spotify/, title: /spotify/i, bg: "#121212", brand: "#1db954", icon: "app-spotify.svg" },
   { id: "discord", cls: /discord|vesktop/, title: /discord/i, bg: "#313338", brand: "#5865f2", icon: "app-discord.svg" },
 
@@ -57,7 +58,7 @@ export const APP_INDEX: AppEntry[] = [
 
   { id: "firefox", cls: /firefox/, bg: "#1c1b22", brand: "#ff7139", icon: "app-firefox.svg" },
   { id: "chromium", cls: /^chromium/, bg: "#202124", brand: "#4c8bf5", icon: "app-chromium.svg" },
-  { id: "brave", cls: /^brave-browser$/, bg: "#222326", brand: "#fb542b", icon: "app-brave.svg" },
+  { id: "brave", cls: /^brave-browser$/, bg: "#3a2219", brand: "#fb542b", icon: "app-brave.svg" },
 ]
 
 export const BROWSER_RE = /^(brave|chromium|firefox|google-chrome|org\.mozilla\.firefox|zen)/

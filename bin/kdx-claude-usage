@@ -3,16 +3,163 @@ import datetime
 import json
 import os
 import sys
+import time
+import urllib.request
 
-CACHE_FILE = "/tmp/kdx_claude_usage.json"
+# Persistent cache files (survive reboots) — AGS meters read these files.
+# Refreshed by kdx-claude-usage.timer (systemd --user, every 5 min).
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+LIVE_MIN_INTERVAL_S = 300
+LIVE_KEYS = (
+    "five_hour_pct",
+    "daily_pct",
+    "week_pct",
+    "claude_pct",
+    "claude_formatted",
+    "reset_str",
+    "reset_iso",
+    "week_reset_str",
+    "week_reset_iso",
+    "fetched_at",
+)
+FALLBACK_KEYS = ("sample_at", "source", "updated_at")
+
+PROFILES = {
+    "personal": {
+        "cache_file": os.path.expanduser("~/.cache/kdx/claude_usage.json"),
+        "legacy_cache_file": "/tmp/kdx_claude_usage.json",
+        "credentials_file": os.path.expanduser("~/.claude/.credentials.json"),
+        "claude_json_paths": [
+            os.path.expanduser("~/.claude.json"),
+        ],
+        "stats_cache_paths": [
+            os.path.expanduser("~/.claude/stats-cache.json"),
+        ],
+        "default_email": "gcavedal@gmail.com",
+        "default_org": "Gabriel Cavedal",
+        "default_tier": "Max",
+        "default_rate_limit_tier": "default_claude_max_5x",
+        "desktop_org": None,
+    },
+    "alvs": {
+        "cache_file": os.path.expanduser("~/.cache/kdx/claude_alvs_usage.json"),
+        "legacy_cache_file": "/tmp/kdx_claude_alvs_usage.json",
+        "credentials_file": os.path.expanduser("~/.claude-alvs/.credentials.json"),
+        "claude_json_paths": [
+            os.path.expanduser("~/.claude-alvs/.claude.json"),
+            os.path.expanduser("~/.claude.json.backup"),
+            os.path.expanduser("~/.config/claude-env-02/.claude.json"),
+        ],
+        "stats_cache_paths": [
+            os.path.expanduser("~/.claude-alvs/stats-cache.json"),
+            os.path.expanduser("~/.config/claude-pykodex/stats-cache.json"),
+        ],
+        "default_email": "gcavedal@alvsgroup.com",
+        "default_org": "Alvsgroup",
+        "default_tier": "Team Standard",
+        "default_rate_limit_tier": "default_raven",
+        "desktop_org": "33b31fb9-a1d4-48c0-8434-147436909e9e",
+    },
+}
 
 
-def main():
+def read_cache(cfg):
+    for path in (cfg["cache_file"], cfg.get("legacy_cache_file")):
+        if path and os.path.exists(path):
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception:
+                continue
+    return {}
+
+
+def write_cache(cfg, res):
+    cache_file = cfg["cache_file"]
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+    tmp = cache_file + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(res, f)
+    os.replace(tmp, cache_file)
+
+
+def fetch_live_usage(credentials_file):
+    if not os.path.exists(credentials_file):
+        raise RuntimeError("sin archivo de credenciales")
+    with open(credentials_file) as f:
+        oauth = json.load(f).get("claudeAiOauth", {})
+    token = oauth.get("accessToken")
+    if not token:
+        raise RuntimeError("sin token de acceso OAuth")
+    if oauth.get("expiresAt", 0) < time.time() * 1000:
+        raise RuntimeError("token OAuth vencido (iniciá Claude Code para renovarlo)")
+    request = urllib.request.Request(
+        USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "claude-code/2.1",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return json.load(response)
+
+
+def apply_live_usage(res, usage):
+    five_hour = usage.get("five_hour") or {}
+    seven_day = usage.get("seven_day") or {}
+    res["five_hour_pct"] = round(five_hour.get("utilization") or 0)
+    res["daily_pct"] = round(seven_day.get("utilization") or 0)
+    res["week_pct"] = res["daily_pct"]
+    res["claude_pct"] = max(res["five_hour_pct"], res["daily_pct"])
+    res["claude_formatted"] = f"{res['claude_pct']}%"
+    res["reset_iso"] = five_hour.get("resets_at")
+    res["week_reset_iso"] = seven_day.get("resets_at")
+    if res["reset_iso"]:
+        reset_local = datetime.datetime.fromisoformat(res["reset_iso"]).astimezone()
+        res["reset_str"] = reset_local.strftime("%H:%M")
+    if res["week_reset_iso"]:
+        week_local = datetime.datetime.fromisoformat(res["week_reset_iso"]).astimezone()
+        res["week_reset_str"] = week_local.strftime("%-d %b %H:%M")
+
+
+def apply_desktop_history(res, target_org=None):
+    plan_history = os.path.expanduser("~/.config/Claude/plan-usage-history.json")
+    if not os.path.exists(plan_history):
+        return
+    try:
+        with open(plan_history) as f:
+            samples = json.load(f).get("samples", [])
+        if target_org:
+            samples = [s for s in samples if s.get("org") == target_org]
+        if not samples:
+            return
+        latest = samples[-1]
+        u = latest.get("u", {})
+        res["five_hour_pct"] = round(u.get("fh", 0))
+        res["daily_pct"] = round(u.get("sd", 0))
+        res["week_pct"] = res["daily_pct"]
+        res["claude_pct"] = max(res["five_hour_pct"], res["daily_pct"])
+        res["claude_formatted"] = f"{res['claude_pct']}%"
+        res["stale"] = True
+        res["source"] = "desktop"
+        sample_t = latest.get("t")
+        if sample_t:
+            res["sample_at"] = sample_t / 1000
+            res["updated_at"] = datetime.datetime.fromtimestamp(sample_t / 1000).strftime("%H:%M")
+    except Exception as e:
+        res["error"] = (res.get("error") or "") + f" · desktop: {e}"
+
+
+def run_profile(profile_name, force=False):
+    cfg = PROFILES[profile_name]
+    min_gap = 10 if force else LIVE_MIN_INTERVAL_S
+
     res = {
-        "email": "gcavedal@alvsgroup.com",
-        "org": "Alvsgroup",
-        "tier": "Team",
-        "rate_limit_tier": "default_raven",
+        "email": cfg["default_email"],
+        "org": cfg["default_org"],
+        "tier": cfg["default_tier"],
+        "rate_limit_tier": cfg["default_rate_limit_tier"],
         "five_hour_pct": 0,
         "daily_pct": 0,
         "claude_pct": 0,
@@ -25,11 +172,21 @@ def main():
         "error": None,
     }
 
-    # 1. Read oauthAccount from ~/.claude.json or ~/.config/claude-env-02/.claude.json
-    for cjson_path in [
-        os.path.expanduser("~/.claude.json"),
-        os.path.expanduser("~/.config/claude-env-02/.claude.json"),
-    ]:
+    # 1. Credentials file for subscriptionType / rateLimitTier
+    creds_file = cfg["credentials_file"]
+    if os.path.exists(creds_file):
+        try:
+            with open(creds_file) as f:
+                creds = json.load(f).get("claudeAiOauth", {})
+                if creds.get("subscriptionType"):
+                    res["tier"] = creds["subscriptionType"].title()
+                if creds.get("rateLimitTier"):
+                    res["rate_limit_tier"] = creds["rateLimitTier"]
+        except Exception:
+            pass
+
+    # 2. claude.json metadata
+    for cjson_path in cfg["claude_json_paths"]:
         if os.path.exists(cjson_path):
             try:
                 with open(cjson_path) as f:
@@ -47,34 +204,41 @@ def main():
             except Exception:
                 pass
 
-    # 2. Read live plan usage from ~/.config/Claude/plan-usage-history.json
-    plan_history = os.path.expanduser("~/.config/Claude/plan-usage-history.json")
-    if os.path.exists(plan_history):
-        try:
-            with open(plan_history) as f:
-                data = json.load(f)
-                samples = data.get("samples", [])
-                if samples:
-                    latest = samples[-1]
-                    u = latest.get("u", {})
-                    res["five_hour_pct"] = round(u.get("fh", 0))
-                    res["daily_pct"] = round(u.get("sd", 0))
-                    max_pct = max(res["five_hour_pct"], res["daily_pct"])
-                    res["claude_pct"] = max_pct
-                    res["claude_formatted"] = f"{max_pct}%"
-                    sample_t = latest.get("t")
-                    if sample_t:
-                        sample_dt = datetime.datetime.fromtimestamp(sample_t / 1000)
-                        res["updated_at"] = sample_dt.strftime("%H:%M")
-        except Exception as e:
-            res["error"] = str(e)
+    # 3. Live plan usage vs Cache vs Desktop fallback
+    cache = read_cache(cfg)
+    last_live = cache if cache.get("fetched_at") else None
+    res["attempted_at"] = cache.get("attempted_at", 0)
 
-    # 3. Read today's activity from stats-cache.json
+    if not force and (time.time() - res["attempted_at"] < min_gap):
+        res.update({k: cache[k] for k in LIVE_KEYS + FALLBACK_KEYS + ("error", "stale") if k in cache})
+    else:
+        res["attempted_at"] = time.time()
+        try:
+            usage = fetch_live_usage(cfg["credentials_file"])
+            apply_live_usage(res, usage)
+            res["fetched_at"] = time.time()
+            res["source"] = "live"
+            res["updated_at"] = datetime.datetime.now().strftime("%H:%M")
+            res["error"] = None
+            res["stale"] = False
+        except Exception as live_error:
+            res["error"] = f"live: {live_error}"
+            if last_live:
+                res.update({k: last_live[k] for k in LIVE_KEYS if k in last_live})
+                res["stale"] = True
+                res["source"] = "cache"
+                res["updated_at"] = datetime.datetime.fromtimestamp(last_live["fetched_at"]).strftime("%H:%M")
+
+    # If no live sample (now or cached), fall back to Desktop history
+    if not res.get("fetched_at"):
+        apply_desktop_history(res, cfg.get("desktop_org"))
+        # Clear benign missing credentials error if we have desktop history
+        if res.get("source") == "desktop":
+            res["error"] = None
+
+    # 4. Activity stats
     today_str = datetime.date.today().isoformat()
-    for stats_path in [
-        os.path.expanduser("~/.claude/stats-cache.json"),
-        os.path.expanduser("~/.config/claude-pykodex/stats-cache.json"),
-    ]:
+    for stats_path in cfg["stats_cache_paths"]:
         if os.path.exists(stats_path):
             try:
                 with open(stats_path) as f:
@@ -91,12 +255,33 @@ def main():
                 pass
 
     try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(res, f)
+        write_cache(cfg, res)
     except Exception:
         pass
 
-    print(json.dumps(res))
+    return res
+
+
+def main():
+    force = "--force" in sys.argv
+    profile_arg = None
+    for i, arg in enumerate(sys.argv):
+        if arg in ("--profile", "-p") and i + 1 < len(sys.argv):
+            profile_arg = sys.argv[i + 1].lower()
+        elif arg.startswith("--profile="):
+            profile_arg = arg.split("=", 1)[1].lower()
+
+    if profile_arg and profile_arg in PROFILES:
+        res = run_profile(profile_arg, force=force)
+        print(json.dumps(res))
+    else:
+        # Default: run both profiles so both cache files are updated!
+        res_personal = run_profile("personal", force=force)
+        res_alvs = run_profile("alvs", force=force)
+        if profile_arg == "alvs":
+            print(json.dumps(res_alvs))
+        else:
+            print(json.dumps(res_personal))
 
 
 if __name__ == "__main__":

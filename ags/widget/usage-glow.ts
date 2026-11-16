@@ -1,0 +1,105 @@
+import GLib from "gi://GLib"
+import { Gtk } from "ags/gtk4"
+import { createState } from "ags"
+
+const STATE_FILE = `${GLib.get_user_config_dir()}/ags/.usage-glow.json`
+const FRAMES = 28
+const DURATION_MS = 1400
+const PEAK = 0.5
+const SIGMA = 0.15
+
+function loadEnabled(): boolean {
+  try {
+    const [ok, bytes] = GLib.file_get_contents(STATE_FILE)
+    if (!ok) return true
+    const parsed = JSON.parse(new TextDecoder().decode(bytes))
+    return typeof parsed.enabled === "boolean" ? parsed.enabled : true
+  } catch {
+    return true
+  }
+}
+
+export const [glowEnabled, setGlowEnabledState] = createState(loadEnabled())
+
+export function toggleGlowEnabled(): string {
+  const next = !glowEnabled.peek()
+  setGlowEnabledState(next)
+  try {
+    GLib.file_set_contents(STATE_FILE, JSON.stringify({ enabled: next }, null, 2))
+  } catch (e) {
+    printerr(`usage-glow: failed to save state: ${e}`)
+  }
+  return next ? "glow-on" : "glow-off"
+}
+
+function bell(t: number): number {
+  return PEAK * Math.exp(-((t - 0.5) ** 2) / (2 * SIGMA ** 2))
+}
+
+/** Gaussian glow beat inside a badge: inset box-shadow stepped frame by frame, so it never leaves the box. */
+export function createGlowBeat(widget: Gtk.Widget, rgb: string): () => void {
+  const provider = new Gtk.CssProvider()
+  // eslint-disable-next-line deprecation/deprecation
+  widget.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+  let timer: number | null = null
+  let frame = 0
+
+  const paint = (a: number) =>
+    provider.load_from_string(
+      a <= 0.001 ? "* {}" : `* { box-shadow: inset 0 0 7px 2px rgba(${rgb}, ${a.toFixed(3)}); }`,
+    )
+
+  const stop = () => {
+    if (timer !== null) GLib.source_remove(timer)
+    timer = null
+    paint(0)
+  }
+
+  widget.connect("destroy", stop)
+
+  return () => {
+    if (!glowEnabled.peek()) return
+    if (timer !== null) GLib.source_remove(timer)
+    frame = 0
+    timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.round(DURATION_MS / FRAMES), () => {
+      frame += 1
+      if (frame > FRAMES) {
+        timer = null
+        paint(0)
+        return GLib.SOURCE_REMOVE
+      }
+      paint(bell(frame / FRAMES))
+      return GLib.SOURCE_CONTINUE
+    })
+  }
+}
+
+/** Short "in use" flicker: 2 quick blinks (~250 ms), same tone, own provider so it never fights the glow. */
+export function createFlicker(widget: Gtk.Widget, rgb: string): () => void {
+  const provider = new Gtk.CssProvider()
+  // eslint-disable-next-line deprecation/deprecation
+  widget.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 2)
+  const steps = [0.7, 0, 0.7, 0]
+  let timer: number | null = null
+  const paint = (a: number) =>
+    provider.load_from_string(a <= 0 ? "* {}" : `* { box-shadow: inset 0 0 6px 2px rgba(${rgb}, ${a}); }`)
+  widget.connect("destroy", () => {
+    if (timer !== null) GLib.source_remove(timer)
+    timer = null
+  })
+  return () => {
+    if (!glowEnabled.peek()) return
+    if (timer !== null) GLib.source_remove(timer)
+    let i = 0
+    paint(steps[i])
+    timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 62, () => {
+      i += 1
+      paint(steps[i] ?? 0)
+      if (i >= steps.length - 1) {
+        timer = null
+        return GLib.SOURCE_REMOVE
+      }
+      return GLib.SOURCE_CONTINUE
+    })
+  }
+}
