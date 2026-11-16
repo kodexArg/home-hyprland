@@ -159,3 +159,12 @@ export function startClaudeAlvsWatch() {
 
 export const claudeUsageSnap = claudeSnap
 export const claudeAlvsUsageSnap = claudeAlvsSnap
+
+/** Tooltip open: re-read the cache files now (no exec, no network). */
+export function reloadClaudeUsage() {
+  setClaudeSnap(readSnapFile(CACHE_FILE_PERSONAL, DEFAULT_SNAP_PERSONAL))
+}
+
+export function reloadClaudeAlvsUsage() {
+  setClaudeAlvsSnap(readSnapFile(CACHE_FILE_ALVS, DEFAULT_SNAP_ALVS))
+}

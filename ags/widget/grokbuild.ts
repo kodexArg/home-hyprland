@@ -112,3 +112,8 @@ export function startGrokBuildWatch() {
 }
 
 export const grokBuildUsageSnap = grokSnap
+
+/** Tooltip open: re-read the cache file now (no exec, no network). */
+export function reloadGrokBuildUsage() {
+  setGrokSnap(readCachedSnap())
+}

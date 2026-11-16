@@ -1,10 +1,11 @@
 import { Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
-import { Accessor, createComputed, createEffect } from "ags"
+import { Accessor, createComputed, createEffect, createState } from "ags"
 import { execAsync } from "ags/process"
 import { meterIconPx, meterSpacing } from "./zoom"
 import { valueChanged } from "./value-changed"
 import { createGlowBeat, createFlicker } from "./usage-glow"
+import { setOverBar } from "./bar-mode"
 
 /**
  * UsageBadge — one bar chip for every quota/credit meter (Grok, Cursor, Claude, OpenRouter).
@@ -30,8 +31,9 @@ export type TipRow = {
   value: Accessor<string>
   /** 0…1 fills the flat bar; null = text-only row (no bar). */
   fraction: Accessor<number | null>
-  /** Reset instant (ISO) or an already-compact string; shown as "↻ 12:10" / "↻ 20/11". */
-  reset?: Accessor<string | null | undefined>
+  /** Reset instant (ISO) → "↻4d" / "↻1d5h" / "↻5h" / "↻35m" + small "20/11"/"12:14".
+   *  Meters without an ISO instant pass { left, date } already computed from their own fields. */
+  reset?: Accessor<string | { left: string; date: string } | null | undefined>
 }
 
 export type UsageTip = {
@@ -42,7 +44,8 @@ export type UsageTip = {
   stale?: Accessor<boolean>
   /** Hard cap reached: the tooltip switches to the neutral "blocked" look. */
   blocked?: Accessor<boolean>
-  hint: string
+  /** Hover text of the two popup buttons: ⟳ (props.onRefresh) and ↗ (props.onOpen). */
+  actions: { refresh: string; open: string }
 }
 
 export type UsageBadgeProps = {
@@ -56,6 +59,8 @@ export type UsageBadgeProps = {
   extra?: { prefix: string; primary: BadgeValue; secondary: BadgeValue }
   tip: UsageTip
   onRefresh: () => void
+  /** Tooltip opening: re-read the meter cache (cheap, no exec) before the tip is rebuilt. */
+  onTipOpen?: () => void
   /** Right click: URL opened on the stage Chromium, or a custom action. */
   onOpen: string | (() => void)
 }
@@ -96,6 +101,24 @@ export function compactDate(reset: string | null | undefined): string {
   const d = new Date(ms)
   return ms - Date.now() < 86_400_000 ? `${two(d.getHours())}:${two(d.getMinutes())}` : `${two(d.getDate())}/${two(d.getMonth() + 1)}`
 }
+
+/** Countdown to an ISO instant: ≥2d "4d", 1–2d "1d5h", <1d "5h", <1h "35m", past "0m". "" if not ISO. */
+export function countdown(reset: string | null | undefined, now = Date.now()): string {
+  if (!reset) return ""
+  const at = Date.parse(reset)
+  if (Number.isNaN(at)) return ""
+  const min = Math.max(0, Math.floor((at - now) / 60_000))
+  const h = Math.floor(min / 60)
+  const d = Math.floor(h / 24)
+  if (d >= 2) return `${d}d`
+  if (d >= 1) return h % 24 ? `${d}d${h % 24}h` : `${d}d`
+  if (h >= 1) return `${h}h`
+  return `${min}m`
+}
+
+/** "Now" for every tooltip, bumped each time any tooltip opens so countdowns never reuse an old render. */
+const [tipNowState, setTipNow] = createState(Date.now())
+export const tipNow = tipNowState
 
 /** "73%" or "" when the number does not exist. */
 export function pct(value: number | null | undefined): string {
@@ -176,20 +199,26 @@ function TipBar({ fraction }: { fraction: Accessor<number | null> }) {
 /** One line per window: tag · flat bar · value · ↻ reset. */
 function TipRowView({ row }: { row: TipRow }) {
   const reset = createComputed(() => {
-    const r = compactDate(row.reset?.())
-    return r ? `↻ ${r}` : ""
+    const now = tipNow()
+    const r = row.reset?.()
+    if (!r) return { left: "", date: "" }
+    if (typeof r === "object") return r
+    return { left: countdown(r, now), date: compactDate(r) }
   })
+  const left = createComputed(() => (reset().left ? `↻${reset().left}` : ""))
+  const date = createComputed(() => reset().date)
   return (
     <box spacing={6} class="UsageTip-row" visible={createComputed(() => row.value() !== "")}>
       <label class="UsageTip-label" label={row.label} xalign={0} widthChars={3} />
       <TipBar fraction={row.fraction} />
       <label class="UsageTip-value" label={row.value} xalign={1} hexpand />
-      <label class="UsageTip-reset" label={reset} xalign={1} visible={createComputed(() => reset() !== "")} />
+      <label class="UsageTip-reset" label={left} xalign={1} visible={createComputed(() => left() !== "")} />
+      <label class="UsageTip-resetdate" label={date} xalign={1} visible={createComputed(() => date() !== "")} />
     </box>
   )
 }
 
-function TipView({ tip, tone }: { tip: UsageTip; tone: BadgeTone }) {
+function TipView({ tip, tone, onRefresh, onOpen }: { tip: UsageTip; tone: BadgeTone; onRefresh: () => void; onOpen: () => void }) {
   const errorText = tip.error ?? createComputed(() => null as string | null)
   return (
     <box orientation={Gtk.Orientation.VERTICAL} spacing={4} class={createComputed(() => `UsageTip tone-${tone}${tip.blocked?.() ? " blocked" : ""}`)}>
@@ -212,7 +241,14 @@ function TipView({ tip, tone }: { tip: UsageTip; tone: BadgeTone }) {
         label={createComputed(() => errorText() ?? "")}
         visible={createComputed(() => Boolean(errorText()))}
       />
-      <label class="UsageTip-hint" xalign={0} label={tip.hint} />
+      <box spacing={4} halign={Gtk.Align.END} class="UsageTip-actions">
+        <button class="UsageTip-action" tooltipText={tip.actions.refresh} onClicked={onRefresh}>
+          <label label="⟳" />
+        </button>
+        <button class="UsageTip-action" tooltipText={tip.actions.open} onClicked={onOpen}>
+          <label label="↗" />
+        </button>
+      </box>
     </box>
   )
 }
@@ -225,7 +261,13 @@ function openTarget(target: string | (() => void)) {
 }
 
 export default function UsageBadge(props: UsageBadgeProps) {
-  const tipView = (<TipView tip={props.tip} tone={props.tone} />) as Gtk.Widget
+  const refreshNow = () => {
+    props.onRefresh()
+    setTipNow(Date.now())
+  }
+  const tipView = (
+    <TipView tip={props.tip} tone={props.tone} onRefresh={refreshNow} onOpen={() => openTarget(props.onOpen)} />
+  ) as Gtk.Widget
   const showBadge = createComputed(() => {
     if (isNumber(props.primary.value())) return true
     return Boolean(props.secondary) && isNumber(props.secondary!.value())
@@ -245,11 +287,6 @@ export default function UsageBadge(props: UsageBadgeProps) {
       visible={showBadge}
       class={`UsageBadge tone-${props.tone}`}
       valign={Gtk.Align.CENTER}
-      hasTooltip
-      onQueryTooltip={(_self, _x, _y, _keyboard, tooltip) => {
-        tooltip.set_custom(tipView)
-        return true
-      }}
       $={(self: Gtk.Button) => {
         const glow = createGlowBeat(self, TONE_RGB[props.tone])
         const flicker = createFlicker(self, TONE_RGB[props.tone])
@@ -260,14 +297,49 @@ export default function UsageBadge(props: UsageBadgeProps) {
             return GLib.SOURCE_REMOVE
           })
         })
-        const click = new Gtk.GestureClick()
-        click.set_button(0)
-        click.connect("pressed", () => {
-          const button = click.get_current_button()
-          if (button === 1) props.onRefresh()
-          else if (button === 3) openTarget(props.onOpen)
-        })
-        self.add_controller(click)
+        // Hover popup (not a GTK tooltip): stays open while the pointer is on the chip OR on the popup,
+        // closes 300 ms after leaving both. Every open re-reads the meter cache and moves "now".
+        const pop = new Gtk.Popover({ autohide: false, hasArrow: false, position: Gtk.PositionType.BOTTOM })
+        pop.add_css_class("UsageTipPop")
+        pop.set_child(tipView)
+        pop.set_parent(self)
+        self.connect("destroy", () => pop.unparent())
+        let closeId: number | null = null
+        let tickId: number | null = null
+        const cancelClose = () => {
+          if (closeId !== null) GLib.source_remove(closeId)
+          closeId = null
+        }
+        const open = () => {
+          cancelClose()
+          if (pop.get_visible()) return
+          props.onTipOpen?.()
+          setTipNow(Date.now())
+          pop.popup()
+          // While open: re-read cache + countdowns every 20 s.
+          tickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20_000, () => {
+            props.onTipOpen?.()
+            setTipNow(Date.now())
+            return GLib.SOURCE_CONTINUE
+          })
+        }
+        const scheduleClose = () => {
+          cancelClose()
+          closeId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+            closeId = null
+            if (tickId !== null) GLib.source_remove(tickId)
+            tickId = null
+            pop.popdown()
+            return GLib.SOURCE_REMOVE
+          })
+        }
+        for (const target of [self, pop] as Gtk.Widget[]) {
+          const motion = new Gtk.EventControllerMotion()
+          // The popup is its own surface: tell the auto-hide bar the pointer is still "on the bar".
+          motion.connect("enter", target === self ? open : () => (cancelClose(), setOverBar(true)))
+          motion.connect("leave", target === self ? scheduleClose : () => (setOverBar(false), scheduleClose()))
+          target.add_controller(motion)
+        }
       }}
     >
       <box spacing={meterSpacing} valign={Gtk.Align.CENTER} class="UsageBadge-inner">

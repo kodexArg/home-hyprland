@@ -1,5 +1,5 @@
 import { createComputed } from "ags"
-import { openRouterSnap, refreshCredits, startOpenRouterWatch } from "./openrouter"
+import { openRouterSnap, refreshCredits, reloadCredits, startOpenRouterWatch } from "./openrouter"
 import UsageBadge, { clampFraction } from "./UsageBadge"
 
 const LOW_BALANCE_USD = 2
@@ -19,6 +19,7 @@ export default function OpenRouterMeter() {
         format: "money",
         severity: (balance) => (balance < LOW_BALANCE_USD ? "warn" : "ok"),
       }}
+      onTipOpen={reloadCredits}
       onRefresh={refreshCredits}
       onOpen="https://openrouter.ai/settings/credits"
       tip={{
@@ -40,7 +41,7 @@ export default function OpenRouterMeter() {
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "clic ⟳ · der ↗",
+        actions: { refresh: "Actualizar ahora", open: "Abrir créditos de OpenRouter" },
       }}
     />
   )

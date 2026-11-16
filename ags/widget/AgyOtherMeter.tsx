@@ -1,5 +1,5 @@
 import { createComputed } from "ags"
-import { agyUsageSnap, refreshAgyUsage, startAgyWatch } from "./agy"
+import { agyUsageSnap, refreshAgyUsage, reloadAgyUsage, startAgyWatch } from "./agy"
 import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
 /** Antigravity "other models" pool (Claude/GPT). Not mounted in the bar anymore: AgyMeter folds it into one tooltip line.
@@ -13,6 +13,7 @@ export default function AgyOtherMeter() {
       icon="agy-other"
       tone="agyother"
       primary={{ value: createComputed(() => num(snap().other_week_pct)), format: "percent" }}
+      onTipOpen={reloadAgyUsage}
       onRefresh={refreshAgyUsage}
       onOpen="https://antigravity.google"
       tip={{
@@ -34,7 +35,7 @@ export default function AgyOtherMeter() {
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "clic ⟳ · der ↗",
+        actions: { refresh: "Actualizar ahora (agy /quota, 0 tokens)", open: "Abrir antigravity.google" },
       }}
     />
   )

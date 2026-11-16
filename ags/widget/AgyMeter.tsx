@@ -1,6 +1,6 @@
 import { createComputed } from "ags"
-import { agyUsageSnap, refreshAgyUsage, startAgyWatch } from "./agy"
-import UsageBadge, { clampFraction, compactDate, pct } from "./UsageBadge"
+import { agyUsageSnap, refreshAgyUsage, reloadAgyUsage, startAgyWatch } from "./agy"
+import UsageBadge, { clampFraction, countdown, pct, tipNow } from "./UsageBadge"
 
 /** Antigravity (agy): one badge, Google models only (Gemini group 5 h · 7 d).
  *  The rarely used pools (Argon + every other_groups entry, e.g. Claude/GPT) share a single text line in the tooltip. */
@@ -12,10 +12,11 @@ export default function AgyMeter() {
   const part = (name: string, five: number | null | undefined, week: number | null | undefined, reset?: string | null) => {
     const vals = [pct(five) && num(five)! > 0 ? `5h ${pct(five)}` : "", pct(week)].filter(Boolean).join(" ")
     if (!vals) return ""
-    const r = compactDate(reset)
+    const r = countdown(reset, tipNow())
     return `${shortName(name)} ${vals}${r ? ` ↻${r}` : ""}`
   }
   const others = createComputed(() => {
+    tipNow()
     const s = snap() as any
     const parts = [part(s.argon_name ?? "Argon", s.argon_five_hour_pct, s.argon_week_pct, s.argon_week_reset_iso)]
     const groups: any[] = Array.isArray(s.other_groups) && s.other_groups.length
@@ -31,6 +32,7 @@ export default function AgyMeter() {
       tone="gemini"
       primary={{ value: createComputed(() => num(snap().five_hour_pct)), format: "percent" }}
       secondary={{ value: createComputed(() => num(snap().week_pct)), format: "percent" }}
+      onTipOpen={reloadAgyUsage}
       onRefresh={refreshAgyUsage}
       onOpen="https://antigravity.google"
       tip={{
@@ -53,7 +55,7 @@ export default function AgyMeter() {
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "clic ⟳ (agy /quota, 0 tokens) · der ↗",
+        actions: { refresh: "Actualizar ahora (agy /quota, 0 tokens)", open: "Abrir antigravity.google" },
       }}
     />
   )

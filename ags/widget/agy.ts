@@ -82,3 +82,8 @@ export function startAgyWatch() {
 }
 
 export const agyUsageSnap = agySnap
+
+/** Tooltip open: re-read the cache file now (no exec, no network). */
+export function reloadAgyUsage() {
+  setAgySnap(readCachedSnap())
+}

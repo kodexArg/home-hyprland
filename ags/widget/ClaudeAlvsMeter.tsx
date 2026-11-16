@@ -1,5 +1,5 @@
 import { createComputed } from "ags"
-import { claudeAlvsUsageSnap, refreshClaudeAlvsUsage, startClaudeAlvsWatch } from "./claude"
+import { claudeAlvsUsageSnap, refreshClaudeAlvsUsage, reloadClaudeAlvsUsage, startClaudeAlvsWatch } from "./claude"
 import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
 /** Claude ALVS: chip = 5 h · 7 d. Tooltip: one flat bar per window + ↻ reset (no month / per-model: not in the meter). */
@@ -16,6 +16,7 @@ export default function ClaudeAlvsMeter() {
       tone="claude"
       primary={{ value: live(() => snap().five_hour_pct), format: "percent" }}
       secondary={{ value: live(() => weekPct()), format: "percent" }}
+      onTipOpen={reloadClaudeAlvsUsage}
       onRefresh={refreshClaudeAlvsUsage}
       onOpen="https://claude.ai/settings/usage"
       tip={{
@@ -37,7 +38,7 @@ export default function ClaudeAlvsMeter() {
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "clic ⟳ · der ↗",
+        actions: { refresh: "Actualizar ahora (uso de la cuenta ALVS)", open: "Abrir uso en claude.ai" },
       }}
     />
   )

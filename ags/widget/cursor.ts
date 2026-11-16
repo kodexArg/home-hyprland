@@ -134,3 +134,8 @@ export function startCursorWatch() {
 }
 
 export const cursorUsageSnap = cursorSnap
+
+/** Tooltip open: re-read the cache file now (no exec, no network). */
+export function reloadCursorUsage() {
+  setCursorSnap(readCachedSnap())
+}

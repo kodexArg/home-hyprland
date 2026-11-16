@@ -1,5 +1,5 @@
 import { createComputed } from "ags"
-import { grokBotUsageSnap, refreshGrokBotUsage, startGrokBotWatch } from "./grokbot"
+import { grokBotUsageSnap, refreshGrokBotUsage, reloadGrokBotUsage, startGrokBotWatch } from "./grokbot"
 import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
 export default function GrokBotMeter() {
@@ -12,6 +12,7 @@ export default function GrokBotMeter() {
       icon="grok-bot"
       tone="mint"
       primary={{ value: createComputed(() => snap().grok_pct), format: "percent" }}
+      onTipOpen={reloadGrokBotUsage}
       onRefresh={refreshGrokBotUsage}
       onOpen="https://cursor.com/dashboard/spending"
       tip={{
@@ -22,12 +23,12 @@ export default function GrokBotMeter() {
             label: "7d",
             value: createComputed(() => pct(weekly())),
             fraction: createComputed(() => clampFraction((weekly() ?? NaN) / 100)),
-            reset: createComputed(() => snap().reset_iso ?? (snap().reset_str && snap().reset_str !== "..." ? snap().reset_str : null)),
+            reset: createComputed(() => snap().reset_iso ?? (snap().reset_str && snap().reset_str !== "..." ? { left: "", date: snap().reset_str } : null)),
           },
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "clic ⟳ · der ↗",
+        actions: { refresh: "Actualizar ahora", open: "Abrir gasto en cursor.com" },
       }}
     />
   )

@@ -95,3 +95,8 @@ export const openRouterSnap = creditSnap
 export const openRouterFormatted = createComputed(() => creditSnap().formatted)
 export const openRouterBalance = createComputed(() => creditSnap().balance)
 export const openRouterHasError = createComputed(() => Boolean(creditSnap().error))
+
+/** Tooltip open: re-read the cache file now (no exec, no network). */
+export function reloadCredits() {
+  setCreditSnap(readCachedSnap())
+}

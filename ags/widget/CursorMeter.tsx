@@ -1,5 +1,5 @@
 import { createComputed } from "ags"
-import { cursorUsageSnap, refreshCursorUsage, startCursorWatch } from "./cursor"
+import { cursorUsageSnap, refreshCursorUsage, reloadCursorUsage, startCursorWatch } from "./cursor"
 import UsageBadge, { clampFraction, pct } from "./UsageBadge"
 
 /**
@@ -16,7 +16,12 @@ export default function CursorMeter() {
   })
   const usd = (cents?: number | null) => (typeof cents === "number" ? `$${(cents / 100).toFixed(cents >= 10_000 ? 0 : 2)}` : "")
   const cap = () => (snap().limit ?? 0) + (snap().bonus_spend ?? 0)
-  const resetText = () => (snap().reset_str && snap().reset_str !== "..." ? snap().reset_str : null)
+  /** kdx-cursor-usage gives no ISO instant, only days_left + "21 Nov (5d)": countdown from days_left, date from reset_str. */
+  const resetText = () => {
+    const s = snap()
+    const date = s.reset_str && s.reset_str !== "..." ? s.reset_str.replace(/\s*\(.*\)\s*$/, "") : ""
+    return typeof s.days_left === "number" ? { left: `${s.days_left}d`, date } : date ? { left: "", date } : null
+  }
   const split = createComputed(() => {
     const s = snap().split
     if (!s || !(s.total_cents > 0)) return ""
@@ -29,6 +34,7 @@ export default function CursorMeter() {
       tone="blue"
       primary={{ value: createComputed(() => snap().cursor_pct), format: "percent", severity: () => "ok" }}
       secondary={{ value: createComputed(() => snap().other_pct), format: "percent", severity: () => "ok" }}
+      onTipOpen={reloadCursorUsage}
       onRefresh={refreshCursorUsage}
       onOpen="https://www.cursor.com/settings"
       tip={{
@@ -62,7 +68,7 @@ export default function CursorMeter() {
         ],
         error: createComputed(() => snap().error),
         stale: createComputed(() => Boolean(snap().stale)),
-        hint: "clic ⟳ · der ↗",
+        actions: { refresh: "Actualizar ahora", open: "Abrir ajustes de Cursor" },
       }}
     />
   )
