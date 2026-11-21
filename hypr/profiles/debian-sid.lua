@@ -11,6 +11,8 @@ hl.monitor({ output = aoc,  mode = "1920x1080@99.93",  position = "0x0",     sca
 -- Paneles por monitor: ~/home-hyprland/hypr/panels.lua (perfil por hostname).
 dofile("/home/kodex/home-hyprland/hypr/panels.lua")
 
+-- Locale: Hyprland arranca sin LANG desde GDM y los exec_cmd heredaban POSIX (wofi no filtraba UTF-8).
+hl.env("LANG", "en_US.UTF-8")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("LIBVA_DRIVER_NAME", "nvidia")
