@@ -32,8 +32,7 @@ export default function CursorMeter() {
     <UsageBadge
       icon="cursor"
       tone="blue"
-      primary={{ value: createComputed(() => snap().cursor_pct), format: "percent", severity: () => "ok" }}
-      secondary={{ value: createComputed(() => snap().other_pct), format: "percent", severity: () => "ok" }}
+      primary={{ value: createComputed(() => snap().other_pct), format: "percent", severity: () => "ok" }}
       onTipOpen={reloadCursorUsage}
       onRefresh={refreshCursorUsage}
       onOpen="https://www.cursor.com/settings"

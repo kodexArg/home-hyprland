@@ -246,7 +246,7 @@ function readScreens(): Screen[] {
 
     const idsByMonitor = new Map<string, number[]>()
     for (const ws of workspaces) {
-      if (ws.id < 1) continue
+      if (typeof ws.id !== "number" || ws.id < 1 || ws.id > 6) continue  // 3 ASUS + 3 AOC
       const list = idsByMonitor.get(ws.monitor ?? "") ?? []
       list.push(ws.id)
       idsByMonitor.set(ws.monitor ?? "", list)
@@ -272,7 +272,7 @@ function readScreens(): Screen[] {
     for (const c of clients) {
       if (c.mapped === false || c.hidden) continue
       const wsId = c.workspace?.id
-      if (wsId == null || wsId < 1) continue
+      if (typeof wsId !== "number" || wsId < 1 || wsId > 6) continue
       const g = geo.get(c.monitor ?? -1)
       if (!g || g.w <= 1 || g.h <= 1) continue
       const [ax, ay] = c.at ?? [0, 0]

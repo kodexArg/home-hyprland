@@ -15,7 +15,6 @@ import CastRecChip from "./CastRecChip"
 import MicIndicator from "./MicIndicator"
 import OpenRouterMeter from "./OpenRouterMeter"
 import GrokBotMeter from "./GrokBotMeter"
-import GrokBuildMeter from "./GrokBuildMeter"
 import CursorMeter from "./CursorMeter"
 import ClaudeMeter from "./ClaudeMeter"
 import ClaudeAlvsMeter from "./ClaudeAlvsMeter"
@@ -577,7 +576,6 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
           <box spacing={isZoomDense() ? 2 : 4} class="BrainCluster" valign={Gtk.Align.CENTER}>
             <box spacing={isZoomDense() ? 2 : 4} visible={moneyVisible} valign={Gtk.Align.CENTER}>
               {show("grokbot") && <GrokBotMeter />}
-              {show("grokbuild") && <GrokBuildMeter />}
               {show("cursor") && <CursorMeter />}
               {show("claude") && <ClaudeMeter />}
               {show("claude-alvs") && <ClaudeAlvsMeter />}
